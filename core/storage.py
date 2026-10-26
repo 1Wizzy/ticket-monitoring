@@ -600,6 +600,31 @@ class PriceStorage:
                 "evidence": evidence.get(
                     (r["platform"], r["entry_path"], r["path_status"])) or {},
             })
+        # 失败后又成功 = 已恢复：复发账只说明"这毛病反复过"，不该在
+        # 恢复后继续喊"需人工"。判据用同一 path 最近一次成功行的 id
+        # 晚于该类失败的最后一条（同入口，避免拿别的路径的成功顶替）。
+        # 用 id 而不是时间：fetch_paths 一轮多行常落在同一秒，秒级
+        # 时间戳分不出先后。
+        with self._conn() as c:
+            for o in out:
+                try:
+                    row = c.execute(
+                        "SELECT id, fetched_at FROM fetch_paths WHERE "
+                        "platform=? AND entry_path=? AND path_status IN "
+                        "('ok','calendar') ORDER BY id DESC LIMIT 1",
+                        (o["platform"], o["path"])).fetchone()
+                    bad = c.execute(
+                        "SELECT MAX(id) FROM fetch_paths WHERE platform=? "
+                        "AND entry_path=? AND path_status NOT IN "
+                        "('ok','calendar')", (o["platform"],
+                                              o["path"])).fetchone()
+                except Exception:
+                    row, bad = None, None
+                last_ok = str((row or ["", ""])[1] or "")
+                last_ok_id = int((row or [0])[0] or 0)
+                last_bad_id = int((bad or [0])[0] or 0)
+                o["last_ok_at"] = last_ok
+                o["recovered"] = bool(last_ok and last_ok_id > last_bad_id)
         return out
 
     def latest_prices(self, hours=24 * 7):

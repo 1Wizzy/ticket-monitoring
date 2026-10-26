@@ -181,3 +181,46 @@ def test_legacy_1999_login_wall_stays_login(tmp_path):
                            attempt_id="k%d" % i)
     row = st.failure_recurrence(24, 3)[0]
     assert row["status"] == "login" and row["kind"] == "login"
+
+
+def test_recurrence_marks_recovered_after_later_success(tmp_path):
+    """失败后又成功 = 已恢复：复发账不再继续喊「需人工」。"""
+    from core.storage import PriceStorage
+    st = PriceStorage(str(tmp_path / "p.db"))
+    for i in range(3):
+        st.save_fetch_path("qunar", "SHA", "BKK", "2027-06-01", "H5",
+                           "login", note="国际列表 1999/8 未登录硬拒",
+                           attempt_id="b%d" % i)
+    st.save_fetch_path("qunar", "SHA", "BKK", "2027-06-02", "H5", "ok",
+                       rows=30, attempt_id="ok")
+    row = next(r for r in st.failure_recurrence(24, 3)
+               if r["path"] == "H5")
+    assert row["recovered"] is True, "之后已出数，不能还标需人工"
+    assert row["last_ok_at"]
+
+
+def test_recurrence_not_recovered_without_later_success(tmp_path):
+    from core.storage import PriceStorage
+    st = PriceStorage(str(tmp_path / "p.db"))
+    for i in range(3):
+        st.save_fetch_path("tongcheng", "SHA", "BKK", "2027-06-01", "日历",
+                           "soft_reject", note="国际日历请求形态门拒 code=444",
+                           attempt_id="s%d" % i)
+    row = next(r for r in st.failure_recurrence(24, 3)
+               if r["path"] == "日历")
+    assert row["recovered"] is False
+
+
+def test_recurrence_recovered_only_for_same_path(tmp_path):
+    """别的路径成功不能顶替：H5 好了不代表 API 也好了。"""
+    from core.storage import PriceStorage
+    st = PriceStorage(str(tmp_path / "p.db"))
+    for i in range(3):
+        st.save_fetch_path("qunar", "SHA", "BKK", "2027-06-01", "API",
+                           "login", note="国际列表 1999/8 未登录硬拒",
+                           attempt_id="a%d" % i)
+    st.save_fetch_path("qunar", "SHA", "BKK", "2027-06-02", "H5", "ok",
+                       rows=20, attempt_id="ok2")
+    row = next(r for r in st.failure_recurrence(24, 3)
+               if r["path"] == "API")
+    assert row["recovered"] is False
