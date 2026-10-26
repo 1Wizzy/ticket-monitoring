@@ -716,3 +716,61 @@ Ctrip 本次 0 包与站点会话/接口状态有关（此前 1.5.280 曾实测 
 
 > 抽检只证明“链路 + 记账 + 身份”三件事，不据此宣称某渠道长期可用；
 > 单次成功≠永久可用，单次空≠渠道不支持（见 [[project-channel-acceptance]]）。
+
+---
+
+## 12. 第四轮：软拒分层、预算可视、临期节奏、路径影子（r380）
+
+这一轮不改采集目标，只把"判错"和"看不见"两块补齐。
+
+### 12.1 软拒是第三类，不是 empty 也不是 blocked
+
+| 信号 | 旧归类 | 新归类 | 正确动作 |
+|---|---|---|---|
+| HTTP 202 空体 | empty/error | `soft_reject` | 下一轮先预热再查 |
+| HTTP 444 关连接 | error | `soft_reject` | 下一轮先预热再查 |
+| 403/429/验证页 | blocked | blocked | 熔断 + 去验证 |
+| 干净 200 且无行 | empty | empty | 记真无票 |
+
+`classify_failure()` 返回 `soft`；`ChannelBreaker.trip("soft")` **不冷却、不计
+strikes**，只置 `needs_warmup`。`note_warmup_ok()` 在**真的拿到风控 cookie** 后
+才清标记——只访问首页没下发 cookie 不算养熟。
+
+### 12.2 HTTP 状态入账
+
+`path_note(..., http_status=)` 与 `save_fetch_path(..., http_status=)` 已接通，
+路径账现在能回答"是 200 空、202 软拒、444 关闭还是 403/429"。
+软拒在路径账单独计 `soft`，不污染 `empty`/`error`，也不算成功。
+
+### 12.3 请求预算可视
+
+`last_round` 新增 `sent / paced / sent_by / paced_by`；面板显示：
+
+```
+本轮计划 11 次（快 6 / 慢 2 / TTL 内 3） · 实发 8 次 · 主动未发 3 次
+预算：最小间隔 2s · 每分钟上限 20（0=不限） · 近一分钟用量 去哪儿 7 · 携程 4
+```
+
+"为什么这轮被限流"不再靠猜：是 TTL 挡的、熔断挡的、还是预算等待超限。
+
+### 12.4 临期日期加密
+
+`plan_query(..., days_ahead=)`：出发 3 天内快层 TTL 减半（≥5 分钟），
+30 天外慢层翻倍（≤1440 分钟）。只调整本键节奏，不改变健康惩罚方向。
+
+### 12.5 路径偏好先跑影子
+
+`shadow_path_preference()` 按同平台各入口成功率排序，样本 <5 或日历路径不参与，
+每轮只写一条 `[路径影子]` 日志，**不改变采集顺序**。先对照一天，确认统计
+不偏再谈自动切换——避免"数据一抖就把能出数的路停掉"。
+
+### 12.6 验收
+
+```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest \
+  tests/test_r380_soft_budget.py tests/test_pacing.py \
+  tests/test_path_stats.py tests/test_r379_pacing_accuracy.py -q
+```
+
+面板在 1512/390/320 三档零横向溢出、零 JS 错误；软拒与预算数字均按注入
+数据核对通过。

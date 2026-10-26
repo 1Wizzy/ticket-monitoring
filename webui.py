@@ -14907,6 +14907,7 @@ async function loadPacing(){
    if(v.state==='cooldown')t='<span style="color:var(--red)">冷却 '+_paceLeft(v.remain_s)+(v.reason?' · '+esc(v.reason):'')+'</span>';
    else if(v.needs_login)t='<span style="color:#b07700">需登录</span>';
    else if(adv.state==='path_degraded')t='<span style="color:#b07700">路径劣化</span>';
+   else if(adv.state==='soft_reject')t='<span style="color:#b07700">软拒待预热</span>';
    else if(adv.state==='calendar_only')t='<span style="color:#b07700">仅有日历</span>';
    else if(adv.state==='stale')t='<span style="color:#b07700">数据陈旧</span>';
    else if(adv.state==='degraded')t='<span style="color:#b07700">成功率低</span>';
@@ -14972,7 +14973,11 @@ async function loadPacing(){
    +' <a href="javascript:void(0)" onclick="loadPacing()" style="color:var(--blue);margin-left:6px">刷新</a></div>'
    +adviceRow
    +'<div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:4px">'+chips+'</div>'
-   +'<div>本轮计划 '+plan+' 次（快 '+lr.fast+' / 慢 '+lr.slow+' / TTL 内 '+lr.skip+'） · 熔断 '+(lr.trips||[]).length+' 次 · 会话让位 '+esc((lr.busy||[]).join('、')||'无')+'</div>'
+   +'<div>本轮计划 '+plan+' 次（快 '+lr.fast+' / 慢 '+lr.slow+' / TTL 内 '+lr.skip+'） · 实发 '+(lr.sent||0)+' 次'
+   +(lr.paced?(' · 主动未发 '+(lr.paced||0)+' 次'):'')
+   +' · 熔断 '+(lr.trips||[]).length+' 次 · 会话让位 '+esc((lr.busy||[]).join('、')||'无')+'</div>'
+   +'<div>预算：最小间隔 '+esc(String((j.cfg&&j.cfg.min_gap_s)||0))+'s · 每分钟上限 '+esc(String((j.cfg&&j.cfg.per_minute)||0))+'（0=不限） · 近一分钟用量 '
+   +esc(Object.keys(j.bucket||{}).map(k=>(CN[k]||k)+' '+((j.bucket[k]||{}).per_min_used||0)).join(' · ')||'无')+'</div>'
    +pathRow+warmRow+probeRow+'<div id="traceOut"></div>';
  }catch(e){box.innerHTML='<span style="color:var(--red)">'+esc(String(e))+'</span>';}
 }

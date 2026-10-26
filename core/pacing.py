@@ -34,6 +34,9 @@ _IP_MARKS = ("风控", "限流", "179991", "ip封", "ip 封")
 _CAPTCHA_MARKS = ("验证码", "滑块", "人机验证", "访问验证", "安全验证",
                   "challenge", "captcha")
 _LOGIN_MARKS = ("请登录", "未登录", "需登录", "登录失效", "会话失效")
+# 软拒：边缘节点/会话层没有正面拒绝，但也没给业务响应。它不是"真无票"，
+# 也不该按 IP 限流熔断——正确动作是下一轮先养会话再查。
+_SOFT_MARKS = ("软拒", "444", "202 空", "202空")
 
 DEFAULTS = {
     "scan_quiet_start": "",
@@ -251,6 +254,8 @@ def classify_failure(statuses, note=""):
     if _IP_CODE_RE.search(low) or any(k in low for k in _IP_MARKS):
         return "ip"
     sts = {str(s or "") for s in (statuses or [])}
+    if "soft_reject" in sts or any(k in str(note or "") for k in _SOFT_MARKS):
+        return "soft"
     if "blocked" in sts or any(k.lower() in low for k in _CAPTCHA_MARKS):
         return "captcha"
     if "login" in sts or any(k in str(note or "") for k in _LOGIN_MARKS):
@@ -289,7 +294,8 @@ class ChannelBreaker:
 
     def _rec(self, plat):
         return self._st.setdefault(str(plat), {
-            "strikes": 0, "until": 0.0, "reason": "", "needs_login": False})
+            "strikes": 0, "until": 0.0, "reason": "", "needs_login": False,
+            "needs_warmup": False})
 
     def allow(self, plat, now=None):
         now = time.time() if now is None else now
@@ -308,6 +314,12 @@ class ChannelBreaker:
             return 0
         with self._lock:
             st = self._rec(plat)
+            if kind == "soft":
+                # 软拒只要求下一轮先预热，不冷却、不计 strikes：
+                # 用整家熔断去惩罚"会话没养好"会错杀已能出数的渠道。
+                st["needs_warmup"] = True
+                st["reason"] = "soft"
+                return 0
             if kind == "login":
                 st["needs_login"] = True
                 st["reason"] = "login"
@@ -329,11 +341,22 @@ class ChannelBreaker:
             st["reason"] = kind
             return cd
 
+    def note_warmup_ok(self, plat):
+        """预热真的拿到风控 cookie 才清软拒标记。
+
+        只访问首页不算数——没下发风控 cookie 的预热，深链仍会被 444。
+        """
+        with self._lock:
+            st = self._rec(plat)
+            st["needs_warmup"] = False
+            if st["reason"] == "soft":
+                st["reason"] = ""
+
     def reset(self, plat):
         with self._lock:
             self._st[str(plat)] = {
                 "strikes": 0, "until": 0.0, "reason": "",
-                "needs_login": False}
+                "needs_login": False, "needs_warmup": False}
 
     def snapshot(self, now=None):
         now = time.time() if now is None else now
@@ -348,6 +371,7 @@ class ChannelBreaker:
                     "strikes": int(st.get("strikes") or 0),
                     "reason": str(st.get("reason") or ""),
                     "needs_login": bool(st.get("needs_login")),
+                    "needs_warmup": bool(st.get("needs_warmup")),
                 }
             for p in self._st:
                 if p in out:
@@ -360,6 +384,7 @@ class ChannelBreaker:
                     "strikes": int(st.get("strikes") or 0),
                     "reason": str(st.get("reason") or ""),
                     "needs_login": bool(st.get("needs_login")),
+                    "needs_warmup": bool(st.get("needs_warmup")),
                 }
         return out
 
@@ -433,6 +458,26 @@ def _age_min(ts, now):
     return max(0.0, (now - t) / 60.0)
 
 
+def shadow_path_preference(paths, min_samples=5, low=0.3):
+    """影子模式：只算"若启用路径偏好，会把哪条路排前"，不改变采集。
+
+    返回 {"prefer": [(path, rate, attempts)...], "avoid": [...]}。
+    - 仅比较同平台内各入口（PC/H5/API/日历）的路径成功率；
+    - 样本 < min_samples 不参与（防首轮波动误判）；
+    - 日历路径不参与（它本来就不是明细路径）。
+    """
+    ranked = []
+    for name, v in (paths or {}).items():
+        v = v or {}
+        n = int(v.get("attempts") or 0)
+        if n < min_samples or str(name).startswith("日历"):
+            continue
+        ranked.append((str(name), float(v.get("rate") or 0.0), n))
+    ranked.sort(key=lambda x: (-x[1], -x[2]))
+    avoid = [x for x in ranked if x[1] < low]
+    return {"prefer": ranked[:2], "avoid": avoid}
+
+
 def advise(plat, ch=None, paths=None, now=None, node=None):
     """把一个渠道的现状翻译成「用户该做什么」。
 
@@ -449,6 +494,11 @@ def advise(plat, ch=None, paths=None, now=None, node=None):
     paths = paths or {}
     node = node or {}
     now = time.time() if now is None else now
+    if ch.get("needs_warmup") and ch.get("state") != "cooldown":
+        return {"state": "soft_reject", "action": "probe", "severity": "auto",
+                "hint": "上一轮被软拒（202 空体/444 关连接，不是真无票）："
+                        "本轮已安排先预热再查；若连续出现，点「自检」看路径",
+                "eta_s": 0}
     if ch.get("needs_login"):
         return {"state": "login", "action": "relogin", "severity": "act",
                 "hint": "登录态失效：点「去验证」用采集同一会话过验证，"
@@ -591,6 +641,9 @@ class Pacing:
     def reset(self, plat):
         self._breaker.reset(plat)
 
+    def note_warmup_ok(self, plat):
+        self._breaker.note_warmup_ok(plat)
+
     # ---------- 5 区：令牌桶 ----------
     def wait_hint(self, plat, now=None):
         return self._bucket.wait_hint(plat, now)
@@ -658,8 +711,12 @@ class Pacing:
             self._last[k] = (ts, p)
         return True
 
-    def plan_query(self, plat, key, threshold=0):
-        """返回 (tier, 原因)。tier ∈ fast/slow/skip。"""
+    def plan_query(self, plat, key, threshold=0, days_ahead=None):
+        """返回 (tier, 原因)。tier ∈ fast/slow/skip。
+
+        `days_ahead` 是出发日距今天数：临期行程价格变化快，给一个更短的
+        TTL；远期只做低频基线。它只缩短 TTL，不会让本该跳过的查询变快。
+        """
         now = self._clock()
         with self._lock:
             last = self._last.get((str(plat),) + tuple(key))
@@ -671,6 +728,17 @@ class Pacing:
         # 成功率保护：账本差就自动拉长 TTL，而不是等它撞出 429 再熔断
         fast_ttl = max(5, int(round(fast_ttl * pen)))
         slow_ttl = max(5, int(round(slow_ttl * pen)))
+        # 临期加密：3 天内快层减半（不低于 5 分钟），30 天外慢层翻倍。
+        # 只改本键 TTL，不改变健康惩罚的方向（penalty 仍然只加不减）。
+        try:
+            _d = int(days_ahead) if days_ahead is not None else None
+        except (TypeError, ValueError):
+            _d = None
+        if _d is not None and _d >= 0:
+            if _d <= 3:
+                fast_ttl = max(5, int(round(fast_ttl / 2.0)))
+            elif _d >= 30:
+                slow_ttl = min(1440, int(round(slow_ttl * 2.0)))
         if not last:
             return "fast", "无历史基线"
         ts, price = last
@@ -693,7 +761,11 @@ class Pacing:
     def begin_round(self, at=""):
         with self._lock:
             self._round = {"at": at, "fast": 0, "slow": 0, "skip": 0,
-                           "trips": [], "busy": []}
+                           "trips": [], "busy": [],
+                           # 请求预算：计划数 vs 实际发出，以及按渠道
+                           # 计的实际发送/被预算挡下的次数
+                           "sent": 0, "paced": 0, "sent_by": {},
+                           "paced_by": {}}
             self._plan = []
 
     def note_plan(self, plat, key, tier, why):
@@ -703,6 +775,20 @@ class Pacing:
                 self._plan.append({
                     "plat": plat, "key": "-".join(str(x) for x in key),
                     "tier": tier, "why": why})
+
+    def note_sent(self, plat):
+        """真正发出一次渠道请求（不含预热；预热另计）。"""
+        with self._lock:
+            self._round["sent"] = int(self._round.get("sent") or 0) + 1
+            _b = self._round.setdefault("sent_by", {})
+            _b[plat] = int(_b.get(plat) or 0) + 1
+
+    def note_paced(self, plat, why=""):
+        """因 TTL/熔断/预算等待超限而主动没发。"""
+        with self._lock:
+            self._round["paced"] = int(self._round.get("paced") or 0) + 1
+            _b = self._round.setdefault("paced_by", {})
+            _b[plat] = int(_b.get(plat) or 0) + 1
 
     def note_busy(self, plat):
         with self._lock:
@@ -727,6 +813,8 @@ class Pacing:
                    for s in (statuses or [])):
                 self.reset(plat)
             return "", 0
+        # 软拒不清 needs_warmup：预热成功（拿到风控 cookie）后由
+        # note_warmup_ok() 清；否则下一轮继续先预热。
         cd = self.trip(plat, kind, retry_after=retry_after)
         self.note_trip(plat, kind, cd, retry_after)
         return kind, cd

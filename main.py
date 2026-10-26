@@ -2146,7 +2146,24 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
             # 成功率保护（自动）：近 24h 账本差的渠道自动拉长 TTL，
             # 不等它撞出 429 才熔断。读一次聚合，失败不影响本轮。
             try:
+                from core.pacing import shadow_path_preference
                 for _p, _node in (storage.path_stats(24) or {}).items():
+                    # 影子模式：只记录"本会怎么排路径"，不改变采集顺序。
+                    # 先用一天对照，确认不会因统计偏差误杀再开自动。
+                    try:
+                        _sh = shadow_path_preference(
+                            _node.get("paths") or {})
+                        if _sh["avoid"] or _sh["prefer"]:
+                            logger.info(
+                                "[路径影子] %s 偏好 %s · 建议避让 %s"
+                                "（仅记录，不改变本轮顺序）",
+                                _p,
+                                ",".join("%s %.0f%%" % (x[0], x[1] * 100)
+                                         for x in _sh["prefer"]) or "-",
+                                ",".join("%s %.0f%%" % (x[0], x[1] * 100)
+                                         for x in _sh["avoid"]) or "-")
+                    except Exception:
+                        pass
                     _qn = int(_node.get("query_attempts") or 0)
                     if _qn >= 5:
                         # 查询口径：H5 被拦但 PC 兜底成功 = 渠道仍健康；
@@ -2214,6 +2231,13 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
             if pac is None or not pac.cfg.get("warmup_enabled"):
                 return
             in_list = c.name in (pac.cfg.get("warmup_platforms") or ())
+            # 上一轮被软拒（202 空体/444）的渠道：即便不在预热名单，
+            # 本轮也必须先养会话再查深链。
+            try:
+                forced = bool((pac.snapshot()["channels"]
+                               .get(c.name) or {}).get("needs_warmup"))
+            except Exception:
+                forced = False
             # 会话老化看门狗：profile 太久没更新会被站点当"新设备"，
             # 超过 session_max_days 时即便不在预热名单也强制续一次
             try:
@@ -2221,7 +2245,7 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                     c.session_age_days > c.session_max_days)
             except Exception:
                 aged = False
-            if not in_list and not aged:
+            if not in_list and not aged and not forced:
                 return
             if not str(getattr(c, "warmup_url", "") or "").strip():
                 return
@@ -2238,6 +2262,13 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                 # 请求把"首页+列表"挤在同一秒（等于没降频）。
                 if pac is not None:
                     pac.record(c.name)
+                    # 只有真的拿到风控 cookie 才清软拒标记；否则下一轮
+                    # 继续先预热（只访问首页≠已养熟会话）
+                    try:
+                        if getattr(c, "warmup_cookie_ok", True):
+                            pac.note_warmup_ok(c.name)
+                    except Exception:
+                        pass
                 return ok
 
         def _timed_fetch(c, fc_, tc_, d_, th_min=None, gen=None):
@@ -2263,9 +2294,17 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
             # 5 家渠道串成一条队，慢渠道拖死整轮（旧 310s 预防等待的教训）
             if pac is not None:
                 try:
-                    tier, why = pac.plan_query(c.name, key, th_min)
+                    _days = None
+                    try:
+                        _days = (_dt.date.fromisoformat(str(d_))
+                                 - _dt.date.today()).days
+                    except (TypeError, ValueError):
+                        _days = None
+                    tier, why = pac.plan_query(c.name, key, th_min,
+                                               days_ahead=_days)
                     pac.note_plan(c.name, key, tier, why)
                     if tier == "skip":
+                        pac.note_paced(c.name, why)
                         return [], "paced"
                     ok, remain = pac.allow(c.name)
                     if not ok:
@@ -2274,6 +2313,7 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                             "[节流] %s 熔断中（剩余 %ds · %s），本轮跳过"
                             " %s→%s %s", c.name, remain,
                             _ch.get("reason") or "?", fc_, tc_, d_)
+                        pac.note_paced(c.name, "breaker")
                         return [], "paced"
                     _stagger_wait(c.name)
                     _warm_once(c)
@@ -2291,6 +2331,7 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                             logger.info(
                                 "[节流] %s 令牌桶还需 %.1fs，超过本轮预算，"
                                 "跳过 %s→%s %s", c.name, _w, fc_, tc_, d_)
+                            pac.note_paced(c.name, "budget")
                             return [], "paced"
                         logger.info("[节流] %s 令牌桶等待 %.1fs", c.name, _w)
                         time.sleep(_w + 0.05)
@@ -2313,6 +2354,8 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                     if pac is not None:
                         pac.record(c.name)
                     c.last_query = key
+                    if pac is not None:
+                        pac.note_sent(c.name)
                     _prices.extend(c.safe_fetch(fc_, tc_, [d_],
                                                 ret_date=_rd))
                     if getattr(c, "last_busy", False):
@@ -2327,9 +2370,26 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                             c.name)
                         break
                 _paths = [dict(x) for x in (getattr(c, "paths", []) or [])]
+                # 202/444 软拒：把"没拿到业务响应"标成独立状态，
+                # 不冒充 empty（真无票），也不冒充 error（解析失败）。
+                if getattr(c, "_soft_pending", False) and not any(
+                        x.get("status") in ("ok", "calendar") for x in _paths):
+                    _code = int((getattr(c, "last_soft_reject", {}) or {})
+                                .get("code") or 0)
+                    _paths.append({
+                        "path": "H5" if getattr(c, "use_mobile", False)
+                                else "PC",
+                        "status": "soft_reject", "rows": 0,
+                        "date": d_,
+                        "detail": "HTTP %d 软拒（会话/边缘未给业务响应）"
+                                  % _code if _code else "软拒（无业务响应）",
+                        "mobile": bool(getattr(c, "use_mobile", False)),
+                        "httpStatus": _code,
+                    })
             prices = _prices
             paths = _paths
-            if pac is not None and not prices:
+            _soft = any(x.get("status") == "soft_reject" for x in paths)
+            if pac is not None and not prices and not _soft:
                 try:
                     if _gen is None or rt.get("_round_gen") == _gen:
                         rt.setdefault("failed", {}).setdefault(
@@ -2423,7 +2483,9 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                     c.name, fc_, tc_, d_, rec.get("path", ""),
                     rec.get("status", ""), rows=rec.get("rows", 0),
                     note=rec.get("detail", ""), evidence_level="path",
-                    attempt_id=_attempt)
+                    attempt_id=_attempt,
+                    http_status=int(rec.get("http")
+                                    or rec.get("httpStatus") or 0))
                 if rec is selected:
                     pid = rid
             prov = json.dumps({

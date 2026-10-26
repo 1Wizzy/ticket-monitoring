@@ -219,7 +219,8 @@ class BaseCrawler:
     # ── 采集链路观测（PC/H5/API/日历 逐路径尝试账本）──
     # 只记代码真实走过的尝试，不按结果反推路径；探针面板与渠道状态共用。
     PATH_STATUS = ("ok", "empty", "login", "blocked", "timeout",
-                   "error", "parse_error", "unsupported", "calendar")
+                   "error", "parse_error", "unsupported", "calendar",
+                   "soft_reject")
 
     def path_reset(self):
         self.paths = []
@@ -227,12 +228,16 @@ class BaseCrawler:
         self.last_status = ""
 
     def path_note(self, path: str, status: str, rows: int = 0,
-                  date: str = "", detail: str = "", ms: int = 0):
+                  date: str = "", detail: str = "", ms: int = 0,
+                  http_status: int = 0):
         if status not in self.PATH_STATUS:
             status = "error"
         rec = {"path": str(path), "status": status,
                "rows": int(rows or 0), "date": str(date or ""),
                "detail": str(detail or "")[:160], "ms": int(ms or 0),
+               # HTTP 状态入账：200 空、202 软拒、444 关连接、403/429
+               # 的处置完全不同，只有状态码能事后区分。
+               "http": int(http_status or 0),
                # 记录当时是 PC 还是 H5 身份：验证窗口必须复用同一条
                # 路径的 UA/视口，否则"换个身份去过验证"会制造新指纹。
                "mobile": bool(getattr(self, "use_mobile", False))}
@@ -244,7 +249,7 @@ class BaseCrawler:
         # 被拦/登录墙往往返回 200 页面而不是 403：只在响应监听里记现场
         # 会漏掉最常见的人机验证。path_note 是各渠道确认"这条路过不去"
         # 的统一落点，在这里补页面 URL，截图仍由上下文收尾统一落盘。
-        if rec["status"] in ("blocked", "login"):
+        if rec["status"] in ("blocked", "login", "soft_reject"):
             try:
                 page = getattr(self, "_last_page", None)
                 url = str(getattr(page, "url", "") or "") if page else ""
@@ -564,6 +569,10 @@ class BaseCrawler:
     last_query: tuple = ()
     # 现场归档（5 区 2.0）：被拒页面的截图/URL/标题留档
     _scene_pending: str = ""
+    # 软拒现场（202 空体/444）：与 blocked 分开，避免把"会话没养好"
+    # 当成"IP 被限流"或"真无票"。
+    last_soft_reject: dict = {}
+    _soft_pending: bool = False
     _last_page = None
     last_scene: dict = {}
     # 预热入口（子类覆盖）：空=该渠道在 fetch 内部自带预热（ctrip/同程）
@@ -588,6 +597,15 @@ class BaseCrawler:
                 # 与业务 XHR/fetch，避免第三方脚本把渠道误熔断。
                 if not should_watch_response(rtype, url):
                     return
+                if resp.status in (202, 444):
+                    # 202 空体 / 444 关连接：不是"真无票"，是边缘/会话软拒。
+                    # 记下来供主流程分层，不按 IP 限流熔断。
+                    self.last_soft_reject = {
+                        "code": int(resp.status),
+                        "url": str(url or "")[:500],
+                        "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+                    self._soft_pending = True
                 if resp.status in (403, 429, 503):
                     if rtype == "document":
                         target = url
@@ -853,6 +871,8 @@ class BaseCrawler:
         self.last_block_api = ""
         self._scene_pending = ""
         self.last_scene = {}
+        self.last_soft_reject = {}
+        self._soft_pending = False
         # 上一条查询的 page 不能留给本次截图/URL 兜底：httpx 直连路径
         # 不会 new_page，若不清空会把上一页截进本轮现场。
         self._last_page = None

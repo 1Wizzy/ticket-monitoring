@@ -326,7 +326,8 @@ class PriceStorage:
 
         def new_node():
             return {"paths": {}, "attempts": 0, "ok": 0, "detail_ok": 0,
-                    "calendar_ok": 0, "blocked": 0, "empty": 0, "error": 0,
+                    "calendar_ok": 0, "blocked": 0, "soft": 0,
+                    "empty": 0, "error": 0,
                     "rate": 0.0, "detail_rate": 0.0,
                     "query_attempts": 0, "query_ok": 0,
                     "query_detail_ok": 0, "query_calendar_only": 0,
@@ -334,7 +335,8 @@ class PriceStorage:
 
         def new_path():
             return {"attempts": 0, "ok": 0, "detail_ok": 0, "calendar_ok": 0,
-                    "blocked": 0, "empty": 0, "error": 0, "rate": 0.0,
+                    "blocked": 0, "soft": 0, "empty": 0, "error": 0,
+                    "rate": 0.0,
                     "detail_rate": 0.0, "last_at": "", "last_ok_at": ""}
 
         def bump(node, status, last):
@@ -349,6 +351,10 @@ class PriceStorage:
                     node["last_ok_at"] = last
             elif status == "blocked":
                 node["blocked"] += 1
+            elif status == "soft_reject":
+                # 软拒不是"真无票"也不是"硬拒绝"：单列，避免污染
+                # empty/error 两种语义，也不进熔断证据。
+                node["soft"] += 1
             elif status == "empty":
                 node["empty"] += 1
             else:
