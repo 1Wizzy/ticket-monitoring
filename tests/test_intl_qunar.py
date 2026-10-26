@@ -338,3 +338,67 @@ def test_detail_fields_from_text():
     assert "23KG" in d2["baggage"] and "¥300" in d2["refundChange"]
     # 空词面 → 空字典（宁缺勿错）
     assert QunarCrawler._detail_fields_from_text("加载中") == {}
+
+
+# ---- r387：国际列表是流式分页（每包 60 条 + asyncComplete）----
+
+def _pack(rows, done, tcount=0):
+    import json as _j
+    data = {"flights": rows, "asyncComplete": done, "tcount": tcount}
+    return _j.dumps({"ret": True, "code": 0,
+                     "data": _j.dumps(data, ensure_ascii=False)})
+
+
+def _row(code, dep="08:00", arr="12:00", price=1000, trans=""):
+    """真实行形状：航班号在 binfo.airCode（"9C8551|PVG-SIN|日期"），
+    时刻在 binfo.depTime/arrTime，价格在 minPrice。"""
+    binfo = {"airCode": ["%s|PVG-SIN|2026-11-16" % code],
+             "name": [code[:2]], "depTime": dep, "arrTime": arr,
+             "depCity": "上海", "arrCity": "新加坡",
+             "depDate": "2026-11-16", "arrDate": "2026-11-16",
+             "stops": 0}
+    if trans:
+        binfo["transCity"] = trans
+    return {"code": code, "minPrice": price, "binfo": binfo}
+
+
+def test_intl_packs_merge_all_pages():
+    """实测 SHA→SIN 8 包 / tcount 133；只吃首包=每轮只见 60 条。"""
+    from crawlers.qunar import QunarCrawler as Q
+    rows = [_row("CA%03d" % i) for i in range(133)]
+    packs = [_pack(rows[0:60], False, 133),
+             _pack(rows[60:120], False, 133),
+             _pack(rows[120:], True, 133)]
+    got, risk, meta = Q._parse_intl_packs(packs)
+    assert len(got) == 133, len(got)
+    assert risk == ""
+    assert meta["packs"] == 3 and meta["done"] is True
+    assert meta["tcount"] == 133
+
+
+def test_intl_packs_single_pack_behaviour_unchanged():
+    """单包（老形态）仍按原样返回，不因分页改造而变化。"""
+    from crawlers.qunar import QunarCrawler as Q
+    rows = [_row("MU%d" % i) for i in range(60)]
+    got, risk, meta = Q._parse_intl_packs([_pack(rows, True, 60)])
+    assert len(got) == 60 and meta["packs"] == 1
+    assert meta["done"] is True
+
+
+def test_intl_packs_dedupes_overlap_between_pages():
+    """翻页重叠不得产生重复行（键=航班号+起降+中转城市）。"""
+    from crawlers.qunar import QunarCrawler as Q
+    a = [_row("CA100"), _row("CA101")]
+    b = [_row("CA101"), _row("CA102")]
+    got, _r, _m = Q._parse_intl_packs([_pack(a, False, 3),
+                                      _pack(b, True, 3)])
+    assert [r["code"] for r in got] == ["CA100", "CA101", "CA102"]
+
+
+def test_intl_packs_carries_risk_from_any_pack():
+    """任一分包带风控信号 → 整轮按该信号分档（不被空包覆盖）。"""
+    from crawlers.qunar import QunarCrawler as Q
+    ok = _pack([_row("CA200")], False, 2)
+    bad = '{"bstatus":{"code":1999}}'
+    got, risk, _m = Q._parse_intl_packs([bad, ok])
+    assert risk == "login", risk

@@ -1834,13 +1834,16 @@ class QunarCrawler(BaseCrawler):
                 page = self.new_page(ctx)
                 page.route("**/*touchInterList*", _cap)
                 page.goto(url, wait_until="load")
-                for _ in range(12):
-                    page.wait_for_timeout(2000)
+                # 与主流程同律：等 asyncComplete 收尾（首包恒 60 条）
+                for _ in range(16):
+                    page.wait_for_timeout(1500)
                     try:
-                        page.mouse.wheel(0, 1500)
+                        page.mouse.wheel(0, 2000)
                     except Exception:
                         pass
-                    if bodies:
+                    _st = (self._intl_async_state(bodies[-1])
+                           if bodies else None)
+                    if _st and _st["done"]:
                         break
                 try:
                     page.close()
@@ -1920,6 +1923,61 @@ class QunarCrawler(BaseCrawler):
                         if city:
                             out_city[city] = hits[0]
         return out_code, out_city, out_lcc
+
+    @staticmethod
+    def _intl_async_state(text: str) -> dict:
+        """单包 → {n, tcount, done}。解析失败按 n=0/done=False。"""
+        try:
+            outer = json.loads(text)
+        except Exception:
+            return {"n": 0, "tcount": None, "done": False}
+        data = outer.get("data") if isinstance(outer, dict) else None
+        if isinstance(data, str):
+            try:
+                data = QunarCrawler._reassemble_h5_data(data)
+            except Exception:
+                data = None
+        if not isinstance(data, dict):
+            return {"n": 0, "tcount": None, "done": False}
+        fl = data.get("flights") or data.get("routes") or []
+        return {"n": len(fl) if isinstance(fl, list) else 0,
+                "tcount": data.get("tcount"),
+                "done": data.get("asyncComplete") is True}
+
+    @classmethod
+    def _parse_intl_packs(cls, bodies) -> tuple:
+        """r387：国际列表是**流式分页**——每包 60 条、带 tcount/
+        asyncComplete，逐包追加（实测 SHA→SIN 8 包 / tcount 133）。
+        旧实现只解析首个非空包就 break，等于每轮只看到 60 条、漏掉
+        大半；而且最低价也可能落在后面几包里。
+
+        返回 (flights, risk, meta)。按 (code, depTime, arrTime,
+        transCity) 去重后保序（同班多政策已在行内取低价）。
+        """
+        all_rows, risk, seen_pk = [], "", set()
+        worst = ""          # 首个非空包的风控信号（有则整轮按它分档）
+        meta = {"packs": 0, "tcount": None, "done": False, "raw": 0}
+        for t in bodies or []:
+            fl, rk = cls._parse_intl_response(t)
+            st = cls._intl_async_state(t)
+            if st["n"] or rk:
+                meta["packs"] += 1
+            if st["tcount"] is not None:
+                meta["tcount"] = st["tcount"]
+            if st["done"]:
+                meta["done"] = True
+            if rk and not worst:
+                worst = rk
+            for f in fl or []:
+                k = (f.get("code"), f.get("depTime"), f.get("arrTime"),
+                     f.get("transCity"))
+                if k in seen_pk:
+                    continue
+                seen_pk.add(k)
+                all_rows.append(f)
+        risk = worst
+        meta["raw"] = len(all_rows)
+        return all_rows, risk, meta
 
     @classmethod
     def _parse_intl_response(cls, text: str) -> tuple:
@@ -2249,14 +2307,26 @@ class QunarCrawler(BaseCrawler):
                 page.route("**/*touchInterList*", _cap)
                 try:
                     page.goto(url, wait_until="load")
-                    for _ in range(12):
-                        page.wait_for_timeout(2000)
+                    # r387：等**流式分页收尾**再走（asyncComplete=True），
+                    # 不能"拿到首包就 break"——首包固定 60 条，尾包才齐
+                    # tcount（实测 8 包 / 133 条）。无首包时也最多等 24s。
+                    _idle = 0
+                    for _ in range(16):
+                        page.wait_for_timeout(1500)
                         try:
-                            page.mouse.wheel(0, 1500)
+                            page.mouse.wheel(0, 2000)
                         except Exception:
                             pass
-                        if bodies:
+                        _st = (self._intl_async_state(bodies[-1])
+                               if bodies else None)
+                        if _st and _st["done"]:
                             break
+                        if _st and _st["n"]:
+                            _idle = 0
+                        else:
+                            _idle += 1
+                            if not bodies and _idle >= 6:
+                                break          # 12s 无任何包：别干等
                 except Exception as e:
                     self.logger.warning("[qunar][intl] 页面异常: %s", e)
 
@@ -2327,11 +2397,12 @@ class QunarCrawler(BaseCrawler):
                         self.logger.warning(
                             "[qunar][intl] 详情增强失败(不影响主流程): %s", e)
 
-            flights, risk = [], ""
-            for t in bodies:
-                flights, risk = self._parse_intl_response(t)
-                if flights or risk:
-                    break
+            flights, risk, _pm = self._parse_intl_packs(bodies)
+            if _pm["tcount"] and _pm["raw"]:
+                self.logger.info(
+                    "[qunar][intl] %s 流式分页 %d 包 / %d 行（渠道 tcount=%s%s）",
+                    date, _pm["packs"], _pm["raw"], _pm["tcount"],
+                    "" if _pm["done"] else "，未收尾")
             self._dump_raw_text(bodies[0] if bodies else "",
                                 f"intl_{fc}_{tc}_{date}")
             if not flights and not risk:
