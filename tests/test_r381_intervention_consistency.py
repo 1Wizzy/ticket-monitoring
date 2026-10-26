@@ -371,3 +371,25 @@ def test_effect_trend_and_regression(tmp_path):
     assert len(eff["trend"]) >= 2
     assert eff["regressed"] is True
     assert effect_verdict(eff)[0] == "regressed"
+
+
+def test_degradation_is_reported_per_scope():
+    """国内正常、国际被登录墙拦住时，提示必须点名"国际"，不能笼统判整家。"""
+    from core.pacing import advise
+    node = {
+        "attempts": 20, "ok": 10, "empty": 0,
+        "paths": {"H5": {"attempts": 20, "ok": 10, "empty": 0,
+                         "rate": 0.5, "rate_excl_empty": 0.5}},
+        "query_attempts": 20, "query_ok": 10, "query_rate": 0.5,
+        "scopes": {
+            "dom": {"paths": {"H5": {"attempts": 10, "ok": 10, "empty": 0,
+                                     "rate": 1.0,
+                                     "rate_excl_empty": 1.0}}},
+            "intl": {"paths": {"H5": {"attempts": 10, "ok": 0, "empty": 0,
+                                      "rate": 0.0,
+                                      "rate_excl_empty": 0.0}}},
+        },
+    }
+    a = advise("qunar", {"state": "ok"}, node["paths"], node=node)
+    assert a["state"] == "path_degraded"
+    assert "国际" in a["hint"] and "国内" not in a["hint"]

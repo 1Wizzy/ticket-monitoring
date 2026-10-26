@@ -598,6 +598,28 @@ def advise(plat, ch=None, paths=None, now=None, node=None):
     if not attempts and not q_attempts:
         return {"state": "unknown", "action": "scan", "severity": "ok",
                 "hint": "近 24h 无样本：先跑一轮再判断", "eta_s": 0}
+    # 域级劣化优先：国内好、国际被登录墙拦住时，不应该把整家渠道
+    # 判成"路径劣化"（用户会误以为国内也不能用）。
+    scopes = node.get("scopes") or {}
+    for _sk, _sv in scopes.items():
+        _sp = (_sv or {}).get("paths") or {}
+        for _name, _v in _sp.items():
+            _n = int((_v or {}).get("attempts") or 0)
+            _valid = max(0, _n - int((_v or {}).get("empty") or 0))
+            if _valid < 3:
+                continue
+            _raw = _v.get("rate_excl_empty", _v.get("rate"))
+            if _raw is None:
+                continue
+            if float(_raw or 0) < 0.3:
+                _dom = "国内" if _sk == "dom" else "国际"
+                return {"state": "path_degraded", "action": "route",
+                        "severity": "auto",
+                        "hint": "%s %s 近 24h 有效率 %.0f%%（%d 次有效）"
+                                "——已在日志记录路径偏好（影子模式，暂不改变"
+                                "采集顺序）；可点「自检」验证这条域的路"
+                                % (_dom, _name, float(_raw) * 100, _valid),
+                        "eta_s": 0}
     bad = None
     for name, v in paths.items():
         v = v or {}
