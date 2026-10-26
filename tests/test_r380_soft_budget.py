@@ -221,3 +221,50 @@ def test_urgency_ttl_far_date_slows_not_speeds():
     assert p.plan_query("qunar", key, 2500, days_ahead=20)[0] == "slow"
     # 40 天后：慢层翻倍到 240，130 分钟仍应跳过
     assert p.plan_query("qunar", key, 2500, days_ahead=40)[0] == "skip"
+
+
+def test_rate_excl_empty_does_not_punish_sold_out(tmp_path):
+    """5 次全空是售罄，不是路径劣化。"""
+    st = PriceStorage(str(tmp_path / "prices.db"))
+    for i in range(5):
+        st.save_fetch_path("qunar", "SHA", "PEK", "2027-06-01", "H5",
+                           "empty", attempt_id="e%d" % i)
+    node = st.path_stats(24)["qunar"]
+    assert node["paths"]["H5"]["rate"] == 0.0
+    # 分母全是售罄空 -> 没有有效样本，返回 None（不是 0% 失败）
+    assert node["paths"]["H5"]["rate_excl_empty"] is None
+    a = advise("qunar", {"state": "ok"}, node["paths"], node=node)
+    # 全空不应落"路径劣化"（它不是拦截/超时，是售罄）
+    assert a["state"] != "path_degraded"
+
+
+def test_rate_excl_empty_keeps_real_failure_visible(tmp_path):
+    st = PriceStorage(str(tmp_path / "prices.db"))
+    st.save_fetch_path("qunar", "SHA", "PEK", "2027-06-01", "H5", "blocked",
+                       attempt_id="b1")
+    for i in range(4):
+        st.save_fetch_path("qunar", "SHA", "PEK", "2027-06-01", "H5",
+                           "empty", attempt_id="e%d" % i)
+    node = st.path_stats(24)["qunar"]
+    # 分母剔除 empty 后只剩 1 次 blocked -> 0%
+    assert node["paths"]["H5"]["rate_excl_empty"] == 0.0
+    a = advise("qunar", {"state": "ok"}, node["paths"], node=node)
+    assert a["state"] == "path_degraded"
+
+
+def test_probe_rows_are_persisted_with_evidence_level():
+    import inspect
+    import main
+    src = inspect.getsource(main.make_sweep_job)
+    assert 'evidence_level="probe"' in src
+    assert 'attempt_id=_attempt' in src
+
+
+def test_pacing_panel_refreshes_and_counts_down():
+    import inspect
+    import webui
+    src = inspect.getsource(webui)
+    assert "_paceStartAuto" in src and "setInterval" in src
+    assert "if(document.hidden||VIEW!=='cfg')" in src
+    assert "已自动处理" in src          # 自动类建议不再被过滤
+    assert "软拒" in src                # 路径提示可见软拒

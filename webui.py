@@ -3140,6 +3140,8 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
    双击缩放，保留平移与捏合（表格横滚/页面滚动零变化）。置尾晚于
    全部触控块——媒体块无「更严更后胜」（LESSONS 二十一§1）===== */
 @media(pointer:coarse){
+ #paceBox a[onclick]{display:inline-flex;align-items:center;min-height:36px;padding:0 6px}
+ #paceBox select{min-height:36px}
  button,.hbtn,.mtab,nav span,#tabs span,.chip,.mchip,.rngchip,.huser,
  .pill,th.srt,canvas,.cp-city,.cp-abc span,#ftable tr,
  .cnav,.uhead2,.grouplab,.rhead,.chhead,.kpi.clk,.hc,.pbar,.plitem,
@@ -13515,6 +13517,7 @@ function switchView(v,hist){const _from=VIEW;VIEW=v;
  $('monview').style.display=v==='mon'?'':'none';
  $('searchview').style.display=v==='search'?'':'none';
  $('cfgview').style.display=v==='cfg'?'':'none';
+ try{if(v==='cfg'){loadPacing();_paceStartAuto();}else{_paceStopAuto();}}catch(e){}
  try{const _u=v==='mon'?'#mon':v==='search'?'#search':'#cfg';if(hist===false)history.replaceState(null,'',_u);else history.pushState(null,'',_u)}catch(e){}   /* URL 深链同步：用户导航入栈，hash 回放只对齐不叠栈 */
   if(v==='search'){SRX.shown=null;renderSearch();if(!S&&!LOADN)load()}
   if(v==='search'&&_from==='cfg')lgWatchStop();
@@ -14895,10 +14898,24 @@ async function warmNow(p){
   toast(msg);
  }catch(e){if(out)out.textContent='预热失败：'+e;}
 }
+let _paceTimer=null,_paceSnapAt=0;
+function _paceStartAuto(){
+ // 节流面板只在配置页可见时自动刷新：冷却倒计时走字、验证/补采结果
+ // 自动出现。离开配置页或页面隐藏即停，避免无谓轮询。
+ if(_paceTimer)return;
+ _paceTimer=setInterval(()=>{
+  if(document.hidden||VIEW!=='cfg'){return;}
+  const box=$('paceBox');if(!box)return;
+  if(Date.now()-_paceSnapAt<4500)return;   // 防止与手动刷新叠加
+  loadPacing();
+ },10000);
+}
+function _paceStopAuto(){if(_paceTimer){clearInterval(_paceTimer);_paceTimer=null;}}
 async function loadPacing(){
  const box=$('paceBox');if(!box)return;
  try{
   const j=await (await fetch('/api/pacing',{cache:'no-store'})).json();
+  _paceSnapAt=Date.now();
   if(!j.ok){box.innerHTML='<span style="color:var(--red)">'+esc(j.err||'读取失败')+'</span>';return;}
   const CN={qunar:'去哪儿',fliggy:'飞猪',ctrip:'携程',tongcheng:'同程',tuniu:'途牛'};
   const q=j.quiet||{},lr=j.last_round||{},ch=j.channels||{};
@@ -14926,8 +14943,19 @@ async function loadPacing(){
    if(a.severity!=='act'&&a.severity!=='wait')return '';
    return '<span style="white-space:nowrap">'+(CN[k]||k)+'：'+esc(a.hint)+(a.eta_s?('（'+_paceLeft(a.eta_s)+'）'):'')+'</span>';
   }).filter(Boolean);
-  const adviceRow=urg.length
-   ?'<div style="margin:2px 0;color:#b07700">现在要做什么：'+urg.join(' · ')+'</div>'
+  // 自动处理类（路径劣化/软拒/日历兜底）也要出现在建议行：
+  // 否则 chips 显示"路径劣化"、下面却写"各渠道正常"，同屏自相矛盾。
+  const auto=Object.keys(ch).map(k=>{
+   const a=(ch[k]||{}).advice||{};
+   if(a.severity!=='auto')return '';
+   return '<span style="white-space:nowrap">'+(CN[k]||k)+'：'+esc(a.hint)+'</span>';
+  }).filter(Boolean);
+  const adviceRow=(urg.length||auto.length)
+   ?'<div style="margin:2px 0;color:#b07700">'
+     +(urg.length?('现在要做什么：'+urg.join(' · ')):'')
+     +((urg.length&&auto.length)?' · ':'')
+     +(auto.length?('已自动处理：'+auto.join(' · ')):'')
+     +'</div>'
    :'<div style="margin:2px 0;color:#1a9e75">现在无需操作：各渠道近 24h 正常</div>';
   const qs=(q.start&&q.end)?(esc(q.start)+'–'+esc(q.end)+' · 当前'+(q.active?'<b style="color:#b07700">窗内（不扫）</b>':'窗外')):'已关闭';
   const plan=(parseInt(lr.fast)||0)+(parseInt(lr.slow)||0)+(parseInt(lr.skip)||0);
@@ -14942,7 +14970,7 @@ async function loadPacing(){
      const pct=_pacePct(v.rate),onlyCal=(det===0&&cal>0);
      const val=onlyCal?('日历'+cal):(pct+'%');
      const col=onlyCal?'#b07700':_paceColor(pct);
-     const tip=pp+'：尝试'+n+' · 明细'+det+' · 日历'+cal+' · 拦截'+(parseInt(v.blocked)||0)+' · 空'+(parseInt(v.empty)||0)+' · 错误'+(parseInt(v.error)||0)+' · 最近成功'+(v.last_ok_at||'—');
+     const tip=pp+'：尝试'+n+' · 明细'+det+' · 日历'+cal+' · 拦截'+(parseInt(v.blocked)||0)+' · 软拒'+(parseInt(v.soft)||0)+' · 空'+(parseInt(v.empty)||0)+' · 错误'+(parseInt(v.error)||0)+' · 最近成功'+(v.last_ok_at||'—');
      return '<span style="white-space:nowrap" title="'+esc(tip)+'">'+esc(pp)+' <b style="color:'+col+'">'+val+'</b><span style="color:var(--mut)">('+n+')</span></span>';
     };
     const scoped=(name,label)=>{
@@ -14976,6 +15004,7 @@ async function loadPacing(){
    +'<div>本轮计划 '+plan+' 次（快 '+lr.fast+' / 慢 '+lr.slow+' / TTL 内 '+lr.skip+'） · 实发 '+(lr.sent||0)+' 次'
    +(lr.paced?(' · 主动未发 '+(lr.paced||0)+' 次'):'')
    +' · 熔断 '+(lr.trips||[]).length+' 次 · 会话让位 '+esc((lr.busy||[]).join('、')||'无')+'</div>'
+   +((lr.sent_by&&Object.keys(lr.sent_by).length)?('<div>各渠道：'+esc(Object.keys(lr.sent_by).map(k=>(CN[k]||k)+' 实发'+(lr.sent_by[k]||0)+((lr.paced_by&&lr.paced_by[k])?('/未发'+lr.paced_by[k]):'')).join(' · '))+'</div>'):'')
    +'<div>预算：最小间隔 '+esc(String((j.cfg&&j.cfg.min_gap_s)||0))+'s · 每分钟上限 '+esc(String((j.cfg&&j.cfg.per_minute)||0))+'（0=不限） · 近一分钟用量 '
    +esc(Object.keys(j.bucket||{}).map(k=>(CN[k]||k)+' '+((j.bucket[k]||{}).per_min_used||0)).join(' · ')||'无')+'</div>'
    +pathRow+warmRow+probeRow+'<div id="traceOut"></div>';
@@ -15079,7 +15108,7 @@ function buildForm(){if(!CFG)return;let h='',gh='';
   +glcell('首页预热','glbWarm','GLB.warmup_enabled=this.checked',GLB.warmup_enabled!==false,'每轮每渠道先打一次首页再查深链：抹掉「无 referer / 无风控 cookie」这个最强机器指纹','check')
   +glcell('预热渠道','glbWarmP','GLB.warmup_platforms=(this.value||"").trim()',esc(GLB.warmup_platforms||''),'逗号分隔；只对声明了入口的渠道生效，留空=不预热','text',null,'qunar, fliggy, tuniu')
   +'</div>'
-  +'<div id="paceBox" style="margin:6px 0 2px;padding:10px 12px;border:0.5px solid rgba(0,0,0,.12);border-radius:var(--r10);font-size:12px;color:var(--mut);line-height:1.9">读取节流状态…</div>'
+  +'<div id="paceBox" role="status" aria-live="polite" style="margin:6px 0 2px;padding:10px 12px;border:0.5px solid rgba(0,0,0,.12);border-radius:var(--r10);font-size:12px;color:var(--mut);line-height:1.9">读取节流状态…</div>'
   +glsec('通用 · 保存即热生效')
   +'<div class="glgrid">'
   +glcell('浏览器 User-Agent（空=内置默认）','glbUa','GLB.user_agent=this.value',esc(GLB.user_agent||''),'全渠道共用的桌面 UA；风控策略变化时无需改码即可更换','text',null,'留空 = 内置桌面 UA')
@@ -15383,7 +15412,7 @@ function buildForm(){if(!CFG)return;let h='',gh='';
  syncAirModes();
 renderCfgOverview();
 refreshCfgChrome();
-try{loadPacing();}catch(e){}
+try{loadPacing();_paceStartAuto();}catch(e){}
  try{syncRestartHint();}catch(e){}
  if(CFGQ)cfgFilter(CFGQ);
  if(_fkid){const _fe=document.getElementById(_fkid);if(_fe)_fe.focus({preventScroll:true});}}

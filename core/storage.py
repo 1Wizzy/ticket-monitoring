@@ -328,7 +328,7 @@ class PriceStorage:
             return {"paths": {}, "attempts": 0, "ok": 0, "detail_ok": 0,
                     "calendar_ok": 0, "blocked": 0, "soft": 0,
                     "empty": 0, "error": 0,
-                    "rate": 0.0, "detail_rate": 0.0,
+                    "rate": 0.0, "detail_rate": 0.0, "rate_excl_empty": 0.0,
                     "query_attempts": 0, "query_ok": 0,
                     "query_detail_ok": 0, "query_calendar_only": 0,
                     "query_rate": 0.0, "last_at": "", "last_ok_at": ""}
@@ -336,7 +336,7 @@ class PriceStorage:
         def new_path():
             return {"attempts": 0, "ok": 0, "detail_ok": 0, "calendar_ok": 0,
                     "blocked": 0, "soft": 0, "empty": 0, "error": 0,
-                    "rate": 0.0,
+                    "rate": 0.0, "rate_excl_empty": 0.0,
                     "detail_rate": 0.0, "last_at": "", "last_ok_at": ""}
 
         def bump(node, status, last):
@@ -367,6 +367,12 @@ class PriceStorage:
                             if node["attempts"] else 0.0)
             node["detail_rate"] = (round(node["detail_ok"] / node["attempts"], 4)
                                    if node["attempts"] else 0.0)
+            # 售罄空结果不是"路径坏了"：分母里剔除 empty，避免把真无票
+            # 误判成路径劣化，进而错误降频整家渠道。
+            _den = max(0, node["attempts"] - node["empty"])
+            # None = 没有有效样本（全是售罄空），不是 0% 失败
+            node["rate_excl_empty"] = (round(node["ok"] / _den, 4)
+                                       if _den else None)
             node["query_rate"] = (
                 round(node["query_ok"] / node["query_attempts"], 4)
                 if node["query_attempts"] else 0.0)
@@ -376,6 +382,9 @@ class PriceStorage:
                 p["detail_rate"] = (
                     round(p["detail_ok"] / p["attempts"], 4)
                     if p["attempts"] else 0.0)
+                _d2 = max(0, p["attempts"] - p["empty"])
+                p["rate_excl_empty"] = (round(p["ok"] / _d2, 4)
+                                        if _d2 else None)
 
         out = {}
         queries = {}

@@ -528,14 +528,20 @@ def advise(plat, ch=None, paths=None, now=None, node=None):
         n = int(v.get("attempts") or 0)
         if n < 5:
             continue
-        if float(v.get("rate") or 0) < 0.3 and (bad is None
-                                                or n > bad[1]):
-            bad = (name, n, float(v.get("rate") or 0))
+        # 优先用"排除售罄空结果"的比率：真无票不等于路径坏了。
+        # None = 有效样本为 0，不参与判定（既非 0% 也非 100%）。
+        _raw = v.get("rate_excl_empty", v.get("rate"))
+        if _raw is None:
+            continue
+        _r = float(_raw or 0)
+        if _r < 0.3 and (bad is None or n > bad[1]):
+            bad = (name, n, _r)
     if bad:
         return {"state": "path_degraded", "action": "route",
                 "severity": "auto",
-                "hint": "%s 近 24h 成功率 %.0f%%（%d 次）——应少走这条路，"
-                        "让另一条已自动优先" % (bad[0], bad[2] * 100, bad[1]),
+                "hint": "%s 近 24h 成功率 %.0f%%（%d 次）——已在日志记录"
+                        "路径偏好（影子模式，暂不改变采集顺序）；"
+                        "可点「自检」验证这条路" % (bad[0], bad[2] * 100, bad[1]),
                 "eta_s": 0}
     ok_n = sum(int((v or {}).get("ok") or 0) for v in paths.values())
     rate = (q_ok / q_attempts if q_attempts

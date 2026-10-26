@@ -2063,10 +2063,25 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                 prices = c.safe_fetch(q[0], q[1], [q[2]])
                 if rt.get("pacing") is not None:
                     rt["pacing"].record(platform)
+            _raw_paths = [dict(x) for x in (getattr(c, "paths", None) or [])]
+            # 自检也写路径账（evidence_level=probe）：否则"刚验证通过"无法
+            # 覆盖 24h 里的旧劣化，下一次刷新仍判路径劣化。
+            _attempt = "probe-%s-%d" % (platform, int(time.time() * 1000))
+            for _rec in _raw_paths:
+                try:
+                    storage.save_fetch_path(
+                        platform, q[0], q[1], q[2],
+                        _rec.get("path", ""), _rec.get("status", ""),
+                        rows=_rec.get("rows", 0),
+                        note=_rec.get("detail", ""),
+                        evidence_level="probe", attempt_id=_attempt,
+                        http_status=int(_rec.get("http") or 0))
+                except Exception:
+                    pass
             paths = [{"path": p.get("path"), "status": p.get("status"),
                       "rows": p.get("rows"),
                       "detail": str(p.get("detail") or "")[:80]}
-                     for p in (getattr(c, "paths", None) or [])]
+                     for p in _raw_paths]
             out = {"ok": True, "platform": platform, "query": list(q),
                    "scope": (_want or ("intl" if is_intl_route(q[0], q[1])
                                        else "dom")),
@@ -2151,17 +2166,32 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                     # 影子模式：只记录"本会怎么排路径"，不改变采集顺序。
                     # 先用一天对照，确认不会因统计偏差误杀再开自动。
                     try:
-                        _sh = shadow_path_preference(
-                            _node.get("paths") or {})
-                        if _sh["avoid"] or _sh["prefer"]:
-                            logger.info(
-                                "[路径影子] %s 偏好 %s · 建议避让 %s"
-                                "（仅记录，不改变本轮顺序）",
-                                _p,
-                                ",".join("%s %.0f%%" % (x[0], x[1] * 100)
-                                         for x in _sh["prefer"]) or "-",
-                                ",".join("%s %.0f%%" % (x[0], x[1] * 100)
-                                         for x in _sh["avoid"]) or "-")
+                        # 分域跑影子：国内与国际的入口能力不同，合并统计
+                        # 会把"国际 H5 被墙"误算成"国内也该少走 H5"。
+                        for _sc, _sn in ((_node.get("scopes") or {})
+                                         .items()):
+                            _sh = shadow_path_preference(
+                                (_sn or {}).get("paths") or {})
+                            if _sh["avoid"] or _sh["prefer"]:
+                                logger.info(
+                                    "[路径影子] %s/%s 偏好 %s · 建议避让 %s"
+                                    "（仅记录，不改变本轮顺序）",
+                                    _p, _sc,
+                                    ",".join("%s %.0f%%" % (x[0], x[1] * 100)
+                                             for x in _sh["prefer"]) or "-",
+                                    ",".join("%s %.0f%%" % (x[0], x[1] * 100)
+                                             for x in _sh["avoid"]) or "-")
+                        if not (_node.get("scopes") or {}):
+                            _sh = shadow_path_preference(
+                                _node.get("paths") or {})
+                            if _sh["avoid"] or _sh["prefer"]:
+                                logger.info(
+                                    "[路径影子] %s 偏好 %s · 建议避让 %s"
+                                    "（仅记录，不改变本轮顺序）", _p,
+                                    ",".join("%s %.0f%%" % (x[0], x[1] * 100)
+                                             for x in _sh["prefer"]) or "-",
+                                    ",".join("%s %.0f%%" % (x[0], x[1] * 100)
+                                             for x in _sh["avoid"]) or "-")
                     except Exception:
                         pass
                     _qn = int(_node.get("query_attempts") or 0)
@@ -2265,7 +2295,11 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                     # 只有真的拿到风控 cookie 才清软拒标记；否则下一轮
                     # 继续先预热（只访问首页≠已养熟会话）
                     try:
-                        if getattr(c, "warmup_cookie_ok", True):
+                        # 没有声明风控 cookie 判据的渠道（如 tuniu）拿不到
+                        # "真的养熟了"的证据，不能据此清软拒；等它自然
+                        # 成功出数后由 observe(reset) 清。
+                        _has_risk = bool(getattr(c, "RISK_COOKIES", ()) or ())
+                        if _has_risk and getattr(c, "warmup_cookie_ok", False):
                             pac.note_warmup_ok(c.name)
                     except Exception:
                         pass
@@ -2280,6 +2314,8 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
             # 判断"这已经是上一轮的活了"。
             _gen = gen
             if _gen is not None and rt.get("_round_gen") != _gen:
+                if pac is not None:
+                    pac.note_paced(c.name, "stale_round")
                 return [], "paced"
             # 同一轮同一渠道的一次采集（含多返程日）共用一个 attempt_id，
             # 路径账据此按「查询」而不是按「路径行」算成功率。
@@ -2318,6 +2354,7 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                     _stagger_wait(c.name)
                     _warm_once(c)
                     if _gen is not None and rt.get("_round_gen") != _gen:
+                        pac.note_paced(c.name, "stale_round")
                         return [], "paced"
                     # 令牌桶等待必须有预算上限：wait_hint 只算不睡，
                     # 这里睡到窗口重新可用为止；若超过本轮 30s 预算，
@@ -2341,21 +2378,26 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                 if _gen is not None and rt.get("_round_gen") != _gen:
                     logger.info("[节流] %s 上一轮超时 worker 让位，不再发请求",
                                 c.name)
+                    pac.note_paced(c.name, "stale_round")
                     return [], "paced"
                 # 2 区 · 整批持锁：同渠道多返程日一次做完，避免释放锁后
                 # 被别的查询插进来——插队会打断入口页预热链（444 之源）
+                _sent_here = False
                 for _rd in (ret_dates.get(key) or [""]):
                     if _gen is not None and rt.get("_round_gen") != _gen:
                         # 轮次已翻页：这条旧查询不再发新请求，避免"上一轮
                         # 的活"在下一轮继续占额度/打断预热链
                         logger.info("[节流] %s 旧轮查询在返程循环中让位",
                                     c.name)
+                        pac.note_paced(c.name, "stale_round")
                         return [], "paced"
                     if pac is not None:
                         pac.record(c.name)
                     c.last_query = key
-                    if pac is not None:
+                    if pac is not None and not _sent_here:
+                        # 一次查询=一次发送；多返程日同批不重复计预算
                         pac.note_sent(c.name)
+                        _sent_here = True
                     _prices.extend(c.safe_fetch(fc_, tc_, [d_],
                                                 ret_date=_rd))
                     if getattr(c, "last_busy", False):
