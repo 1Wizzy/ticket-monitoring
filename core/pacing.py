@@ -501,6 +501,36 @@ def shadow_path_preference(paths, min_samples=5, low=0.3):
     return {"prefer": ranked[:2], "avoid": avoid}
 
 
+def effect_verdict(effect):
+    """把干预前后对比翻译成一句可执行结论（供建议引擎/面板复用）。
+
+    effect: storage.intervention_effect() 的返回。
+    返回 (state, hint, severity)；无干预或样本不足时如实说"还不能判断"。
+    """
+    e = effect or {}
+    if not e.get("has"):
+        return "none", "", "ok"
+    b, a = e.get("before"), e.get("after")
+    if a is None:
+        return "pending", ("干预后还没有新样本（%s）：等下一轮采集再判断"
+                           % (e.get("action") or "干预")), "wait"
+    if b is None:
+        return "unknown_before", ("干预后成功率 %.0f%%（%d 次）；干预前窗口"
+                                  "无样本，无法对比" % (a * 100,
+                                                     int(e.get("after_n") or 0))), "ok"
+    if a >= 0.7 and a > b:
+        return "improved", ("干预有效：%.0f%% → %.0f%%"
+                            % (b * 100, a * 100)), "ok"
+    if a >= 0.7:
+        return "recovered", ("干预后已回到 %.0f%%（干预前 %.0f%%）"
+                             % (a * 100, b * 100)), "ok"
+    if a > b:
+        return "partial", ("有改善但仍偏低：%.0f%% → %.0f%%，建议再自检一次"
+                           % (b * 100, a * 100)), "wait"
+    return "no_effect", ("干预未见改善：%.0f%% → %.0f%%，换路径/重登后再试"
+                         % (b * 100, a * 100)), "act"
+
+
 def advise(plat, ch=None, paths=None, now=None, node=None):
     """把一个渠道的现状翻译成「用户该做什么」。
 
@@ -804,7 +834,7 @@ class Pacing:
                            # 请求预算：计划数 vs 实际发出，以及按渠道
                            # 计的实际发送/被预算挡下的次数
                            "sent": 0, "paced": 0, "sent_by": {},
-                           "paced_by": {}}
+                           "paced_by": {}, "ok_by": {}, "soft_by": {}}
             self._plan = []
 
     def note_plan(self, plat, key, tier, why):
@@ -821,6 +851,20 @@ class Pacing:
             self._round["sent"] = int(self._round.get("sent") or 0) + 1
             _b = self._round.setdefault("sent_by", {})
             _b[plat] = int(_b.get(plat) or 0) + 1
+
+    def note_result(self, plat, ok=False, soft=False):
+        """记录本轮该渠道是否真的出数（一轮一渠道只记最终结果）。
+
+        这是"本轮成功率"的直接口径：有数渠道数 / 实发渠道数。
+        与路径账不同，它不受一次查询多路径影响。
+        """
+        with self._lock:
+            if ok:
+                _b = self._round.setdefault("ok_by", {})
+                _b[plat] = int(_b.get(plat) or 0) + 1
+            elif soft:
+                _b = self._round.setdefault("soft_by", {})
+                _b[plat] = int(_b.get(plat) or 0) + 1
 
     def note_paced(self, plat, why=""):
         """因 TTL/熔断/预算等待超限而主动没发。"""
@@ -867,6 +911,10 @@ class Pacing:
             rnd = dict(self._round)
             plan = list(self._plan)
             cfg = dict(self.cfg)
+        with self._lock:
+            _sent = sorted((rnd.get("sent_by") or {}).keys())
+            _ok = sorted((rnd.get("ok_by") or {}).keys())
+            _soft = sorted((rnd.get("soft_by") or {}).keys())
         channels = self._breaker.snapshot(now)
         with self._lock:
             health = {k: dict(v) for k, v in self._health.items()}
@@ -886,5 +934,9 @@ class Pacing:
             "channels": channels,
             "bucket": self._bucket.snapshot(now),
             "last_round": rnd,
+            "coverage": {
+                "sent": _sent, "ok": _ok, "soft": _soft,
+                "ratio": (round(len(_ok) / len(_sent), 3) if _sent else 0.0),
+            },
             "plan": plan,
         }

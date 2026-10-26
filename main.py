@@ -2488,6 +2488,11 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
             prices = _prices
             paths = _paths
             _soft = any(x.get("status") == "soft_reject" for x in paths)
+            if pac is not None:
+                try:
+                    pac.note_result(c.name, ok=bool(prices), soft=bool(_soft))
+                except Exception:
+                    pass
             if pac is not None and not prices and not _soft:
                 try:
                     if _gen is None or rt.get("_round_gen") == _gen:

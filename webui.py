@@ -14933,6 +14933,12 @@ async function loadPacing(){
    const vf=(v.scene&&v.scene.verify)||null;
    if(vf)t+=' <span style="color:'+(vf.ok?'#1a9e75':'var(--red)')+';font-size:11px">验证后'+(vf.ok?('✓'+vf.rows+'条'):'✗未通过')+((vf.refill&&vf.refill.rows)?(' · 补采+'+vf.refill.rows):'')+'</span>';
    if(v.scene&&v.scene.retripped)t+=' <span style="color:var(--red);font-size:11px">验证未通过，已重新熔断 '+_paceLeft(v.scene.retripped.cooldown_s)+'</span>';
+   const ef=v.effect||null;
+   if(ef&&ef.state&&ef.state!=='none'){
+    const ecol=(ef.severity==='ok')?'#1a9e75':(ef.severity==='act'?'var(--red)':'#b07700');
+    t+=' <span style="color:'+ecol+';font-size:11px" title="'+esc(ef.hint||'')+'">干预'+
+       (ef.state==='improved'||ef.state==='recovered'?'有效':(ef.state==='pending'?'待观察':(ef.state==='no_effect'?'无效':'部分改善')))+'</span>';
+   }
    if(v.state==='cooldown')acts=' <a href="javascript:void(0)" onclick="paceReset(\''+k+'\')" style="color:var(--blue);font-size:11px">解除</a>'+acts;
    if(v.needs_login||(v.state==='cooldown'&&(v.reason==='ip'||v.reason==='captcha')))
      acts=' <a href="javascript:void(0)" onclick="verifyNow(\''+k+'\')" style="color:#b07700;font-size:11px">去验证</a>'+acts;
@@ -15004,6 +15010,7 @@ async function loadPacing(){
    +'<div>本轮计划 '+plan+' 次（快 '+lr.fast+' / 慢 '+lr.slow+' / TTL 内 '+lr.skip+'） · 实发 '+(lr.sent||0)+' 次'
    +(lr.paced?(' · 主动未发 '+(lr.paced||0)+' 次'):'')
    +' · 熔断 '+(lr.trips||[]).length+' 次 · 会话让位 '+esc((lr.busy||[]).join('、')||'无')+'</div>'
+   +((j.coverage&&(j.coverage.sent||[]).length)?('<div>本轮覆盖率 <b style="color:'+((j.coverage.ratio>=0.8)?'#1a9e75':((j.coverage.ratio>0)?'#b07700':'var(--red)'))+'">'+Math.round((j.coverage.ratio||0)*100)+'%</b>（有数 '+esc((j.coverage.ok||[]).map(k=>CN[k]||k).join('、')||'无')+' / 实发 '+esc((j.coverage.sent||[]).map(k=>CN[k]||k).join('、'))+((j.coverage.soft||[]).length?(' · 软拒 '+esc((j.coverage.soft||[]).map(k=>CN[k]||k).join('、'))):'')+'）</div>'):'')
    +((lr.sent_by&&Object.keys(lr.sent_by).length)?('<div style="white-space:normal;overflow-wrap:anywhere">各渠道：'+esc(Object.keys(lr.sent_by).map(k=>(CN[k]||k)+' 实发'+(lr.sent_by[k]||0)+((lr.paced_by&&lr.paced_by[k])?('/未发'+lr.paced_by[k]):'')).join(' · '))+'</div>'):'')
    +'<div style="white-space:normal;overflow-wrap:anywhere">预算：最小间隔 '+esc(String((j.cfg&&j.cfg.min_gap_s)||0))+'s · 每分钟上限 '+esc(String((j.cfg&&j.cfg.per_minute)||0))+'（0=不限） · 近一分钟用量 '
    +esc(Object.keys(j.bucket||{}).map(k=>(CN[k]||k)+' '+((j.bucket[k]||{}).per_min_used||0)).join(' · ')||'无')+'</div>'
@@ -15032,7 +15039,13 @@ async function showTrace(p){
      +(x.ms?(' · '+esc((x.ms/1000).toFixed(1))+'s'):'')
      +(x.note?(' · '+esc(String(x.note).slice(0,48))):'')+'</div>';
   }).join('');
-  out.innerHTML='<div style="margin-top:6px;font-size:11px;color:var(--mut)">'+esc(p)+' 最近尝试（时间 · 入口 · 状态 · 证据）</div>'+(rows||'<div style="color:var(--mut)">无记录</div>')
+  const eff=j.effect||{};
+  const effLine=(eff.has)?('<div style="margin-top:6px;font-size:11px">干预后对比：'
+    +'<span style="color:var(--mut)">前 24h '+(eff.before==null?'无样本':(Math.round(eff.before*100)+'%（'+eff.before_n+'）'))+'</span>'
+    +' → <b style="color:'+((eff.after==null)?'var(--mut)':((eff.after>=0.5)?'#1a9e75':'var(--red)'))+'">'
+    +(eff.after==null?'无样本':(Math.round(eff.after*100)+'%（'+eff.after_n+'）'))+'</b>'
+    +(eff.after==null?' · <span style="color:var(--mut)">干预后还没有新样本</span>':'')+'</div>'):'';
+  out.innerHTML=effLine+'<div style="margin-top:6px;font-size:11px;color:var(--mut)">'+esc(p)+' 最近尝试（时间 · 入口 · 状态 · 证据）</div>'+(rows||'<div style="color:var(--mut)">无记录</div>')
    +'<div style="margin-top:6px;font-size:11px;color:var(--mut)">'+esc(p)+' 干预记录（时间 · 动作 · 结果 · 耗时）</div>'+(ivs||'<div style="color:var(--mut)">暂无干预</div>');
  }catch(e){out.textContent='溯源失败：'+e;}
 }
@@ -25684,12 +25697,14 @@ class _Handler(BaseHTTPRequestHandler):
                     "db_path"), "data/prices.db")
                 rows = []
                 ivs = []
+                eff = None
                 if os.path.isfile(db):
                     _st = PriceStorage(db)
                     rows = _st.recent_paths(_plat, _lim)
                     ivs = _st.interventions(_plat, _lim)
+                    eff = _st.intervention_effect(_plat, 24)
                 self._json({"ok": True, "platform": _plat, "rows": rows,
-                            "interventions": ivs})
+                            "interventions": ivs, "effect": eff})
             except Exception as e:
                 self._json({"ok": False, "err": str(e)}, 500)
         elif self.path == "/api/pacing":
@@ -25708,11 +25723,38 @@ class _Handler(BaseHTTPRequestHandler):
                     from core.pacing import advise
                     _ps = (_paths_payload(24).get("platforms") or {})
                     _scene = getattr(_State, "scene", None) or {}
+                    _eff = {}
+                    try:
+                        _dbp2 = _anchored(
+                            ((_State.cfg or {}).get("output") or {}).get(
+                                "db_path"), "data/prices.db")
+                        if os.path.isfile(_dbp2):
+                            _pst = PriceStorage(_dbp2)
+                            for _p0 in (_State.cfg and ["ctrip", "fliggy",
+                                        "qunar", "tongcheng", "tuniu"] or []):
+                                _eff[_p0] = _pst.intervention_effect(_p0, 24)
+                    except Exception:
+                        _eff = {}
                     for _p, _ch in (data.get("channels") or {}).items():
                         _ch["advice"] = advise(
                             _p, _ch, _ps.get(_p, {}).get("paths") or {},
                             node=_ps.get(_p) or {})
                         _ch["scene"] = _scene.get(_p) or {}
+                        _e = _eff.get(_p) or {}
+                        if _e.get("has"):
+                            try:
+                                from core.pacing import effect_verdict
+                                _st0, _hint, _sev = effect_verdict(_e)
+                                _ch["effect"] = {
+                                    "state": _st0, "hint": _hint,
+                                    "severity": _sev,
+                                    "before": _e.get("before"),
+                                    "after": _e.get("after"),
+                                    "action": _e.get("action"),
+                                    "after_n": _e.get("after_n"),
+                                }
+                            except Exception:
+                                pass
                 except Exception as _ae:
                     _State.logger.warning("[建议] 生成失败: %s", _ae)
                 data["ok"] = True

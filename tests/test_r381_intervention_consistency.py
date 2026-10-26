@@ -236,3 +236,50 @@ def test_manual_reset_verifies_and_reports_truth():
     assert 'save_intervention(' in block
     assert '"reset", ok=_ok' in block, "干预账的 ok 必须来自探测结果"
     assert '"probe": _probe' in block, "响应里要带回探测结果"
+
+
+def test_round_coverage_counts_channel_level_success():
+    """一轮成功率 = 有数渠道 / 实发渠道，与路径行数无关。"""
+    from core.pacing import Pacing
+    p = Pacing({})
+    p.begin_round("19:00:00")
+    for c in ("ctrip", "qunar", "tunghu"):
+        p.note_sent(c)
+    p.note_result("ctrip", ok=True)
+    p.note_result("qunar", ok=False, soft=True)
+    cov = p.snapshot()["coverage"]
+    assert cov["ok"] == ["ctrip"]
+    assert cov["soft"] == ["qunar"]
+    assert cov["sent"] == ["ctrip", "qunar", "tunghu"]
+    assert cov["ratio"] == round(1 / 3, 3)
+
+
+def test_panel_shows_coverage_row():
+    import inspect
+    import webui
+    src = inspect.getsource(webui)
+    assert "本轮覆盖率" in src
+
+
+def test_intervention_effect_before_after(tmp_path):
+    st = PriceStorage(str(tmp_path / "prices.db"))
+    st.save_fetch_path("qunar", "SHA", "PEK", "2027-06-01", "H5", "blocked",
+                       attempt_id="a1")
+    st.save_intervention("qunar", "verify", ok=True, rows=10)
+    st.save_fetch_path("qunar", "SHA", "PEK", "2027-06-01", "H5", "ok",
+                       attempt_id="a2")
+    eff = st.intervention_effect("qunar")
+    assert eff["has"] is True and eff["action"] == "verify"
+    assert eff["after"] is not None and eff["after_n"] >= 1
+    # 无干预渠道如实返回 has=False
+    assert st.intervention_effect("ctrip")["has"] is False
+
+
+def test_effect_sql_bindings_are_consistent(tmp_path):
+    """回归：曾因占位符数量不符抛 ProgrammingError。"""
+    st = PriceStorage(str(tmp_path / "prices.db"))
+    st.save_intervention("qunar", "reset", ok=False)
+    st.save_fetch_path("qunar", "SHA", "PEK", "2027-06-01", "H5", "ok",
+                       attempt_id="z1")
+    eff = st.intervention_effect("qunar")
+    assert eff["ok"] is True and "before" in eff and "after" in eff

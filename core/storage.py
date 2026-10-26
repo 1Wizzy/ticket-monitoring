@@ -242,6 +242,39 @@ class PriceStorage:
                  str(after or "")[:400], str(note or "")[:400],
                  int(ms or 0)))
 
+    def intervention_effect(self, platform, hours=24):
+        """干预前后成功率对比：回答"干预到底有没有把渠道救回来"。
+
+        以该渠道最近一次干预时间为分界：
+          前 24h：干预前同窗口的路径成功率
+          后 24h：干预后到现在的路径成功率（样本不足如实返回 None）
+        """
+        with self._conn() as c:
+            iv = c.execute(
+                "SELECT at, action, ok FROM interventions WHERE platform=? "
+                "ORDER BY id DESC LIMIT 1", (str(platform),)).fetchone()
+            if not iv:
+                return {"ok": True, "platform": platform, "has": False}
+            at = str(iv["at"] or "")
+            def _rate(where, params):
+                row = c.execute(
+                    "SELECT SUM(CASE WHEN path_status IN ('ok','calendar') "
+                    "THEN 1 ELSE 0 END) AS ok, COUNT(*) AS n "
+                    "FROM fetch_paths WHERE platform=? AND " + where,
+                    params).fetchone()
+                n = int(row["n"] or 0)
+                return (round(int(row["ok"] or 0) / n, 4) if n else None), n
+            before, bn = _rate(
+                "fetched_at < ? AND fetched_at >= datetime(?, ?)",
+                (str(platform), at, at,
+                 "-%d hours" % max(1, int(hours))))
+            after, an = _rate("fetched_at >= ?", (str(platform), at))
+            return {"ok": True, "platform": platform, "has": True,
+                    "at": at, "action": str(iv["action"] or ""),
+                    "iv_ok": bool(iv["ok"]),
+                    "before": before, "before_n": bn,
+                    "after": after, "after_n": an}
+
     def interventions(self, platform="", limit=20):
         """最近 N 条干预，按时间倒序（可观测：干预是否真的有效）。"""
         limit = max(1, min(200, int(limit or 20)))
