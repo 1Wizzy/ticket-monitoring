@@ -88,3 +88,44 @@ def test_scheduler_honours_wake_at(monkeypatch):
     delta_min = (nxt - before).total_seconds() / 60.0
     assert delta_min <= 3.5, delta_min          # 180s ≈ 3 分钟，不是 30 分钟
     assert "wake_at" not in state, "一次性键必须消费掉"
+
+
+# ---- r392：原始明细保留期单源（8 天），不再白占 7–14 天的 never-read 数据 ----
+
+def test_raw_retain_days_matches_all_readers():
+    """所有读取方都在 168h（7 天）内，保留期不应超过它太多。"""
+    import inspect
+    import report
+    from core import alerter as _al
+    from core.storage import PriceStorage
+    assert PriceStorage.RAW_RETAIN_DAYS == 8
+    # 走势读取窗=168h（调用方传参；_rounds 自身默认 48h）
+    assert "hours=168" in inspect.getsource(_al),         "走势读取窗必须是 168h；扩大窗口时须同步 RAW_RETAIN_DAYS"
+    assert "hours=168" in inspect.getsource(report)
+    assert PriceStorage.RAW_RETAIN_DAYS >= 7,         "保留期必须覆盖 168h 读取窗（含边界余量）"
+
+
+def test_purge_default_uses_retention_constant(tmp_path):
+    import sqlite3
+    from datetime import datetime, timedelta
+    from core.storage import PriceStorage
+    st = PriceStorage(str(tmp_path / "p.db"))
+    db = st.db_path
+
+    def ins(days_ago, price=100.0):
+        ts = (datetime.now() - timedelta(days=days_ago)
+              ).strftime("%Y-%m-%d %H:%M:%S")
+        with sqlite3.connect(db) as c:
+            c.execute("INSERT INTO flight_prices (platform, from_city, "
+                      "to_city, depart_date, price, extra, fetched_at) "
+                      "VALUES ('qunar','A','B','2026-11-16',?, '', ?)",
+                      (price, ts))
+
+    ins(1)                       # 保留
+    ins(PriceStorage.RAW_RETAIN_DAYS + 1)   # 该删
+    n = st.purge()               # 缺省 = RAW_RETAIN_DAYS
+    assert n == 1, n
+    with sqlite3.connect(db) as c:
+        left = [r[0] for r in c.execute(
+            "SELECT price FROM flight_prices")]
+    assert left == [100.0]

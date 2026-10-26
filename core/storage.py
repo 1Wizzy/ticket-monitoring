@@ -681,11 +681,23 @@ class PriceStorage:
                 ("-%d hours" % hours,)).fetchall()
         return [dict(r) for r in rows]
 
-    def purge(self, days: int = 14) -> int:
+    # 原始明细行的保留天数（r392）。所有读取方都在 168h（7 天）内：
+    # `report._rounds(hours=168)` 走势、`latest_prices(24*7)` 重启 TTL
+    # 基线、`recent_platform_flights(hours<=6)` 补位。更长的走势窗由
+    # `price_daily` 日桶承载（400 天）。此前 purge 用 14 天，实测库里
+    # 7–14 天区间积了 11843 行 / 184 MB 的 never-read `extra` 大 JSON
+    # （全库 406 MB）。留 1 天余量防边界翻转。
+    RAW_RETAIN_DAYS = 8
+
+    def purge(self, days: int = 0) -> int:
         """删除 N 天前的价格明细（extra 大 JSON 是增长主体）与特价
         核实留痕；alert_state 保留（去抖状态）。price_daily 聚合桶
         不随 purge（半年走势窗的数据本体），其 400 天自清在
-        daily_series 读时惰性执行。返回删除行数。"""
+        daily_series 读时惰性执行。返回删除行数。
+
+        days 缺省=RAW_RETAIN_DAYS（不再硬编码 14：14 天比任何读取方
+        的需要都长，纯占盘）。"""
+        days = int(days or self.RAW_RETAIN_DAYS)
         with self._conn() as c:
             cur = c.execute(
                 "DELETE FROM flight_prices WHERE fetched_at < "

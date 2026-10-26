@@ -2874,9 +2874,11 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
         except Exception as e:
             logger.warning("[渠道告警] 哨异常: %s", e)
         logger.info("===== 本轮扫描结束 =====")
-        # 数据窗口维护：删 14 天前明细（extra 大 JSON 是增长主体）
+        # 数据窗口维护：删过期明细（extra 大 JSON 是增长主体）。
+        # 保留天数单源在 PriceStorage.RAW_RETAIN_DAYS（8 天）：所有
+        # 读取方都在 168h 内，14 天纯占盘（实测白占 184 MB）。
         try:
-            n = storage.purge(days=14)
+            n = storage.purge()
             if n:
                 logger.info("[存储] 已清理 %d 条过期价格记录", n)
         except Exception as e:
