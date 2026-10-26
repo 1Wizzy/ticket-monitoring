@@ -150,3 +150,34 @@ def test_legacy_real_login_is_not_relabelled(tmp_path):
                            attempt_id="t%d" % i)
     row = st.failure_recurrence(24, 3)[0]
     assert row["status"] == "login" and row["kind"] == "login"
+
+
+def test_legacy_no_result_login_rows_are_relabelled_as_empty(tmp_path):
+    """去哪儿"原站无符合条件的航班"曾被记 login（1999 双向重载）。
+
+    真实 48h 账本里这类历史行 44 条；不按证据改判，复发面板会把
+    真无票说成"登录态失效（需人工）"，把用户推去做无用重登。
+    """
+    from core.storage import PriceStorage
+    st = PriceStorage(str(tmp_path / "p.db"))
+    for i in range(3):
+        st.save_fetch_path(
+            "qunar", "SHA", "HKG", "2026-11-10", "API", "login",
+            note="原站返回无符合条件的航班（可能受指纹 SDK/风控环境影响）",
+            attempt_id="q%d" % i)
+    row = st.failure_recurrence(24, 3)[0]
+    assert row["status"] == "empty"
+    assert row["kind"] == "empty"
+    assert "无符合条件的航班" in (row["evidence"] or {}).get("note", "")
+
+
+def test_legacy_1999_login_wall_stays_login(tmp_path):
+    """1999 国际列表硬拒是真的登录墙（重登可恢复），不得改判 empty。"""
+    from core.storage import PriceStorage
+    st = PriceStorage(str(tmp_path / "p.db"))
+    for i in range(3):
+        st.save_fetch_path("qunar", "SHA", "HKG", "2026-11-10", "H5",
+                           "login", note="国际列表 1999/8 未登录硬拒",
+                           attempt_id="k%d" % i)
+    row = st.failure_recurrence(24, 3)[0]
+    assert row["status"] == "login" and row["kind"] == "login"

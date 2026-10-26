@@ -280,3 +280,39 @@ def test_window_path_recorded_as_calendar(monkeypatch):
     assert all(p["status"] == "calendar" for p in notes)
     assert all(p["http"] == 200 for p in notes), "HTTP 状态入账"
     assert all(p["date"] for p in notes), "逐日可溯源"
+
+
+# ---- 建议引擎：窗历出数后不得再喊日历劣化 ----
+
+def _deg_node(paths):
+    return {"paths": paths, "query_attempts": 10, "query_ok": 5,
+            "query_detail_ok": 0, "query_calendar_only": 5,
+            "scopes": {"dom": {"paths": {}},
+                       "intl": {"paths": paths}}}
+
+
+def test_advise_skips_calendar_family_when_window_ok():
+    from core.pacing import advise
+    paths = {
+        "日历": {"attempts": 20, "ok": 0, "calendar_ok": 0,
+                 "rate": 0.0, "rate_excl_empty": 0.0},
+        "窗历": {"attempts": 20, "ok": 20, "calendar_ok": 20,
+                 "rate": 1.0, "rate_excl_empty": 1.0},
+    }
+    a = advise("tongcheng", {}, paths,
+               now=None, node=_deg_node(paths))
+    assert a["state"] != "path_degraded", \
+        "同域窗历在出数，不能再把旧日历路径报成待修（%s）" % a
+
+
+def test_advise_still_reports_other_degraded_paths():
+    from core.pacing import advise
+    paths = {
+        "窗历": {"attempts": 20, "ok": 20, "calendar_ok": 20,
+                 "rate": 1.0, "rate_excl_empty": 1.0},
+        "H5列表": {"attempts": 20, "ok": 0, "calendar_ok": 0,
+                   "rate": 0.0, "rate_excl_empty": 0.0},
+    }
+    a = advise("tongcheng", {}, paths, now=None, node=_deg_node(paths))
+    assert a["state"] == "path_degraded"
+    assert "H5列表" in a["hint"]

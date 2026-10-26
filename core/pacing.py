@@ -623,12 +623,29 @@ def advise(plat, ch=None, paths=None, now=None, node=None):
     # 域级劣化优先：国内好、国际被登录墙拦住时，不应该把整家渠道
     # 判成"路径劣化"（用户会误以为国内也不能用）。
     scopes = node.get("scopes") or {}
+    # 域内已有日历族通路在出数时，同域日历族路径的"0% 有效率"不再
+    # 单独报劣化：窗历（r384）与页内签名日历是同一类数据的不同通路，
+    # 前者本就替代后者——否则面板会一边显示窗历成功、一边喊日历劣化。
+    _CAL_FAMILY = ("日历", "窗历")
+
+    def _cal_family_ok(_sp):
+        for _n2, _v2 in (_sp or {}).items():
+            if not str(_n2).startswith(_CAL_FAMILY):
+                continue
+            if int((_v2 or {}).get("calendar_ok") or 0) > 0:
+                return True
+        return False
+
     for _sk, _sv in scopes.items():
         _sp = (_sv or {}).get("paths") or {}
+        _fam_ok = _cal_family_ok(_sp)
         for _name, _v in _sp.items():
             _n = int((_v or {}).get("attempts") or 0)
             _valid = max(0, _n - int((_v or {}).get("empty") or 0))
             if _valid < 3:
+                continue
+            # 日历族已被同域其它通路替代：它的历史失败不再是"待修的路"
+            if _fam_ok and str(_name).startswith(_CAL_FAMILY):
                 continue
             _raw = _v.get("rate_excl_empty", _v.get("rate"))
             if _raw is None:
@@ -642,11 +659,14 @@ def advise(plat, ch=None, paths=None, now=None, node=None):
                                 "采集顺序）；可点「自检」验证这条域的路"
                                 % (_dom, _name, float(_raw) * 100, _valid),
                         "eta_s": 0}
+    _fam_all_ok = _cal_family_ok(paths)
     bad = None
     for name, v in paths.items():
         v = v or {}
         n = int(v.get("attempts") or 0)
         if n < 5:
+            continue
+        if _fam_all_ok and str(name).startswith(_CAL_FAMILY):
             continue
         # 优先用"排除售罄空结果"的比率：真无票不等于路径坏了。
         # None = 有效样本为 0，不参与判定（既非 0% 也非 100%）。
