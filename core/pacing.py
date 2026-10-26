@@ -1037,7 +1037,10 @@ class Pacing:
             "last_round": rnd,
             "coverage": {
                 "sent": _sent, "ok": _ok, "soft": _soft,
-                "ratio": (round(len(_ok) / len(_sent), 3) if _sent else 0.0),
+                # r388：本轮没有任何实发时 ratio=None（不是 0%）——
+                # 0% 会让「刚重启/静默窗跳过」看起来像"全军覆没"。
+                "ratio": (round(len(_ok) / len(_sent), 3) if _sent
+                          else None),
             },
             "plan": plan,
         }

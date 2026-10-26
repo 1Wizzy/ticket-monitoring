@@ -128,3 +128,32 @@ def test_no_missing_stdlib_names_in_crawlers_and_core():
         if missing:
             bad.append((os.path.basename(path), missing))
     assert not bad, bad
+
+
+# ---- r388c：本轮覆盖率的"没发"与"全失败"必须可区分 ----
+
+def test_coverage_ratio_none_when_nothing_sent():
+    """刚重启/静默窗跳过后 sent=[]，ratio 必须是 None 而不是 0%。
+
+    0% 会让"本轮没发任何请求"看起来像"发了全失败"。
+    """
+    from core.pacing import Pacing
+    p = Pacing({})
+    cov = p.snapshot()["coverage"]
+    assert cov["sent"] == [] and cov["ratio"] is None, cov
+    p.begin_round("10:00:00")
+    p.note_sent("qunar")
+    p.note_sent("tuniu")
+    p.note_result("qunar", ok=True)
+    p.note_result("tuniu", ok=False)
+    cov2 = p.snapshot()["coverage"]
+    assert cov2["sent"] and cov2["ratio"] is not None
+    assert 0.0 <= float(cov2["ratio"]) <= 1.0
+
+
+def test_ui_renders_dash_for_empty_coverage():
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "webui.py"), encoding="utf-8").read()
+    assert "(j.coverage.ratio||0)*100" not in src, \
+        "不得再把「没发」渲染成 0%"
+    assert "j.coverage.ratio==null?'—'" in src
