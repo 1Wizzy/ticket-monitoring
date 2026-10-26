@@ -208,3 +208,14 @@ def test_direct_plane_kept_and_segments_zero():
     r = rows[0]
     assert r["plane"] == "中型机321"
     assert r["segments"] == 0
+
+
+def test_segments_parsed_from_tips_not_from_time_blocks():
+    """segs（.time-info 计数）对中转恒为 1；段数必须来自「N程航班」。"""
+    two = FliggyCrawler._parse_intl_items([_transfer(tips="2程航班")],
+                                          "2026-11-16")[0]
+    four = FliggyCrawler._parse_intl_items([_transfer(tips="4程航班")],
+                                           "2026-11-16")[0]
+    assert two["segments"] == 2 and four["segments"] == 4
+    assert FliggyCrawler._seg_n("2程航班") == 2
+    assert FliggyCrawler._seg_n("") == 2   # 有转城市即至少两段

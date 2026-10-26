@@ -516,6 +516,12 @@ class FliggyCrawler(BaseCrawler):
       };
     })"""
 
+    @staticmethod
+    def _seg_n(tips: str) -> int:
+        """「2程航班」→ 2；无该串按中转卡片最小 2 段（有转城市即至少两段）。"""
+        m = re.search(r"(\d+)\s*程航班", str(tips or ""))
+        return int(m.group(1)) if m else 2
+
     @classmethod
     def _parse_intl_items(cls, items, date: str) -> list:
         """国际列表 DOM 提取值 → extra 行；无时刻/正价一律丢。
@@ -583,7 +589,9 @@ class FliggyCrawler(BaseCrawler):
                 # tips 对直飞是机型串（「中型机320」），对中转是段数
                 # 标记（「2程航班」）——写进 plane 会让机型列显示"2程航班"
                 "plane": ("" if (trans or segs > 1) else tips),
-                "segments": (segs if (trans or segs > 1) else 0),
+                # 真实段数从 tips 的「N程航班」取（segs 是时间块计数，
+                # 对中转也恒为 1，不能当段数）
+                "segments": (cls._seg_n(tips) if (trans or segs > 1) else 0),
                 "price": price, "tax": tax,
                 "leftTickets": qty,
                 "transfer": bool(trans) or segs > 1,
