@@ -467,12 +467,18 @@ class FliggyCrawler(BaseCrawler):
                         self.logger.warning(
                             "[fliggy][intl] %s 列表空/未登录（%s→%s）",
                             date, fc, tc)
+                    # r388：登录判定只认真登录墙（passport/请登录/扫码登录…）。
+                    # 旧正则 (登录|扫码|login) 打整页文本——页头「登录/注册」
+                    # 与页脚「扫码下载飞猪 App」恒命中，于是**任何空结果都会
+                    # 被记成 login**，触发 15 分钟登录冷却并提示用户重登，
+                    # 而页面其实已登录（有「退出/我的订单」）。与国内路径
+                    # 同用 classify_text 单源判据。
                     try:
                         _body = page.inner_text("body")[:800]
                     except Exception:
                         _body = ""
-                    _login = bool(re.search(r"登录|扫码|passport|login",
-                                            str(page.url) + " " + _body))
+                    _sig = classify_text(_body, str(page.url))
+                    _login = bool(_sig and _sig.status == "login")
                     self.path_note(
                         "PC", "ok" if rows else ("login" if _login else "empty"),
                         rows=len(rows), date=date,

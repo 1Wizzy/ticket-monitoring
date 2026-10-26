@@ -18,6 +18,7 @@ from core.models import PRICE_MAX, PRICE_MIN, FlightPrice
 from core.citydata import CODE_NAME as _CODE_NAME
 from core.intl import airport_city_code, city_short_of, is_intl_route
 from .base import BaseCrawler, iata2, iata3
+from .challenge import classify_text
 
 
 class TongchengCrawler(BaseCrawler):
@@ -996,7 +997,9 @@ class TongchengCrawler(BaseCrawler):
                             _body = ""
                         _blocked = bool(re.search(
                             r"验证码|人机验证|滑动验证|拖动|安全验证|拼图", _body))
-                        _login = bool(re.search(r"登录|扫码|账号密码", _body))
+                        # r388：只认真登录墙文案（页头链接不算）
+                        _sig = classify_text(_body, str(page.url))
+                        _login = bool(_sig and _sig.status == "login")
                         self.path_note(
                             "H5", "blocked" if _blocked
                             else ("login" if _login else "empty"),

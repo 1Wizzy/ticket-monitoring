@@ -233,8 +233,10 @@ class CtripCrawler(BaseCrawler):
                             _body = ""
                         _blocked = bool(re.search(
                             r"whaleguard|验证码|安全验证|访问验证|滑块", _body))
-                        _login = bool(re.search(
-                            r"登录|扫码|账号密码", _body))
+                        # r388：只认真登录墙文案（页头「登录/注册」类链接
+                        # 不算），与 classify_text 单源判据一致
+                        _sig = classify_text(_body, str(page.url))
+                        _login = bool(_sig and _sig.status == "login")
                         if _blocked:
                             _detail = "风控验证页"
                         elif _drop_date:
