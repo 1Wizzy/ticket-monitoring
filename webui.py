@@ -14957,6 +14957,7 @@ async function loadPacing(){
    else if(v.needs_login)t='<span style="color:#b07700">需登录</span>';
    else if(adv.state==='path_degraded')t='<span style="color:#b07700">路径劣化</span>';
    else if(adv.state==='soft_reject')t='<span style="color:#b07700">软拒待预热</span>';
+   else if(adv.state==='recovering')t='<span style="color:#1a9e75">恢复中</span>';
    else if(adv.state==='calendar_only')t='<span style="color:#b07700">仅有日历</span>';
    else if(adv.state==='stale')t='<span style="color:#b07700">数据陈旧</span>';
    else if(adv.state==='degraded')t='<span style="color:#b07700">成功率低</span>';
@@ -14969,7 +14970,7 @@ async function loadPacing(){
    if(ef&&ef.state&&ef.state!=='none'){
     const ecol=(ef.severity==='ok')?'#1a9e75':(ef.severity==='act'?'var(--red)':'#b07700');
     t+=' <span style="color:'+ecol+';font-size:11px" title="'+esc(ef.hint||'')+'">干预'+
-       (ef.state==='improved'||ef.state==='recovered'?'有效':(ef.state==='pending'?'待观察':(ef.state==='no_effect'?'无效':'部分改善')))+'</span>';
+       (ef.state==='improved'||ef.state==='recovered'?'有效':(ef.state==='pending'?'待观察':(ef.state==='provisional'?'待复验':(ef.state==='no_effect'?'无效':'部分改善'))))+'</span>';
    }
    if(v.state==='cooldown')acts=' <a href="javascript:void(0)" onclick="paceReset(\''+k+'\')" style="color:var(--blue);font-size:11px">解除</a>'+acts;
    if(v.needs_login||(v.state==='cooldown'&&(v.reason==='ip'||v.reason==='captcha')))
@@ -25787,6 +25788,23 @@ class _Handler(BaseHTTPRequestHandler):
                                     "action": _e.get("action"),
                                     "after_n": _e.get("after_n"),
                                 }
+                                # 干预已见效时，不要再让 chip 同时说
+                                # "路径劣化"：旧 24h 样本仍含失败，但结论
+                                # 已被干预后的新样本推翻。改为"恢复中"，
+                                # 并保留"再观察一轮"的诚实口径。
+                                if (_st0 in ("improved", "recovered")
+                                        and (_ch.get("advice") or {})
+                                        .get("state") in
+                                        ("path_degraded", "degraded")):
+                                    _ch["advice"] = {
+                                        "state": "recovering",
+                                        "action": "watch",
+                                        "severity": "ok" if _st0 ==
+                                        "recovered" else "wait",
+                                        "eta_s": 0,
+                                        "hint": _hint + "；旧 24h 样本仍含"
+                                                "干预前失败，下一轮自然转正常",
+                                    }
                             except Exception:
                                 pass
                 except Exception as _ae:

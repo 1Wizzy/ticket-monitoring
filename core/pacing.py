@@ -526,6 +526,11 @@ def effect_verdict(effect):
     if a is None:
         return "pending", ("干预后还没有新样本（%s）：等下一轮采集再判断"
                            % (e.get("action") or "干预")), "wait"
+    # 样本护栏：干预后只有 1-2 次就宣布"已恢复"是过度自信。
+    if int(e.get("after_n") or 0) < 3:
+        return "provisional", ("干预后仅 %d 个样本（成功率 %.0f%%）："
+                               "再观察一轮再定论"
+                               % (int(e.get("after_n") or 0), a * 100)), "wait"
     if b is None:
         return "unknown_before", ("干预后成功率 %.0f%%（%d 次）；干预前窗口"
                                   "无样本，无法对比" % (a * 100,

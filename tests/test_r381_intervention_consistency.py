@@ -311,3 +311,34 @@ def test_near_days_configurable():
     p.note_fetch("qunar", key, 900, True)
     now[0] += 16 * 60
     assert p.plan_query("qunar", key, 900, days_ahead=6)[0] == "fast"
+
+
+def test_effect_needs_three_samples_to_claim_recovery():
+    from core.pacing import effect_verdict
+    # 1 个样本：只能说"待复验"，不能说"已恢复"
+    s, hint, sev = effect_verdict({"has": True, "action": "probe",
+                                   "before": 0.09, "after": 1.0,
+                                   "after_n": 1})
+    assert s == "provisional" and sev == "wait"
+    # 3 个样本且 >=70%：可以判有效
+    s2, _h, sev2 = effect_verdict({"has": True, "action": "probe",
+                                   "before": 0.09, "after": 0.8,
+                                   "after_n": 3})
+    assert s2 in ("improved", "recovered")
+
+
+def test_effect_pending_when_no_after_samples():
+    from core.pacing import effect_verdict
+    s, _h, sev = effect_verdict({"has": True, "action": "verify",
+                                 "before": 0.2, "after": None,
+                                 "after_n": 0})
+    assert s == "pending" and sev == "wait"
+
+
+def test_advice_no_longer_contradicts_effect():
+    """干预已见效时，advice 不得仍报 path_degraded。"""
+    import inspect
+    import webui
+    src = inspect.getsource(webui)
+    assert '"recovering"' in src
+    assert "旧 24h 样本仍含" in src
