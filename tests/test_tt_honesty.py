@@ -54,6 +54,11 @@ class _FakePage:
     def evaluate(self, script, arg=None, *a, **k):
         if self._eval_exc is not None:
             raise self._eval_exc
+        # 探针面先抓 H5 卡片（DOM 脚本），再打页内日历（fetch 脚本）：
+        # 两种脚本返回不同形状，夹具必须按脚本区分，否则卡片拿到日历
+        # 的 dict 会在解析里炸。本文件只钉日历/列表失败分层，卡片给空。
+        if "flightBoxId" in str(script):
+            return []
         return self._eval_result
 
 
@@ -75,7 +80,10 @@ class _FakeCtx:
 def _tc(monkeypatch, *, goto_exc=None, eval_result=None, eval_exc=None,
         req_resp=None, req_exc=None):
     c = TongchengCrawler({"delay_min": 0, "delay_max": 0}, _LOG)
-    c.probe_mode = False
+    # 页内日历/列表只在实际探针里走浏览器：r384 起定时面窗历没出数
+    # 就不再启浏览器（该渠道页内日历恒 444）。本文件钉的是这条浏览器
+    # 路径的失败分层，故按探针模式建模。
+    c.probe_mode = True
     c.path_reset()
     page = _FakePage(goto_exc=goto_exc, eval_result=eval_result,
                      eval_exc=eval_exc)
@@ -85,6 +93,16 @@ def _tc(monkeypatch, *, goto_exc=None, eval_result=None, eval_exc=None,
         lambda self, headless=None: contextlib.nullcontext(ctx))
     monkeypatch.setattr(c, "new_page", lambda _ctx: page)
     monkeypatch.setattr(c, "_sleep", lambda: None)
+    # 夹具的假页面不睡眠：列表等待窗口缩到 0，否则每例白等 25s 墙钟
+    monkeypatch.setattr(c, "INTL_LIST_WAIT_S", 0)
+    # 本文件钉的是「页内日历/列表」失败分层；r384 的 90 天窗历是另一条
+    # 真实 HTTP 源，放它跑会绕过本夹具的故障注入并真连外网。窗历自身的
+    # 分级由 test_r384_tc_window.py 覆盖，这里把它钉成「不可用」。
+    monkeypatch.setattr(
+        c, "_intl_window_prices",
+        lambda fc, tc, ds: ({}, {"calls": 0, "dates": len(ds), "covered": 0,
+                                 "unsupported": True, "failed": False,
+                                 "expired": 0, "span": "", "cached": 0}))
     return c
 
 

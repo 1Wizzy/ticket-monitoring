@@ -429,7 +429,7 @@ class PriceStorage:
         def new_node():
             return {"paths": {}, "attempts": 0, "ok": 0, "detail_ok": 0,
                     "calendar_ok": 0, "blocked": 0, "soft": 0,
-                    "empty": 0, "error": 0,
+                    "empty": 0, "unsupported": 0, "error": 0,
                     "rate": 0.0, "detail_rate": 0.0, "rate_excl_empty": 0.0,
                     "query_attempts": 0, "query_ok": 0,
                     "query_detail_ok": 0, "query_calendar_only": 0,
@@ -437,7 +437,8 @@ class PriceStorage:
 
         def new_path():
             return {"attempts": 0, "ok": 0, "detail_ok": 0, "calendar_ok": 0,
-                    "blocked": 0, "soft": 0, "empty": 0, "error": 0,
+                    "blocked": 0, "soft": 0, "empty": 0, "unsupported": 0,
+                    "error": 0,
                     "rate": 0.0, "rate_excl_empty": 0.0,
                     "detail_rate": 0.0, "last_at": "", "last_ok_at": ""}
 
@@ -459,6 +460,11 @@ class PriceStorage:
                 node["soft"] += 1
             elif status == "empty":
                 node["empty"] += 1
+            elif status == "unsupported":
+                # 能力边界（非法航线/超窗/往返无源）：既不是失败也不是
+                # 无票，单列——并进 error 会让"渠道本来就不支持"永远像
+                # 一条坏掉的路（往返航线会被反复判劣化）。
+                node["unsupported"] = int(node.get("unsupported") or 0) + 1
             else:
                 node["error"] += 1
             if last > node["last_at"]:
@@ -470,8 +476,10 @@ class PriceStorage:
             node["detail_rate"] = (round(node["detail_ok"] / node["attempts"], 4)
                                    if node["attempts"] else 0.0)
             # 售罄空结果不是"路径坏了"：分母里剔除 empty，避免把真无票
-            # 误判成路径劣化，进而错误降频整家渠道。
-            _den = max(0, node["attempts"] - node["empty"])
+            # 误判成路径劣化，进而错误降频整家渠道。unsupported 同理
+            # （渠道能力边界，不是失败）。
+            _den = max(0, node["attempts"] - node["empty"]
+                       - int(node.get("unsupported") or 0))
             # None = 没有有效样本（全是售罄空），不是 0% 失败
             node["rate_excl_empty"] = (round(node["ok"] / _den, 4)
                                        if _den else None)
@@ -484,7 +492,8 @@ class PriceStorage:
                 p["detail_rate"] = (
                     round(p["detail_ok"] / p["attempts"], 4)
                     if p["attempts"] else 0.0)
-                _d2 = max(0, p["attempts"] - p["empty"])
+                _d2 = max(0, p["attempts"] - p["empty"]
+                          - int(p.get("unsupported") or 0))
                 p["rate_excl_empty"] = (round(p["ok"] / _d2, 4)
                                         if _d2 else None)
 
@@ -546,11 +555,13 @@ class PriceStorage:
             rows = c.execute(
                 "SELECT platform, entry_path, path_status, COUNT(*) n, "
                 "MAX(fetched_at) last_at, "
-                "MIN(fetched_at) first_at "
+                "MIN(fetched_at) first_at, "
+                "from_city, to_city "
                 "FROM fetch_paths "
                 "WHERE fetched_at >= datetime('now','localtime', ?) "
                 "AND path_status NOT IN ('ok','calendar') "
-                "GROUP BY platform, entry_path, path_status "
+                "GROUP BY platform, entry_path, path_status, "
+                "from_city, to_city "
                 "HAVING COUNT(*) >= ? ORDER BY n DESC",
                 ("-%d hours" % hours, int(min_count))).fetchall()
             # 每个复发组合附最近一条现场：证据可直接点开对照，不用再翻日志
@@ -560,15 +571,17 @@ class PriceStorage:
                     er = c.execute(
                         "SELECT request_url, http_status, note, rows, "
                         "fetched_at FROM fetch_paths WHERE platform=? AND "
-                        "entry_path=? AND path_status=? ORDER BY id DESC "
-                        "LIMIT 1",
-                        (r["platform"], r["entry_path"],
-                         r["path_status"])).fetchone()
+                        "entry_path=? AND path_status=? AND "
+                        "COALESCE(from_city,'')=? AND COALESCE(to_city,'')=? "
+                        "ORDER BY id DESC LIMIT 1",
+                        (r["platform"], r["entry_path"], r["path_status"],
+                         r["from_city"] or "", r["to_city"] or "")).fetchone()
                 except Exception:
                     er = None
                 if er:
                     evidence[(r["platform"], r["entry_path"],
-                              r["path_status"])] = dict(er)
+                              r["path_status"], r["from_city"] or "",
+                              r["to_city"] or "")] = dict(er)
         # 历史行用旧口径写进库（444 曾被记成 login）。证据自证：
         # note 含 444/非法链接/202 的 login 行实际是会话软拒，展示时按
         # soft 归类，避免"登录态失效×53，证据却是 code=444"的自相矛盾。
@@ -580,7 +593,10 @@ class PriceStorage:
         out = []
         for r in rows:
             st = str(r["path_status"] or "")
-            _ev0 = evidence.get((r["platform"], r["entry_path"], st)) or {}
+            _fr = str(r["from_city"] or "")
+            _to = str(r["to_city"] or "")
+            _ev0 = evidence.get((r["platform"], r["entry_path"], st,
+                                 _fr, _to)) or {}
             _nt = str(_ev0.get("note") or "")
             if st == "login" and any(k in _nt for k in _SOFT_NOTE):
                 st = "soft_reject"
@@ -589,6 +605,9 @@ class PriceStorage:
             out.append({
                 "platform": str(r["platform"] or ""),
                 "path": str(r["entry_path"] or ""),
+                "route": ("%s→%s" % (_fr, _to)) if _fr or _to else "",
+                "from_city": _fr,
+                "to_city": _to,
                 "status": st,
                 "count": int(r["n"] or 0),
                 "first_at": str(r["first_at"] or ""),
@@ -596,28 +615,36 @@ class PriceStorage:
                 "kind": ("soft" if st == "soft_reject" else
                          "login" if st == "login" else
                          "blocked" if st == "blocked" else
-                         "empty" if st == "empty" else "error"),
-                "evidence": evidence.get(
-                    (r["platform"], r["entry_path"], r["path_status"])) or {},
+                         "empty" if st == "empty" else
+                         "unsupported" if st == "unsupported" else
+                         "error"),
+                "evidence": _ev0,
             })
         # 失败后又成功 = 已恢复：复发账只说明"这毛病反复过"，不该在
-        # 恢复后继续喊"需人工"。判据用同一 path 最近一次成功行的 id
-        # 晚于该类失败的最后一条（同入口，避免拿别的路径的成功顶替）。
-        # 用 id 而不是时间：fetch_paths 一轮多行常落在同一秒，秒级
-        # 时间戳分不出先后。
+        # 恢复后继续喊"需人工"。判据：同一渠道×入口×航线，最近一次
+        # 真实成功行的 id 晚于最后一条**非成功且非空/非边界**的失败行。
+        # - 必须带 from/to 限定：别的航线成功不能顶替本航线（H5 好了
+        #   不代表这条线好了）。
+        # - empty/unsupported 不算"仍在失败"：真无票与能力边界本来就
+        #   不是故障，否则"登录墙→修好→连续几轮真无票"会永远显示需人工。
+        # - 用 id 而非时间：一轮多行常落在同一秒，秒级分不出先后。
         with self._conn() as c:
             for o in out:
+                plat, path = o["platform"], o["path"]
+                fr = str(o.get("from_city") or "")
+                to = str(o.get("to_city") or "")
                 try:
                     row = c.execute(
                         "SELECT id, fetched_at FROM fetch_paths WHERE "
-                        "platform=? AND entry_path=? AND path_status IN "
-                        "('ok','calendar') ORDER BY id DESC LIMIT 1",
-                        (o["platform"], o["path"])).fetchone()
+                        "platform=? AND entry_path=? AND from_city=? AND "
+                        "to_city=? AND path_status IN ('ok','calendar') "
+                        "ORDER BY id DESC LIMIT 1",
+                        (plat, path, fr, to)).fetchone()
                     bad = c.execute(
                         "SELECT MAX(id) FROM fetch_paths WHERE platform=? "
-                        "AND entry_path=? AND path_status NOT IN "
-                        "('ok','calendar')", (o["platform"],
-                                              o["path"])).fetchone()
+                        "AND entry_path=? AND from_city=? AND to_city=? "
+                        "AND path_status NOT IN ('ok','calendar','empty',"
+                        "'unsupported')", (plat, path, fr, to)).fetchone()
                 except Exception:
                     row, bad = None, None
                 last_ok = str((row or ["", ""])[1] or "")

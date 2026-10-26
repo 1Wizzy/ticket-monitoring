@@ -109,6 +109,9 @@ class TongchengCrawler(BaseCrawler):
     # 30 分钟内复用（监控周期常见 5–30 分钟；价格日级变动，30 分钟
     # 足够新鲜，且与 fast_ttl 同量级）。
     INTL_WIN_CACHE_S = 1800
+    # 单日 H5 明细等待首屏卡片的墙钟上限（秒）。测试替身不睡眠，
+    # 常量可覆盖，避免每个失败用例白等满 25s。
+    INTL_LIST_WAIT_S = 25
 
     def __init__(self, config, logger):
         super().__init__(config, logger)
@@ -151,34 +154,38 @@ class TongchengCrawler(BaseCrawler):
                 "expired": 0, "span": "", "cached": 0}
         if not want:
             return out, info
-        # 同一轮里每个日期是一次独立 fetch 调用（主链路按 date 拆分），
-        # 而窗历一次就返回 90 天——不缓存会把"每航线 1 次"放大成
-        # "每日期 1 次"，14 日窗就是 14 次。缓存按航线+小时，且只
-        # 缓存成功结果（失败/无数据不缓存，下一日期仍可重试）。
-        ck = "%s-%s" % (fc, tc)
-        now = time.time()
-        hit = self._intl_win_cache.get(ck)
-        if hit and now - hit[0] < self.INTL_WIN_CACHE_S:
-            info["cached"] = 1
-            info["span"] = hit[2]
-            for d in want:
-                if d in hit[1]:
-                    out[d] = hit[1][d]
-            info["covered"] = len(out)
-            return out, info
         fn = self.CITY_NAME.get(fc) or city_short_of(fc)
         tn = self.CITY_NAME.get(tc) or city_short_of(tc)
         try:
             today = _date.today().isoformat()
         except Exception:
             today = ""
-        # 今天/过去日：窗历锚点只能从明天起，这些日期真源已无法取价
+        # 今天/过去日：窗历锚点只能从明天起，这些日期真源已无法取价。
+        # 必须在缓存查询之前算——否则跨午夜的缓存会让昨天的日期溜过
+        # 这道闸，被当成"有价"返回。
         expired = [d for d in want if today and d <= today]
         info["expired"] = len(expired)
         pending = [d for d in want if d not in expired]
+        # 同一轮里每个日期是一次独立 fetch 调用（主链路按 date 拆分），
+        # 而窗历一次就返回 90 天——不缓存会把"每航线 1 次"放大成
+        # "每日期 1 次"，14 日窗就是 14 次。缓存命中只填它能覆盖的
+        # 日期，未覆盖的照旧走下面的取窗流程（缓存不该短路换锚）。
+        ck = "%s-%s" % (fc, tc)
+        now = time.time()
+        hit = self._intl_win_cache.get(ck)
+        if hit and now - hit[0] < self.INTL_WIN_CACHE_S:
+            info["cached"] = 1
+            info["span"] = hit[2]
+            for d in pending:
+                if d in hit[1]:
+                    out[d] = hit[1][d]
+            if len(out) == len(pending):
+                info["covered"] = len(out)
+                return out, info
         # 整窗价（不止本轮请求的日期）：主链路逐日拆调用，缓存必须
         # 覆盖整窗，后面的日期才能直接命中
         allw = {}
+        tried = set()
         # 90 天窗口最多 3 窗即可覆盖一年；上限防锚点推进死循环
         while pending and info["calls"] < 3:
             anchor = pending[0]
@@ -186,6 +193,10 @@ class TongchengCrawler(BaseCrawler):
             if today and anchor <= today:
                 anchor = (_date.fromisoformat(today)
                           + timedelta(days=1)).isoformat()
+            # 渠道把窗口钳住时会返回同一段：同一个锚点不重复打
+            if anchor in tried:
+                break
+            tried.add(anchor)
             rows = fetch_tongcheng_calendar(fc, fn, tc, tn, anchor,
                                             self.logger)
             info["calls"] += 1
@@ -440,7 +451,7 @@ class TongchengCrawler(BaseCrawler):
                 self._exc_status(e), f"H5 列表导航异常: {e}")
             self.logger.warning("[tongcheng][intl] %s H5 列表导航异常: %s",
                                 date, e)
-        deadline = time.monotonic() + 25
+        deadline = time.monotonic() + self.INTL_LIST_WAIT_S
         while time.monotonic() < deadline:
             try:
                 cards = page.evaluate(self._INTL_CARDS_JS)
@@ -571,9 +582,18 @@ class TongchengCrawler(BaseCrawler):
                     "[tongcheng][intl] %d 个日期已过期（窗历自明天起），"
                     "本轮跳过", win["expired"])
                 return []
-        # 往返（ret_date 在场）：窗历是单程价，页内 ts/calendar 的
-        # AD/TT 只对站点自身请求生效——先试一次，仍无数据就如实记
-        # 边界，绝不拿单程价冒充往返。
+            if not self.probe_mode:
+                # 定时面窗历没出数就到此为止：页内 ts/calendar 已证实
+                # 只认站点自己的签名请求，裸打必 444。放它兜底等于把
+                # "每日期 1 次浏览器 + 必失败"重新装回来（这正是本轮的
+                # 修复目标），只会在账上刷出一串 soft_reject 假现场。
+                self.logger.warning(
+                    "[tongcheng][intl] 窗历未出数，定时面不再启浏览器"
+                    "（页内日历对该渠道恒 444）——本轮按 unsupported 记账")
+                return []
+        # 往返（ret_date 在场）：窗历是单程价。页内 ts/calendar 的
+        # AD/TT 只对站点自身请求生效，本通路取不到往返数据——先试
+        # 一次，仍无数据就如实记边界，绝不拿单程价冒充往返。
         out = self._intl_browser_fallback(from_city, to_city, dates, fc, tc,
                                           ret_date=ret_date)
         if ret_date and not out:
@@ -581,15 +601,15 @@ class TongchengCrawler(BaseCrawler):
         return out
 
     def _intl_rt_note(self, dates: List[str]):
-        """往返能力边界：站点 H5 在 tt=1 时发的仍是单程窗历（rt 参数
-        只改页面）、ts/calendar 的 AD/TT 只对站点自身请求生效。因此
-        同程国际往返没有可用数据源——如实记一次边界，不拿单程价
-        冒充往返价（宁缺勿错）。"""
+        """往返能力边界：只陈述本仓库能观测到的事实——经本通路取不到
+        往返价（页内日历门拒、窗历只有单程）。不推断"站点自身也只发
+        单程"（那需要看站点自己的 RT 请求，本仓库看不到）。"""
         self.path_note("往返", "unsupported",
-                       detail="同程国际无往返日历源（站点自身也只发单程）")
+                       detail="同程国际本通路取不到往返价（窗历仅单程）")
         self.logger.warning(
-            "[tongcheng][intl] %s 往返无可用源：站点自身也只发单程窗历，"
-            "不拿单程价冒充往返", ",".join(str(d) for d in dates))
+            "[tongcheng][intl] %s 本通路取不到往返价（页内日历门拒、"
+            "窗历仅单程），不拿单程价冒充往返",
+            ",".join(str(d) for d in dates))
 
     def _intl_browser_fallback(self, from_city: str, to_city: str,
                                dates: List[str], fc: str, tc: str,

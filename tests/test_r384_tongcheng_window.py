@@ -316,3 +316,114 @@ def test_advise_still_reports_other_degraded_paths():
     a = advise("tongcheng", {}, paths, now=None, node=_deg_node(paths))
     assert a["state"] == "path_degraded"
     assert "H5列表" in a["hint"]
+
+
+# ---- 复审回归：缓存不得短路过期/换锚；定时面不得启浏览器 ----
+
+def test_cache_hit_does_not_return_expired_dates():
+    """跨午夜的缓存会把昨天的日期当有价返回（复审 #1）。"""
+    from datetime import date, timedelta
+    _TC._intl_win_cache = {}
+    y = (date.today() - timedelta(days=1)).isoformat()
+    _TC._intl_win_cache["SHA-HKG"] = (
+        __import__("time").time(), {y: 640.0}, "old")
+    got, info = _TC._intl_window_prices("SHA", "HKG", [y])
+    assert got == {}, "过期日期不得从缓存里被当成有价"
+    assert info["expired"] == 1
+
+
+def test_cache_hit_re_anchors_for_uncovered_dates(monkeypatch):
+    """缓存只覆盖首窗时，超出日期必须换锚再取（复审 #1）。"""
+    calls = []
+
+    def fake(fc, fn, tc, tn, anchor, logger, **kw):
+        calls.append(anchor)
+        return _rows(90, first=anchor)
+
+    _patch(monkeypatch, fake)
+    _TC._intl_win_cache = {}
+    _TC._intl_window_prices("SHA", "HKG", ["2026-11-10"])
+    assert len(calls) == 1
+    got, info = _TC._intl_window_prices("SHA", "HKG", ["2027-03-05"])
+    assert len(calls) == 2, "缓存没覆盖的日期要真的去取，不能短路"
+    assert "2027-03-05" in got
+
+
+def test_cache_repeat_anchor_not_hammered(monkeypatch):
+    """渠道把窗口钳住时不重复打同一锚点（复审 nit）。"""
+    calls = []
+
+    def fake(fc, fn, tc, tn, anchor, logger, **kw):
+        calls.append(anchor)
+        # 无论锚点是什么，只返回同一段 → 永远覆盖不到超窗日期
+        return _rows(10, first="2026-11-01")
+
+    _patch(monkeypatch, fake)
+    _TC._intl_win_cache = {}
+    got, info = _TC._intl_window_prices(
+        "SHA", "HKG", ["2027-03-05", "2027-04-05", "2027-05-05"])
+    assert len(calls) == len(set(calls)), "同一锚点不得重复请求"
+    assert got == {}
+
+
+def test_monitor_mode_never_opens_browser_on_window_failure(monkeypatch):
+    """窗历失败时定时面不得启浏览器（复审 #2：等于装回逐日 444）。"""
+    _patch(monkeypatch, lambda *a, **k: None)   # 请求失败
+    opened = []
+    monkeypatch.setattr(
+        TongchengCrawler, "_intl_browser_fallback",
+        lambda self, *a, **k: opened.append(a) or [])
+    _TC.probe_mode = False
+    _TC.paths = []
+    try:
+        rows = _TC._fetch_intl("SHA", "HKG", ["2026-11-10"])
+    finally:
+        _TC.probe_mode = False
+    assert rows == []
+    assert opened == [], "定时面窗历失败=本轮到此为止，不启浏览器"
+    assert any(p["path"] == "窗历" and p["status"] == "error"
+               for p in _TC.paths)
+
+
+def test_probe_mode_still_opens_browser_on_window_failure(monkeypatch):
+    _patch(monkeypatch, lambda *a, **k: None)
+    opened = []
+    monkeypatch.setattr(
+        TongchengCrawler, "_intl_browser_fallback",
+        lambda self, *a, **k: opened.append(a) or [])
+    _TC.probe_mode = True
+    _TC.paths = []
+    try:
+        _TC._fetch_intl("SHA", "HKG", ["2026-11-10"])
+    finally:
+        _TC.probe_mode = False
+    assert opened, "探针是人主动要明细，窗历失败仍可试浏览器"
+
+
+# ---- 建议引擎：不得自己掩掉自己 ----
+
+def test_advise_reports_degraded_window_calendar():
+    """窗历 2/50 时不能被"同族有人在出数"掩掉（复审 #3）。"""
+    from core.pacing import advise
+    paths = {"窗历": {"attempts": 50, "ok": 2, "calendar_ok": 2,
+                     "rate": 0.04, "rate_excl_empty": 0.04}}
+    a = advise("tongcheng", {}, paths, now=None, node=_deg_node(paths))
+    assert a["state"] == "path_degraded", a
+
+
+def test_advise_reports_roundtrip_unsupported_forever(tmp_path):
+    """「往返」只有 unsupported 时不该被判成待修的路（复审 #5）。
+
+    用真实 path_stats 生成节点：unsupported 是渠道能力边界，必须从
+    有效率分母里剔除（否则往返航线会被永久判劣化）。
+    """
+    from core.pacing import advise
+    from core.storage import PriceStorage
+    st = PriceStorage(str(tmp_path / "p.db"))
+    for i in range(40):
+        st.save_fetch_path("tongcheng", "SHA", "HKG", "2027-06-01", "往返",
+                           "unsupported", note="本通路取不到往返价",
+                           attempt_id="u%d" % i)
+    node = st.path_stats(24)["tongcheng"]
+    a = advise("tongcheng", {}, node.get("paths") or {}, node=node)
+    assert a["state"] != "path_degraded", a
