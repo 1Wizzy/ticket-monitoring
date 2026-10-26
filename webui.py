@@ -1064,8 +1064,6 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  /* 用户切换 chip（审计 P2-1）：montabs 吸顶条右端深滚自救位——
     视觉随 .tabs span 全局，此处只加右推+长名截断（溢出省略，
     防「超长用户名把 4 个 tab 挤出横滚视野」） */
- .tabs .uchip{margin-left:auto;flex:0 0 auto;max-width:44vw;overflow:hidden;
-   text-overflow:ellipsis;white-space:nowrap}
  /* 概览红帽徽标形状单源：空 <i> 内联元素 width 不参与布局（点亮态
     曾是 0 宽死档，红点从未可见），inline-block 使 7px 圆点成形；
     卡色描边是激活蓝底上的辨识主体（红点对激活底对比不足 3:1，
@@ -2219,7 +2217,6 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
     （含 #fnostale），::before 命中区一并补齐 ===== */
  @media(max-width:900px) and (pointer:coarse){
   .tabs .mtab{padding:9px 14px}
-  .tabs .uchip{padding:9px 14px}   /* 用户切换 chip 触控地板（本块无 .tabs span 通配） */
   #tabs span{padding:9px 14px}
   .chip{padding:9px 14px;font-size:13px}
   #attrchips .chiplab{padding:9px 0}   /* 盒高跟 .chip 纵向 padding 同源（r324 P3-1） */
@@ -2421,7 +2418,6 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
  /* ===== 移动端触控目标增强（基础规则之后声明，防同特异性覆盖） ===== */
  @media(max-width:760px){
   .tabs .mtab{padding:9px 14px}
-  .tabs .uchip{padding:9px 14px}   /* 用户切换 chip 触控地板（同上族补档） */
   #tabs span{padding:9px 14px}
   nav span{min-height:36px;display:inline-flex;align-items:center}
   .chip{padding:9px 14px;font-size:13px}/* 触控目标 ~36px，间距防误触 */
@@ -2832,7 +2828,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
     不再依赖隐藏溢出或横滚（末格必须可见可点）。 */
  #montabs .mtab{height:32px;padding:0 2px;font-size:11px;gap:4px}
  #montabs .mtab .ic{width:12px;height:12px}
- #montabs .uchip{grid-column:1/-1;justify-self:center;margin:0}}
+}
  /* 桌面视图切换器吸顶：深滚切视图不回滚 ~830px（≤540 同款能力；
     top 贴 header 底，背景衬底防透行、底边线与 ≤540 形制一致；
     锚点补偿同步过 header+吸顶条总高）。追加块置尾纪律：与 ≤540/
@@ -3038,7 +3034,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
    双击缩放，保留平移与捏合（表格横滚/页面滚动零变化）。置尾晚于
    全部触控块——媒体块无「更严更后胜」（LESSONS 二十一§1）===== */
 @media(pointer:coarse){
- button,.hbtn,.mtab,nav span,#tabs span,.chip,.mchip,.rngchip,.uchip,
+ button,.hbtn,.mtab,nav span,#tabs span,.chip,.mchip,.rngchip,.huser,
  .pill,th.srt,canvas,.cp-city,.cp-abc span,#ftable tr,
  .cnav,.uhead2,.grouplab,.rhead,.chhead,.kpi.clk,.hc,.pbar,.plitem,
  .toast,.pvx,.tg,.tj,.dx,input.switch{
@@ -4740,7 +4736,6 @@ html[data-theme="dark"] #searchview .srx-wcount{color:var(--blue)}
 #montabs{display:flex;flex-wrap:nowrap;gap:6px;overflow:visible}
 #montabs .mtab{flex:1 1 0;min-width:0;justify-content:center;
  text-align:center;white-space:nowrap}
-#montabs .uchip{flex:0 0 auto;margin-left:4px}
 /* 重启中心是独立会话：底部浮动保存条让位，避免与浮层动作重复/压字 */
 body:has(#restartCenter.on) .savebar{opacity:0;visibility:hidden;pointer-events:none}
 #cfgview{width:100%;margin:0}
@@ -6199,6 +6194,14 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 @media(max-width:360px){
  #opscard .opsbtns{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:6px!important}
  #opscard .opsbtns>button{font-size:12px;padding:0 8px;height:36px}
+ /* 320 档头部：账号头像/工具钮/状态 pill 同行放不下会把品牌挤到第三行
+    （实测 107px 三行头）。收紧本档尺寸换回两行（76px），文案语义不动。 */
+ .hdx{gap:0!important}
+ #hdcard h1{font-size:12px!important;gap:6px!important}
+ #hdcard .logo{width:24px!important;height:24px!important}
+ .hbtn{width:28px!important;height:28px!important}
+ .pill{font-size:11px!important;padding:3px 7px!important;min-height:32px!important}
+ #hdcard .huser{width:30px!important;height:32px!important;font-size:15px!important}
 }
 @media(pointer:coarse){
  #montabs .mtab{padding-top:9px;padding-bottom:9px}
@@ -6437,7 +6440,6 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
  html #montabs .mtab{height:34px!important;padding:0 4px!important;font-size:11px!important;
   min-width:0!important;flex:none!important;gap:4px!important;overflow:hidden!important;justify-content:center!important}
  html #montabs .mtab .ic{display:inline-block!important;width:12px;height:12px;flex:none}
- html #montabs .uchip{grid-column:1/-1;justify-self:center;margin:0}
 }
 @media(max-width:390px){
  html #montabs{padding:3px 10px!important}
@@ -6531,8 +6533,7 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
  #searchview .srx-brief .srx-src{flex:0 0 220px!important}
 }
 #searchview .srx-src-h{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.spmon-cal.xhint{-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 24px),transparent);
- mask-image:linear-gradient(to right,#000 calc(100% - 24px),transparent)}
+.spmon-cal.xhint{-webkit-mask-image:none;mask-image:none}
 @media(max-width:360px){
  .spmon-flight{grid-template-columns:1fr auto;grid-template-areas:"fid fpr" "ftime ftime"}
  .spmon-flight .fid{grid-area:fid}.spmon-flight .ftime{grid-area:ftime;white-space:normal}
@@ -6625,7 +6626,7 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 .srx-mirror.srx-folded .srx-mchrome,.srx-mirror.srx-folded .srx-mbody{display:none!important}
 /* 特价监控走势 */
 .spmon-body{display:flex;flex-direction:column;gap:14px;padding:4px 2px 10px}
-.spmon-cal{display:flex;gap:8px;overflow-x:auto;padding:2px 0 4px;scrollbar-width:thin}
+.spmon-cal{display:flex;gap:8px;overflow-x:auto;padding:2px 0 6px;scrollbar-width:thin;overscroll-behavior-x:contain;touch-action:pan-x;-webkit-overflow-scrolling:touch}
 .spmon-day{flex:0 0 auto;min-width:108px;display:flex;flex-direction:column;gap:2px;
  align-items:flex-start;padding:8px 10px;border:0;border-radius:var(--r10);
  background:var(--r-surface-2);color:var(--r-ink);cursor:pointer;text-align:left}
@@ -6866,6 +6867,8 @@ a.chlink .chlink-go::after{content:'↗';font-size:10px!important}
 #searchview .srx-ovbar{display:flex;align-items:center;gap:12px;padding:4px 0;margin:2px 0 4px;
  border-top:1px solid var(--r-hair);border-bottom:1px solid var(--r-hair);font-size:11px;min-width:0}
 #searchview .srx-ovsum{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--r-ink-2)}
+#searchview .srx-capbar .capstate{margin-left:auto;font-size:11px;color:var(--r-ink-2);white-space:nowrap}
+#searchview .srx-capbar .capact{flex:0 0 auto;border:0;background:transparent;color:var(--r-blue);font-size:11px;height:24px;padding:0 4px;cursor:pointer;white-space:nowrap}
 #searchview .srx-ovbtn{flex:0 0 auto;background:transparent!important;border:0!important;color:var(--r-blue)!important;
  padding:0 2px!important;height:24px!important;font-size:11px!important;box-shadow:none!important;cursor:pointer}
 #searchview.srx-ov-collapsed .srx-brief,#searchview.srx-ov-collapsed .srx-capbar,
@@ -6940,10 +6943,16 @@ a.chlink .chlink-go::after{content:'↗';font-size:10px!important}
 #montabs{background:var(--r-canvas)!important}
 #montab-details .tabs{background:var(--r-canvas)!important;
  border-bottom:1px solid var(--r-hair)!important;box-shadow:none!important}
-#montabs .uchip{background:transparent!important;border:0!important;border-radius:0!important;
- box-shadow:none!important;padding:0 6px!important;height:34px!important;
- display:inline-flex!important;align-items:center!important;color:var(--r-ink-2)!important}
-#montabs .uchip:hover{color:var(--r-blue)!important}
+/* 用户作用域开关（r372 IA 修正）：它是「看谁的数据」，不是内容页签。
+   曾混在 montabs 行尾与六个内容页签并列且自称「用户视图」，用户实报
+   排位别扭。改驻顶部账号区（pill 右侧），页签行还原纯内容导航。 */
+#hdcard .huser{display:inline-flex!important;align-items:center;height:30px;
+ padding:0 10px;border-radius:var(--pill);background:var(--r-surface-2);
+ color:var(--r-ink-2);font-size:12px;white-space:nowrap;cursor:pointer;
+ max-width:150px;overflow:hidden;text-overflow:ellipsis;flex:0 0 auto}
+#hdcard .huser:hover{background:var(--r-surface-3);color:var(--r-ink)}
+@media(max-width:600px){#hdcard .huser{height:36px;width:34px;padding:0;
+ justify-content:center;font-size:16px;line-height:1}}
 .tabs>span{border:0!important}
 #tabs span{border-radius:0!important;background:transparent!important;box-shadow:none!important}
 #tabs span:hover:not(.on){background:var(--r-surface-2)!important;color:var(--r-ink)!important}
@@ -7034,6 +7043,8 @@ a.chlink:hover{background:transparent!important;border:0!important;color:var(--r
 #montab-watch .ws-route{min-height:44px!important;padding:5px 8px!important}
 #montab-watch .ws-chart-h{min-height:36px!important;padding:3px 0!important}
 #montab-watch .ws-chartwrap{height:200px!important;min-height:160px!important}
+/* 无采集点时不摆 200px 空框：空态自己撑高，有数据再恢复画布高度 */
+#montab-watch .ws-chartwrap.is-empty{height:auto!important;min-height:0!important}
 #montab-watch #wsChart{height:200px!important}
 #montab-watch .ws-empty{padding:18px 12px!important;min-height:0!important}
 @media(max-width:760px){
@@ -7140,7 +7151,8 @@ a.chlink:hover{background:transparent!important;border:0!important;color:var(--r
 .spmon-tools button{background:transparent;border:0;border-radius:0;padding:2px 6px;
  font-size:11px;font-weight:600;color:var(--r-ink-3);box-shadow:none;cursor:pointer}
 .spmon-tools button.on{color:var(--r-blue);box-shadow:inset 0 -2px 0 var(--r-blue)}
-.spmon-chartwrap{overflow-x:auto;overflow-y:hidden}
+.spmon-chartwrap{overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;overscroll-behavior-x:contain;touch-action:pan-x;-webkit-overflow-scrolling:touch}
+.spmon-chartwrap.pan-x{cursor:grab}.spmon-chartwrap.pan-x.dragging{cursor:grabbing}
 .spmon-chartwrap{position:relative}
 .spmon-cross{position:absolute;width:1px;background:var(--r-blue);opacity:.35;pointer-events:none;display:none;z-index:1}
 #spMonChart{max-width:none}
@@ -7252,6 +7264,165 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
  #montab-watch .ws-chart-foot{display:none!important}
  #montab-watch .ws-chart-h{min-height:32px!important}
 }
+
+/* v304 人读顺序：先局势与动作，再数据，证据后置；同类信息只出现一次。 */
+#srxRestoreLink[hidden],#searchview .srx-audit[hidden]{display:none!important}
+#searchview:not(.srx-ov-collapsed) .srx-ovbar{display:none!important}
+@media(min-width:761px){
+ #montab-watch .ws-kpis{display:flex!important;flex-wrap:nowrap!important;gap:16px!important;border:0!important;margin:1px 0 0!important;padding:0!important;min-height:20px!important}
+ #montab-watch .ws-kpi{flex:0 0 auto!important;display:inline-flex!important;align-items:baseline!important;gap:4px!important;padding:0!important;border:0!important;min-width:0!important}
+ #montab-watch .ws-kpi .k{font-size:11px!important;color:var(--r-ink-3)!important}
+ #montab-watch .ws-kpi .v{font-size:14px!important;line-height:1.1!important}
+ #montab-watch .ws-kpi .v span{font-size:10px!important}
+ #montab-watch .ws-kpi .f{display:none!important}
+}
+#montab-watch .ws-routebar-h{display:none!important}
+#montab-watch .ws-chart-foot{display:none!important}
+@media(min-width:901px){
+ .spmon-main{grid-template-columns:minmax(0,1fr)!important;gap:10px!important}
+ .spmon-low{display:grid!important;grid-template-columns:auto auto auto 1fr;align-items:center;gap:6px 14px!important;padding:8px 12px!important}
+ .spmon-lowh{grid-column:auto;margin:0}
+ .spmon-lowdate,.spmon-lowday,.spmon-lowmeta{margin:0}
+ #spMonFlights{grid-column:1/-1;margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+ #spMonFlights .spmon-empty,#spMonFlights .spmon-note{padding:0}
+}
+
+/* v304c 微信式干净：区块靠留白与浅底分组，不靠装饰性横线/竖线。
+   仅保留控件边界、表格行与激活下划线。 */
+#searchview :is(.srx-hero,.srx-ovbar,.srx-band,.srx-band-h,.srx-brief,.srx-context,.srx-listhead,.srx-audit,.srx-capbar,.srx-list,.srx-mirror,.srx-mchrome,.srx-dtabs,.srx-galhead),
+#montab-watch :is(.ws-head,.ws-live,.ws-kpis,.ws-kpi,.ws-routebar,.ws-route,.ws-chart-h,.ws-chartwrap,.ws-focus,.ws-fcell,.ws-chanstrip,.ws-filterbar,.ws-detail,.ws-legend,.ws-note,.ws-roster,.ws-list,.ws-roster-h),
+#spRadarMonitor :is(.uhead,.spmon-sum,.spmon-tools,.spmon-chartwrap,.spmon-src,.spmon-hist,.spmon-low),
+#spRadarCard :is(.uhead),
+#montab-details :is(.uhead,.tabs,.fltsum),
+#cfgview :is(.uhead,.uhead2,.cfgdeck,.grouplab,.chcard,.glcell,.pathcard,.storehead,.cfgwatch-toolbar,.rline){
+ border-top:0!important;border-bottom:0!important;border-left:0!important;border-right:0!important;
+}
+#searchview .srx-hero::after{display:none!important}
+#searchview .srx-src+.srx-src{border-left:0!important}
+#searchview .srx-brief{gap:10px!important}
+#searchview .srx-line{padding:3px 0!important}
+#searchview .srx-line+.srx-line{border-top:0!important;padding-top:4px!important}
+#searchview .srx-band{margin:2px 0 6px!important}
+#searchview .srx-band-h{padding:4px 0 6px!important}
+#searchview .srx-context{padding:4px 0!important;background:transparent!important}
+#searchview .srx-ovbar{background:var(--r-surface-2)!important;border-radius:8px!important;padding:6px 10px!important;margin:4px 0!important;cursor:pointer}
+#searchview .srx-ovbar:hover{background:var(--r-surface-3)!important}
+#searchview .srx-ovbar::after{content:'⌄';margin-left:auto;color:var(--r-ink-3);font-size:12px}
+#searchview .srx-ovbar:focus-visible{outline:2px solid var(--r-blue);outline-offset:2px}
+#searchview .srx-listhead{padding:8px 0 6px!important}
+#searchview .srx-row{border-bottom-color:color-mix(in srgb,var(--r-hair) 45%,transparent)!important}
+#searchview .srx-thead{border-bottom-color:color-mix(in srgb,var(--r-hair) 45%,transparent)!important}
+/* 关注台卡头：曾用负 margin 做通栏出血，但后续规则把水平 padding
+   清成 0，内容随之外顶 18px——右侧「添加关注航班」按钮被卡片
+   overflow:hidden 裁掉半截（1512 实测 head.right=1429 > card.right=1411）。
+   通栏改由 padding 实现：不越界也不会裁。 */
+#montab-watch .ws-head{padding:0 0 4px!important;margin:0!important}
+#montab-watch .ws-live{background:transparent!important;padding:0!important;color:var(--ok-txt)!important}
+#montab-watch .ws-kpis{background:transparent!important;padding:0!important;margin:2px 0 8px!important}
+#montab-watch .ws-kpi{padding:0 14px 0 0!important;border-left:0!important}
+#montab-watch .ws-routebar{padding:0 0 6px!important;background:transparent!important}
+#montab-watch .ws-routes{gap:8px!important}
+#montab-watch .ws-route{background:var(--r-surface-2)!important;border-radius:8px!important;padding:8px 10px!important;min-height:46px!important}
+#montab-watch .ws-route.on{background:var(--r-blue-soft)!important;box-shadow:none!important}
+#montab-watch .ws-route .tag{border:0!important;background:transparent!important;padding:0!important;font-size:10px!important;color:var(--r-ink-3)!important}
+#montab-watch .ws-route.on .tag{color:var(--r-blue)!important}
+#montab-watch .ws-chart-h{padding:4px 0 0!important}
+#montab-watch .ws-chartwrap{background:transparent!important;border:0!important}
+#montab-watch .ws-focus{border:0!important;padding:10px 0 0!important;background:transparent!important}
+#montab-watch .ws-fcell{border:0!important;padding:6px 12px!important}
+#montab-watch .ws-chanstrip{border:0!important;padding:8px 0 0!important;margin-top:2px!important}
+#montab-watch .ws-filterbar{border:0!important;padding:4px 0!important;background:transparent!important}
+#montab-watch .ws-roster-h{border:0!important;padding:4px 0!important}
+#montab-watch .ws-detail{border:0!important;background:transparent!important;padding:6px 0!important}
+#spRadarMonitor .uhead{border:0!important;padding-bottom:2px!important}
+.spmon-sum{border:0!important;padding:4px 0 2px!important}
+.spmon-tools{padding:0 0 2px!important}
+.spmon-chartwrap{border:0!important;background:transparent!important;padding:4px 0 0!important;min-height:210px!important}
+.spmon-src{border:0!important;padding:6px 0 0!important}
+.spmon-hist summary{border:0!important;padding:6px 0!important}
+.spmon-low{background:var(--r-surface-2)!important;border:0!important;border-radius:8px!important;padding:8px 12px!important}
+#spRadarCard .uhead{border:0!important;padding-bottom:0!important}
+
+/* v304d 全局去围栏：标题栏/区块/行不画装饰线，留白分组；仅保留输入控件、
+   激活下划线、数据表和图表网格的轻分隔。 */
+#hdcard{border-bottom:0!important}
+#montabs{border-bottom:0!important}
+#loginRows .lgcard,#loginRows .lgnote{border:0!important}
+#loginRows .lgcard{padding:9px 0!important}
+.monroute,.hdiag-card,.srccap,.monwatch,.kpi,.ws-kpi{ border-top:0!important;border-bottom:0!important}
+#healthcard{border-top:0!important}
+#cfgview .uhead,#cfgview .uhead2,#cfgview .cfgdeck,#cfgview .grouplab,#cfgview .rline,
+#cfgview .cw-item,#cfgview .chcard,#cfgview .glcell,#cfgview .pathcard,#cfgview .storehead,
+#cfgview .cfgwatch-toolbar,#cfgview .cfgchrome{border-top:0!important;border-bottom:0!important}
+#cfgview .uhead{padding-bottom:6px!important;margin-bottom:8px!important}
+#cfgview .rline{padding:8px 0!important}
+#ftable th,#ftable td,#searchview .srx-row,#searchview .srx-mrow{border-bottom-color:color-mix(in srgb,var(--r-hair) 45%,transparent)!important}
+#ftable th{background:transparent!important}
+
+/* v304e 渠道入口：矩阵对齐，列头只出现一次；格子=标题+动作+登录要求。 */
+.chboard-head{display:grid;grid-template-columns:160px repeat(4,minmax(0,1fr));gap:0 8px;padding:0 0 6px;font-size:10px;color:var(--r-ink-3);letter-spacing:.04em;border:0!important}
+.chboard-head span:first-child{padding-left:2px}
+.chboard-head span:not(:first-child){padding-left:10px}
+.chband{display:grid!important;grid-template-columns:160px minmax(0,1fr)!important;gap:8px!important;padding:8px 0!important;border:0!important;border-radius:0!important;background:transparent!important}
+.chband-id{display:flex!important;flex-direction:column!important;justify-content:flex-start!important;gap:4px!important;min-width:0!important}
+.chband-name{display:flex!important;align-items:center!important;gap:7px!important}
+.chband-name b{font-size:13px!important;font-weight:650!important;color:var(--r-ink)!important}
+.chband-meta .chsess{display:inline-flex!important;align-items:center!important;height:17px!important;padding:0 6px!important;border-radius:var(--pill)!important;background:var(--r-surface-2)!important;color:var(--r-ink-3)!important;font-size:9px!important;font-weight:600!important}
+.chband-body{display:flex!important;flex-direction:column!important;gap:6px!important;min-width:0!important}
+.chband-grid{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:8px!important;min-width:0!important}
+.chlink{display:flex!important;flex-direction:column!important;align-items:stretch!important;gap:4px!important;min-height:52px!important;padding:8px 10px!important;border:0!important;border-radius:8px!important;background:var(--r-surface-2)!important;white-space:normal!important;text-decoration:none!important;overflow:hidden!important}
+.chlink:hover{background:var(--r-surface-3)!important;color:var(--r-ink)!important}
+.chlink-surface{display:none!important;font-size:9px!important;color:var(--r-ink-3)!important;letter-spacing:.03em}
+.chlink-top{display:flex!important;align-items:baseline!important;gap:6px!important;min-width:0!important}
+.chlink-top b{font-size:12px!important;font-weight:600!important;color:var(--r-ink)!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
+.chlink-go{margin-left:auto!important;color:var(--r-blue)!important;font-size:10px!important;white-space:nowrap!important}
+.chlink-auth{display:inline-flex!important;align-self:flex-start!important;height:16px!important;padding:0 6px!important;border:0!important;border-radius:var(--pill)!important;background:var(--r-amber-soft)!important;color:var(--r-amber)!important;font-size:9px!important;font-weight:600!important}
+.chlink-auth.opt{background:var(--r-surface-3)!important;color:var(--r-ink-3)!important}
+.chlink.off{background:transparent!important;color:var(--r-ink-3)!important}
+.chlink-note{font-size:10px!important;line-height:1.25!important;color:var(--r-ink-3)!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
+.chband-specs{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:8px!important;align-items:center!important;padding:0!important;border:0!important}
+.chband-specs .chlink{min-height:30px!important;padding:4px 10px!important;background:transparent!important;flex-direction:row!important;align-items:center!important;gap:6px!important}
+.chband-specs .chlink .chlink-top b{font-size:11px!important}
+.chband-specs .chlink-auth{display:none!important}
+.chband-login-note{border:0!important;padding:0!important;margin:0!important;font-size:10px!important}
+@media(max-width:1100px){
+ .chboard-head{display:none!important}
+ .chband{grid-template-columns:1fr!important;gap:4px!important}
+ .chband-id{flex-direction:row!important;align-items:center!important;flex-wrap:wrap!important;gap:8px!important}
+ .chband-grid{grid-template-columns:1fr 1fr!important}
+ .chband-specs{grid-template-columns:1fr 1fr!important}
+ .chlink-surface{display:block!important}
+}
+@media(max-width:600px){
+ .chband-grid,.chband-specs{grid-template-columns:1fr 1fr!important}
+}
+@media(max-width:360px){
+ .chband-grid,.chband-specs{grid-template-columns:1fr!important}
+}
+
+/* v304f 紧凑质感：组件衔接用一致的 4/6/8 节奏，去掉无意义空高。 */
+#searchview .srx-band{margin:0 0 6px!important}
+#searchview .srx-band-h{padding:2px 0 4px!important}
+#searchview .srx-brief{padding-bottom:0!important;margin:0 0 8px!important;gap:8px!important}
+#searchview .srx-audit{margin:0 0 6px!important;padding:0!important}
+#searchview .srx-context{margin-bottom:6px!important}
+#searchview .srx-grid{margin-top:0!important}
+#montab-watch .ws-routes{gap:6px!important}
+#montab-watch .ws-route{padding:7px 10px!important;min-height:44px!important}
+.chboard-head{padding-bottom:4px!important}
+.chband{padding:6px 0!important;gap:6px!important}
+.chband-grid{gap:6px!important}
+.chlink{display:flex!important;flex-direction:row!important;flex-wrap:wrap!important;align-items:center!important;gap:6px 8px!important;min-height:40px!important;padding:6px 10px!important}
+.chlink-top{flex:1 1 auto!important;min-width:0!important}
+.chlink-go{margin-left:0!important}
+.chlink-auth{flex:0 0 auto!important}
+.chband-specs{gap:6px!important}
+.chband-specs .chlink{min-height:28px!important;padding:2px 10px!important}
+@media(max-width:1100px){
+ .chlink-surface{flex:1 1 100%!important;order:-1!important;display:block!important}
+}
+
+@media(max-width:1100px){.srx-ovhbtn{display:none!important}}
 </style></head><body><div class="wrap">
 <svg class="svgdefs" aria-hidden="true" focusable="false"><defs>
  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M2 20h20"/></symbol>
@@ -7301,7 +7472,7 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
 </defs><symbol id="pl-a320" viewBox="0 0 32 32"><path d="M16.00 2.20C14.39 2.20 14.25 2.95 14.25 4.15L14.25 27.30C14.25 29.04 15.04 30.20 16.00 30.20C16.96 30.20 17.75 29.04 17.75 27.30L17.75 4.15C17.75 2.95 17.61 2.20 16.00 2.20Z" fill="url(#plMetal)" stroke="rgba(15,23,42,.24)" stroke-width=".16"/><path d="M14.32 11.80C10.92 12.62 3.55 16.00 1.15 17.20L1.15 19.80C4.75 18.45 11.32 17.35 14.32 18.10ZM17.68 11.80C21.08 12.62 28.45 16.00 30.85 17.20L30.85 19.80C27.25 18.45 20.68 17.35 17.68 18.10Z" fill="rgba(15,23,42,.18)" transform="translate(0 .5)"/><path d="M14.32 11.80C10.92 12.62 3.55 16.00 1.15 17.20L1.15 19.80C4.75 18.45 11.32 17.35 14.32 18.10ZM17.68 11.80C21.08 12.62 28.45 16.00 30.85 17.20L30.85 19.80C27.25 18.45 20.68 17.35 17.68 18.10Z" fill="url(#plWing)" stroke="rgba(15,23,42,.34)" stroke-width=".18"/><path d="M14.32 11.80C10.92 12.62 3.55 16.00 1.15 17.20" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M17.68 11.80C21.08 12.62 28.45 16.00 30.85 17.20" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><rect x="1.05" y="17.40" width=".7" height="3.10" rx=".3" fill="var(--pl-accent)"/><rect x="30.25" y="17.40" width=".7" height="3.10" rx=".3" fill="var(--pl-accent)"/><path d="M15.45 26.20L11.70 27.70L11.70 29.40L15.45 27.90ZM16.55 26.20L20.30 27.70L20.30 29.40L16.55 27.90Z" fill="url(#plWing)" stroke="rgba(15,23,42,.20)" stroke-width=".14"/><path d="M14.95 24.90L16.00 30.90L17.05 24.90Z" fill="var(--pl-accent)" stroke="rgba(15,23,42,.22)" stroke-width=".12"/><rect x="8.85" y="10.90" width="1.90" height="3.70" rx="0.95" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="8.85" y="10.90" width="1.90" height="0.55" rx="0.95" fill="var(--pl-accent)"/><rect x="9.09" y="11.65" width=".34" height="2.05" rx=".17" fill="#fff" opacity=".32"/><rect x="21.25" y="10.90" width="1.90" height="3.70" rx="0.95" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="21.25" y="10.90" width="1.90" height="0.55" rx="0.95" fill="var(--pl-accent)"/><rect x="21.49" y="11.65" width=".34" height="2.05" rx=".17" fill="#fff" opacity=".32"/><path d="M15.50 4.00L16.50 4.00L16.27 26.00L15.72 26.00Z" fill="#fff" opacity=".55"/><ellipse cx="16.00" cy="4.50" rx="1.02" ry="1.00" fill="#26384a" opacity=".78"/><path d="M14.9 6.60h2.2M14.9 22.00h2.2" stroke="#64748b" stroke-width=".2" opacity=".30"/><rect x="7.00" y="19.30" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/><rect x="24.45" y="19.30" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/></symbol><symbol id="pl-a321" viewBox="0 0 32 32"><path d="M16.00 1.80C14.37 1.80 14.23 2.58 14.23 3.83L14.23 27.90C14.23 29.52 15.03 30.60 16.00 30.60C16.97 30.60 17.77 29.52 17.77 27.90L17.77 3.83C17.77 2.58 17.63 1.80 16.00 1.80Z" fill="url(#plMetal)" stroke="rgba(15,23,42,.24)" stroke-width=".16"/><path d="M14.32 11.70C10.92 12.52 3.40 16.20 1.00 17.40L1.00 20.10C4.60 18.75 11.32 17.67 14.32 18.42ZM17.68 11.70C21.08 12.52 28.60 16.20 31.00 17.40L31.00 20.10C27.40 18.75 20.68 17.67 17.68 18.42Z" fill="rgba(15,23,42,.18)" transform="translate(0 .5)"/><path d="M14.32 11.70C10.92 12.52 3.40 16.20 1.00 17.40L1.00 20.10C4.60 18.75 11.32 17.67 14.32 18.42ZM17.68 11.70C21.08 12.52 28.60 16.20 31.00 17.40L31.00 20.10C27.40 18.75 20.68 17.67 17.68 18.42Z" fill="url(#plWing)" stroke="rgba(15,23,42,.34)" stroke-width=".18"/><path d="M14.32 11.70C10.92 12.52 3.40 16.20 1.00 17.40" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M17.68 11.70C21.08 12.52 28.60 16.20 31.00 17.40" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><rect x="0.90" y="17.60" width=".7" height="3.20" rx=".3" fill="var(--pl-accent)"/><rect x="30.40" y="17.60" width=".7" height="3.20" rx=".3" fill="var(--pl-accent)"/><path d="M15.45 26.20L11.70 27.70L11.70 29.40L15.45 27.90ZM16.55 26.20L20.30 27.70L20.30 29.40L16.55 27.90Z" fill="url(#plWing)" stroke="rgba(15,23,42,.20)" stroke-width=".14"/><path d="M14.95 24.90L16.00 30.90L17.05 24.90Z" fill="var(--pl-accent)" stroke="rgba(15,23,42,.22)" stroke-width=".12"/><rect x="8.65" y="10.80" width="1.90" height="3.70" rx="0.95" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="8.65" y="10.80" width="1.90" height="0.55" rx="0.95" fill="var(--pl-accent)"/><rect x="8.89" y="11.55" width=".34" height="2.05" rx=".17" fill="#fff" opacity=".32"/><rect x="21.45" y="10.80" width="1.90" height="3.70" rx="0.95" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="21.45" y="10.80" width="1.90" height="0.55" rx="0.95" fill="var(--pl-accent)"/><rect x="21.69" y="11.55" width=".34" height="2.05" rx=".17" fill="#fff" opacity=".32"/><path d="M15.50 3.60L16.50 3.60L16.27 26.40L15.72 26.40Z" fill="#fff" opacity=".55"/><ellipse cx="16.00" cy="4.10" rx="1.04" ry="1.00" fill="#26384a" opacity=".78"/><path d="M14.9 6.20h2.2M14.9 22.40h2.2" stroke="#64748b" stroke-width=".2" opacity=".30"/><rect x="7.00" y="19.50" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/><rect x="24.45" y="19.50" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/></symbol><symbol id="pl-a220" viewBox="0 0 32 32"><path d="M16.00 2.50C14.44 2.50 14.30 3.19 14.30 4.29L14.30 27.30C14.30 28.92 15.06 30.00 16.00 30.00C16.93 30.00 17.70 28.92 17.70 27.30L17.70 4.29C17.70 3.19 17.56 2.50 16.00 2.50Z" fill="url(#plMetal)" stroke="rgba(15,23,42,.24)" stroke-width=".16"/><path d="M14.38 12.00C10.98 12.82 3.85 16.10 1.45 17.30L1.45 19.80C5.05 18.45 11.38 17.13 14.38 17.88ZM17.62 12.00C21.02 12.82 28.15 16.10 30.55 17.30L30.55 19.80C26.95 18.45 20.62 17.13 17.62 17.88Z" fill="rgba(15,23,42,.18)" transform="translate(0 .5)"/><path d="M14.38 12.00C10.98 12.82 3.85 16.10 1.45 17.30L1.45 19.80C5.05 18.45 11.38 17.13 14.38 17.88ZM17.62 12.00C21.02 12.82 28.15 16.10 30.55 17.30L30.55 19.80C26.95 18.45 20.62 17.13 17.62 17.88Z" fill="url(#plWing)" stroke="rgba(15,23,42,.34)" stroke-width=".18"/><path d="M14.38 12.00C10.98 12.82 3.85 16.10 1.45 17.30" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M17.62 12.00C21.02 12.82 28.15 16.10 30.55 17.30" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M1.45 17.70C0.05 16.10 1.55 14.20 2.85 13.90" fill="none" stroke="url(#plMetal)" stroke-width="1.25" stroke-linecap="round"/><path d="M30.55 17.70C31.95 16.10 30.45 14.20 29.15 13.90" fill="none" stroke="url(#plMetal)" stroke-width="1.25" stroke-linecap="round"/><path d="M15.45 26.20L11.70 27.70L11.70 29.40L15.45 27.90ZM16.55 26.20L20.30 27.70L20.30 29.40L16.55 27.90Z" fill="url(#plWing)" stroke="rgba(15,23,42,.20)" stroke-width=".14"/><path d="M14.95 24.90L16.00 30.90L17.05 24.90Z" fill="var(--pl-accent)" stroke="rgba(15,23,42,.22)" stroke-width=".12"/><rect x="9.05" y="11.10" width="1.90" height="3.70" rx="0.95" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="9.05" y="11.10" width="1.90" height="0.55" rx="0.95" fill="var(--pl-accent)"/><rect x="9.29" y="11.85" width=".34" height="2.05" rx=".17" fill="#fff" opacity=".32"/><rect x="21.05" y="11.10" width="1.90" height="3.70" rx="0.95" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="21.05" y="11.10" width="1.90" height="0.55" rx="0.95" fill="var(--pl-accent)"/><rect x="21.29" y="11.85" width=".34" height="2.05" rx=".17" fill="#fff" opacity=".32"/><path d="M15.50 4.30L16.50 4.30L16.27 25.80L15.72 25.80Z" fill="#fff" opacity=".55"/><ellipse cx="16.00" cy="4.80" rx="1.00" ry="1.00" fill="#26384a" opacity=".78"/><path d="M14.9 6.90h2.2M14.9 21.80h2.2" stroke="#64748b" stroke-width=".2" opacity=".30"/><rect x="7.00" y="19.40" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/><rect x="24.45" y="19.40" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/></symbol><symbol id="pl-b737" viewBox="0 0 32 32"><path d="M16.00 2.30C14.47 2.30 14.34 2.96 14.34 4.02L14.34 27.30C14.34 29.10 15.09 30.30 16.00 30.30C16.91 30.30 17.66 29.10 17.66 27.30L17.66 4.02C17.66 2.96 17.53 2.30 16.00 2.30Z" fill="url(#plMetal)" stroke="rgba(15,23,42,.24)" stroke-width=".16"/><path d="M14.40 11.90C11.00 12.72 3.60 16.00 1.20 17.20L1.20 19.70C4.80 18.35 11.40 17.24 14.40 17.99ZM17.60 11.90C21.00 12.72 28.40 16.00 30.80 17.20L30.80 19.70C27.20 18.35 20.60 17.24 17.60 17.99Z" fill="rgba(15,23,42,.18)" transform="translate(0 .5)"/><path d="M14.40 11.90C11.00 12.72 3.60 16.00 1.20 17.20L1.20 19.70C4.80 18.35 11.40 17.24 14.40 17.99ZM17.60 11.90C21.00 12.72 28.40 16.00 30.80 17.20L30.80 19.70C27.20 18.35 20.60 17.24 17.60 17.99Z" fill="url(#plWing)" stroke="rgba(15,23,42,.34)" stroke-width=".18"/><path d="M14.40 11.90C11.00 12.72 3.60 16.00 1.20 17.20" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M17.60 11.90C21.00 12.72 28.40 16.00 30.80 17.20" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M1.70 17.40l-1.0-2.0M1.70 19.50l-1.0 2.0" stroke="var(--pl-accent)" stroke-width=".7" stroke-linecap="round"/><path d="M30.30 17.40l1.0-2.0M30.30 19.50l1.0 2.0" stroke="var(--pl-accent)" stroke-width=".7" stroke-linecap="round"/><path d="M15.45 26.20L11.70 27.70L11.70 29.40L15.45 27.90ZM16.55 26.20L20.30 27.70L20.30 29.40L16.55 27.90Z" fill="url(#plWing)" stroke="rgba(15,23,42,.20)" stroke-width=".14"/><path d="M14.95 24.90L16.00 30.90L17.05 24.90Z" fill="var(--pl-accent)" stroke="rgba(15,23,42,.22)" stroke-width=".12"/><rect x="9.05" y="11.00" width="1.90" height="3.70" rx="0.95" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="9.05" y="11.00" width="1.90" height="0.55" rx="0.95" fill="var(--pl-accent)"/><rect x="9.29" y="11.75" width=".34" height="2.05" rx=".17" fill="#fff" opacity=".32"/><rect x="21.05" y="11.00" width="1.90" height="3.70" rx="0.95" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="21.05" y="11.00" width="1.90" height="0.55" rx="0.95" fill="var(--pl-accent)"/><rect x="21.29" y="11.75" width=".34" height="2.05" rx=".17" fill="#fff" opacity=".32"/><path d="M14.7 3.5h2.6" stroke="#fff" stroke-width=".32" opacity=".5"/><path d="M15.50 4.10L16.50 4.10L16.27 26.10L15.72 26.10Z" fill="#fff" opacity=".55"/><ellipse cx="16.00" cy="4.60" rx="1.00" ry="1.00" fill="#26384a" opacity=".78"/><path d="M14.9 6.70h2.2M14.9 22.10h2.2" stroke="#64748b" stroke-width=".2" opacity=".30"/><rect x="7.00" y="19.30" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/><rect x="24.45" y="19.30" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/></symbol><symbol id="pl-b737max" viewBox="0 0 32 32"><path d="M16.00 2.20C14.44 2.20 14.30 2.86 14.30 3.92L14.30 27.30C14.30 29.10 15.06 30.30 16.00 30.30C16.93 30.30 17.70 29.10 17.70 27.30L17.70 3.92C17.70 2.86 17.56 2.20 16.00 2.20Z" fill="url(#plMetal)" stroke="rgba(15,23,42,.24)" stroke-width=".16"/><path d="M14.38 11.80C10.98 12.62 3.50 16.10 1.10 17.30L1.10 19.90C4.70 18.55 11.38 17.25 14.38 18.00ZM17.62 11.80C21.02 12.62 28.50 16.10 30.90 17.30L30.90 19.90C27.30 18.55 20.62 17.25 17.62 18.00Z" fill="rgba(15,23,42,.18)" transform="translate(0 .5)"/><path d="M14.38 11.80C10.98 12.62 3.50 16.10 1.10 17.30L1.10 19.90C4.70 18.55 11.38 17.25 14.38 18.00ZM17.62 11.80C21.02 12.62 28.50 16.10 30.90 17.30L30.90 19.90C27.30 18.55 20.62 17.25 17.62 18.00Z" fill="url(#plWing)" stroke="rgba(15,23,42,.34)" stroke-width=".18"/><path d="M14.38 11.80C10.98 12.62 3.50 16.10 1.10 17.30" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M17.62 11.80C21.02 12.62 28.50 16.10 30.90 17.30" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M1.60 17.50l-1.0-2.0M1.60 19.70l-1.0 2.0" stroke="var(--pl-accent)" stroke-width=".7" stroke-linecap="round"/><path d="M30.40 17.50l1.0-2.0M30.40 19.70l1.0 2.0" stroke="var(--pl-accent)" stroke-width=".7" stroke-linecap="round"/><path d="M15.45 26.20L11.70 27.70L11.70 29.40L15.45 27.90ZM16.55 26.20L20.30 27.70L20.30 29.40L16.55 27.90Z" fill="url(#plWing)" stroke="rgba(15,23,42,.20)" stroke-width=".14"/><path d="M14.95 24.90L16.00 30.90L17.05 24.90Z" fill="var(--pl-accent)" stroke="rgba(15,23,42,.22)" stroke-width=".12"/><rect x="8.85" y="10.90" width="1.90" height="3.70" rx="0.95" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="8.85" y="10.90" width="1.90" height="0.55" rx="0.95" fill="var(--pl-accent)"/><rect x="9.09" y="11.65" width=".34" height="2.05" rx=".17" fill="#fff" opacity=".32"/><rect x="21.25" y="10.90" width="1.90" height="3.70" rx="0.95" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="21.25" y="10.90" width="1.90" height="0.55" rx="0.95" fill="var(--pl-accent)"/><rect x="21.49" y="11.65" width=".34" height="2.05" rx=".17" fill="#fff" opacity=".32"/><path d="M15.50 4.00L16.50 4.00L16.27 26.10L15.72 26.10Z" fill="#fff" opacity=".55"/><ellipse cx="16.00" cy="4.50" rx="1.02" ry="1.00" fill="#26384a" opacity=".78"/><path d="M14.9 6.60h2.2M14.9 22.10h2.2" stroke="#64748b" stroke-width=".2" opacity=".30"/><rect x="7.00" y="19.40" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/><rect x="24.45" y="19.40" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/></symbol><symbol id="pl-a330" viewBox="0 0 32 32"><path d="M16.00 2.40C13.99 2.40 13.82 3.27 13.82 4.66L13.82 27.10C13.82 28.84 14.80 30.00 16.00 30.00C17.20 30.00 18.18 28.84 18.18 27.10L18.18 4.66C18.18 3.27 18.01 2.40 16.00 2.40Z" fill="url(#plMetal)" stroke="rgba(15,23,42,.24)" stroke-width=".16"/><path d="M13.90 11.70C10.50 12.52 3.25 16.20 0.85 17.40L0.85 20.40C4.45 19.05 10.90 18.09 13.90 18.84ZM18.10 11.70C21.50 12.52 28.75 16.20 31.15 17.40L31.15 20.40C27.55 19.05 21.10 18.09 18.10 18.84Z" fill="rgba(15,23,42,.18)" transform="translate(0 .5)"/><path d="M13.90 11.70C10.50 12.52 3.25 16.20 0.85 17.40L0.85 20.40C4.45 19.05 10.90 18.09 13.90 18.84ZM18.10 11.70C21.50 12.52 28.75 16.20 31.15 17.40L31.15 20.40C27.55 19.05 21.10 18.09 18.10 18.84Z" fill="url(#plWing)" stroke="rgba(15,23,42,.34)" stroke-width=".18"/><path d="M13.90 11.70C10.50 12.52 3.25 16.20 0.85 17.40" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M18.10 11.70C21.50 12.52 28.75 16.20 31.15 17.40" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><rect x="0.75" y="17.60" width=".7" height="3.50" rx=".3" fill="var(--pl-accent)"/><rect x="30.55" y="17.60" width=".7" height="3.50" rx=".3" fill="var(--pl-accent)"/><path d="M15.45 26.20L11.70 27.70L11.70 29.40L15.45 27.90ZM16.55 26.20L20.30 27.70L20.30 29.40L16.55 27.90Z" fill="url(#plWing)" stroke="rgba(15,23,42,.20)" stroke-width=".14"/><path d="M14.76 24.90L16.00 30.90L17.24 24.90Z" fill="var(--pl-accent)" stroke="rgba(15,23,42,.22)" stroke-width=".12"/><rect x="7.80" y="10.80" width="2.40" height="4.10" rx="1.20" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="7.80" y="10.80" width="2.40" height="0.55" rx="1.20" fill="var(--pl-accent)"/><rect x="8.04" y="11.55" width=".34" height="2.45" rx=".17" fill="#fff" opacity=".32"/><rect x="21.80" y="10.80" width="2.40" height="4.10" rx="1.20" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="21.80" y="10.80" width="2.40" height="0.55" rx="1.20" fill="var(--pl-accent)"/><rect x="22.04" y="11.55" width=".34" height="2.45" rx=".17" fill="#fff" opacity=".32"/><path d="M15.50 4.20L16.50 4.20L16.27 25.80L15.72 25.80Z" fill="#fff" opacity=".55"/><ellipse cx="16.00" cy="4.70" rx="1.22" ry="1.00" fill="#26384a" opacity=".78"/><path d="M14.9 6.80h2.2M14.9 21.80h2.2" stroke="#64748b" stroke-width=".2" opacity=".30"/><rect x="6.00" y="19.50" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/><rect x="25.45" y="19.50" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/></symbol><symbol id="pl-a350" viewBox="0 0 32 32"><path d="M16.00 2.20C13.98 2.20 13.80 3.10 13.80 4.54L13.80 27.40C13.80 29.08 14.79 30.20 16.00 30.20C17.21 30.20 18.20 29.08 18.20 27.40L18.20 4.54C18.20 3.10 18.02 2.20 16.00 2.20Z" fill="url(#plMetal)" stroke="rgba(15,23,42,.24)" stroke-width=".16"/><path d="M13.88 11.50C10.48 12.32 2.95 16.10 0.55 17.30L0.55 20.40C4.15 19.05 10.88 18.10 13.88 18.85ZM18.12 11.50C21.52 12.32 29.05 16.10 31.45 17.30L31.45 20.40C27.85 19.05 21.12 18.10 18.12 18.85Z" fill="rgba(15,23,42,.18)" transform="translate(0 .5)"/><path d="M13.88 11.50C10.48 12.32 2.95 16.10 0.55 17.30L0.55 20.40C4.15 19.05 10.88 18.10 13.88 18.85ZM18.12 11.50C21.52 12.32 29.05 16.10 31.45 17.30L31.45 20.40C27.85 19.05 21.12 18.10 18.12 18.85Z" fill="url(#plWing)" stroke="rgba(15,23,42,.34)" stroke-width=".18"/><path d="M13.88 11.50C10.48 12.32 2.95 16.10 0.55 17.30" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M18.12 11.50C21.52 12.32 29.05 16.10 31.45 17.30" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M0.55 17.70C-0.85 16.10 0.65 14.20 1.95 13.90" fill="none" stroke="url(#plMetal)" stroke-width="1.25" stroke-linecap="round"/><path d="M31.45 17.70C32.85 16.10 31.35 14.20 30.05 13.90" fill="none" stroke="url(#plMetal)" stroke-width="1.25" stroke-linecap="round"/><path d="M15.45 26.20L11.70 27.70L11.70 29.40L15.45 27.90ZM16.55 26.20L20.30 27.70L20.30 29.40L16.55 27.90Z" fill="url(#plWing)" stroke="rgba(15,23,42,.20)" stroke-width=".14"/><path d="M14.72 24.90L16.00 30.90L17.28 24.90Z" fill="var(--pl-accent)" stroke="rgba(15,23,42,.22)" stroke-width=".12"/><rect x="7.54" y="10.60" width="2.52" height="4.30" rx="1.26" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="7.54" y="10.60" width="2.52" height="0.55" rx="1.26" fill="var(--pl-accent)"/><rect x="7.78" y="11.35" width=".34" height="2.65" rx=".17" fill="#fff" opacity=".32"/><rect x="21.94" y="10.60" width="2.52" height="4.30" rx="1.26" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="21.94" y="10.60" width="2.52" height="0.55" rx="1.26" fill="var(--pl-accent)"/><rect x="22.18" y="11.35" width=".34" height="2.65" rx=".17" fill="#fff" opacity=".32"/><path d="M12.9 4.2c2.0-.6 4.2-.6 6.2 0" stroke="#1d2b3a" stroke-width=".55" fill="none" opacity=".6"/><path d="M15.50 4.00L16.50 4.00L16.27 26.00L15.72 26.00Z" fill="#fff" opacity=".55"/><ellipse cx="16.00" cy="4.50" rx="1.28" ry="1.00" fill="#26384a" opacity=".78"/><path d="M14.9 6.60h2.2M14.9 22.00h2.2" stroke="#64748b" stroke-width=".2" opacity=".30"/><rect x="6.00" y="19.40" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/><rect x="25.45" y="19.40" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/></symbol><symbol id="pl-a380" viewBox="0 0 32 32"><path d="M16.00 2.10C13.72 2.10 13.52 3.06 13.52 4.60L13.52 27.50C13.52 29.12 14.64 30.20 16.00 30.20C17.36 30.20 18.48 29.12 18.48 27.50L18.48 4.60C18.48 3.06 18.28 2.10 16.00 2.10Z" fill="url(#plMetal)" stroke="rgba(15,23,42,.24)" stroke-width=".16"/><path d="M13.62 11.20C10.22 12.02 2.60 16.40 0.20 17.60L0.20 20.90C3.80 19.55 10.62 18.43 13.62 19.18ZM18.38 11.20C21.78 12.02 29.40 16.40 31.80 17.60L31.80 20.90C28.20 19.55 21.38 18.43 18.38 19.18Z" fill="rgba(15,23,42,.18)" transform="translate(0 .5)"/><path d="M13.62 11.20C10.22 12.02 2.60 16.40 0.20 17.60L0.20 20.90C3.80 19.55 10.62 18.43 13.62 19.18ZM18.38 11.20C21.78 12.02 29.40 16.40 31.80 17.60L31.80 20.90C28.20 19.55 21.38 18.43 18.38 19.18Z" fill="url(#plWing)" stroke="rgba(15,23,42,.34)" stroke-width=".18"/><path d="M13.62 11.20C10.22 12.02 2.60 16.40 0.20 17.60" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M18.38 11.20C21.78 12.02 29.40 16.40 31.80 17.60" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M0.20 18.00C-1.20 16.40 0.30 14.50 1.60 14.20" fill="none" stroke="url(#plMetal)" stroke-width="1.25" stroke-linecap="round"/><path d="M31.80 18.00C33.20 16.40 31.70 14.50 30.40 14.20" fill="none" stroke="url(#plMetal)" stroke-width="1.25" stroke-linecap="round"/><path d="M15.45 26.20L11.70 27.70L11.70 29.40L15.45 27.90ZM16.55 26.20L20.30 27.70L20.30 29.40L16.55 27.90Z" fill="url(#plWing)" stroke="rgba(15,23,42,.20)" stroke-width=".14"/><path d="M14.50 24.90L16.00 30.90L17.50 24.90Z" fill="var(--pl-accent)" stroke="rgba(15,23,42,.22)" stroke-width=".12"/><rect x="6.15" y="10.20" width="1.70" height="3.70" rx="0.85" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="6.15" y="10.20" width="1.70" height="0.55" rx="0.85" fill="var(--pl-accent)"/><rect x="6.39" y="10.95" width=".34" height="2.05" rx=".17" fill="#fff" opacity=".32"/><rect x="9.65" y="10.20" width="1.70" height="3.70" rx="0.85" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="9.65" y="10.20" width="1.70" height="0.55" rx="0.85" fill="var(--pl-accent)"/><rect x="9.89" y="10.95" width=".34" height="2.05" rx=".17" fill="#fff" opacity=".32"/><rect x="20.65" y="10.20" width="1.70" height="3.70" rx="0.85" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="20.65" y="10.20" width="1.70" height="0.55" rx="0.85" fill="var(--pl-accent)"/><rect x="20.89" y="10.95" width=".34" height="2.05" rx=".17" fill="#fff" opacity=".32"/><rect x="24.15" y="10.20" width="1.70" height="3.70" rx="0.85" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="24.15" y="10.20" width="1.70" height="0.55" rx="0.85" fill="var(--pl-accent)"/><rect x="24.39" y="10.95" width=".34" height="2.05" rx=".17" fill="#fff" opacity=".32"/><ellipse cx="16" cy="7.1" rx="1.9" ry="2.7" fill="#fff" opacity=".12"/><path d="M15.50 3.90L16.50 3.90L16.27 26.00L15.72 26.00Z" fill="#fff" opacity=".55"/><ellipse cx="16.00" cy="4.40" rx="1.40" ry="1.00" fill="#26384a" opacity=".78"/><path d="M14.9 6.50h2.2M14.9 22.00h2.2" stroke="#64748b" stroke-width=".2" opacity=".30"/><rect x="6.00" y="19.70" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/><rect x="25.45" y="19.70" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/></symbol><symbol id="pl-b767" viewBox="0 0 32 32"><path d="M16.00 2.40C14.10 2.40 13.94 3.21 13.94 4.51L13.94 27.20C13.94 28.94 14.87 30.10 16.00 30.10C17.13 30.10 18.06 28.94 18.06 27.20L18.06 4.51C18.06 3.21 17.90 2.40 16.00 2.40Z" fill="url(#plMetal)" stroke="rgba(15,23,42,.24)" stroke-width=".16"/><path d="M14.00 11.80C10.60 12.62 3.35 16.10 0.95 17.30L0.95 20.20C4.55 18.85 11.00 17.88 14.00 18.62ZM18.00 11.80C21.40 12.62 28.65 16.10 31.05 17.30L31.05 20.20C27.45 18.85 21.00 17.88 18.00 18.62Z" fill="rgba(15,23,42,.18)" transform="translate(0 .5)"/><path d="M14.00 11.80C10.60 12.62 3.35 16.10 0.95 17.30L0.95 20.20C4.55 18.85 11.00 17.88 14.00 18.62ZM18.00 11.80C21.40 12.62 28.65 16.10 31.05 17.30L31.05 20.20C27.45 18.85 21.00 17.88 18.00 18.62Z" fill="url(#plWing)" stroke="rgba(15,23,42,.34)" stroke-width=".18"/><path d="M14.00 11.80C10.60 12.62 3.35 16.10 0.95 17.30" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M18.00 11.80C21.40 12.62 28.65 16.10 31.05 17.30" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><rect x="0.85" y="17.50" width=".7" height="3.40" rx=".3" fill="var(--pl-accent)"/><rect x="30.45" y="17.50" width=".7" height="3.40" rx=".3" fill="var(--pl-accent)"/><path d="M15.45 26.20L11.70 27.70L11.70 29.40L15.45 27.90ZM16.55 26.20L20.30 27.70L20.30 29.40L16.55 27.90Z" fill="url(#plWing)" stroke="rgba(15,23,42,.20)" stroke-width=".14"/><path d="M14.82 24.90L16.00 30.90L17.18 24.90Z" fill="var(--pl-accent)" stroke="rgba(15,23,42,.22)" stroke-width=".12"/><rect x="8.00" y="10.90" width="2.40" height="4.10" rx="1.20" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="8.00" y="10.90" width="2.40" height="0.55" rx="1.20" fill="var(--pl-accent)"/><rect x="8.24" y="11.65" width=".34" height="2.45" rx=".17" fill="#fff" opacity=".32"/><rect x="21.60" y="10.90" width="2.40" height="4.10" rx="1.20" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="21.60" y="10.90" width="2.40" height="0.55" rx="1.20" fill="var(--pl-accent)"/><rect x="21.84" y="11.65" width=".34" height="2.45" rx=".17" fill="#fff" opacity=".32"/><path d="M15.50 4.20L16.50 4.20L16.27 25.90L15.72 25.90Z" fill="#fff" opacity=".55"/><ellipse cx="16.00" cy="4.70" rx="1.18" ry="1.00" fill="#26384a" opacity=".78"/><path d="M14.9 6.80h2.2M14.9 21.90h2.2" stroke="#64748b" stroke-width=".2" opacity=".30"/><rect x="6.00" y="19.40" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/><rect x="25.45" y="19.40" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/></symbol><symbol id="pl-b777" viewBox="0 0 32 32"><path d="M16.00 2.20C13.94 2.20 13.76 3.10 13.76 4.54L13.76 27.60C13.76 29.22 14.77 30.30 16.00 30.30C17.23 30.30 18.24 29.22 18.24 27.60L18.24 4.54C18.24 3.10 18.06 2.20 16.00 2.20Z" fill="url(#plMetal)" stroke="rgba(15,23,42,.24)" stroke-width=".16"/><path d="M13.85 11.40C10.45 12.22 3.00 16.00 0.60 17.20L0.60 20.40C4.20 19.05 10.85 18.21 13.85 18.96ZM18.15 11.40C21.55 12.22 29.00 16.00 31.40 17.20L31.40 20.40C27.80 19.05 21.15 18.21 18.15 18.96Z" fill="rgba(15,23,42,.18)" transform="translate(0 .5)"/><path d="M13.85 11.40C10.45 12.22 3.00 16.00 0.60 17.20L0.60 20.40C4.20 19.05 10.85 18.21 13.85 18.96ZM18.15 11.40C21.55 12.22 29.00 16.00 31.40 17.20L31.40 20.40C27.80 19.05 21.15 18.21 18.15 18.96Z" fill="url(#plWing)" stroke="rgba(15,23,42,.34)" stroke-width=".18"/><path d="M13.85 11.40C10.45 12.22 3.00 16.00 0.60 17.20" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M18.15 11.40C21.55 12.22 29.00 16.00 31.40 17.20" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M0.60 17.20l-1.7-2.3l.4-.7l2.1 2.0Z" fill="url(#plMetal)"/><path d="M31.40 17.20l1.7-2.3l-.4-.7l-2.1 2.0Z" fill="url(#plMetal)"/><path d="M15.45 26.20L11.70 27.70L11.70 29.40L15.45 27.90ZM16.55 26.20L20.30 27.70L20.30 29.40L16.55 27.90Z" fill="url(#plWing)" stroke="rgba(15,23,42,.20)" stroke-width=".14"/><path d="M14.70 24.90L16.00 30.90L17.30 24.90Z" fill="var(--pl-accent)" stroke="rgba(15,23,42,.22)" stroke-width=".12"/><rect x="7.42" y="10.50" width="2.76" height="4.71" rx="1.38" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="7.42" y="10.50" width="2.76" height="0.55" rx="1.38" fill="var(--pl-accent)"/><rect x="7.66" y="11.25" width=".34" height="3.06" rx=".17" fill="#fff" opacity=".32"/><rect x="21.82" y="10.50" width="2.76" height="4.71" rx="1.38" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="21.82" y="10.50" width="2.76" height="0.55" rx="1.38" fill="var(--pl-accent)"/><rect x="22.06" y="11.25" width=".34" height="3.06" rx=".17" fill="#fff" opacity=".32"/><path d="M15.50 4.00L16.50 4.00L16.27 26.10L15.72 26.10Z" fill="#fff" opacity=".55"/><ellipse cx="16.00" cy="4.50" rx="1.30" ry="1.00" fill="#26384a" opacity=".78"/><path d="M14.9 6.60h2.2M14.9 22.10h2.2" stroke="#64748b" stroke-width=".2" opacity=".30"/><rect x="6.00" y="19.30" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/><rect x="25.45" y="19.30" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/></symbol><symbol id="pl-b787" viewBox="0 0 32 32"><path d="M16.00 2.40C14.03 2.40 13.86 3.27 13.86 4.66L13.86 27.50C13.86 29.12 14.82 30.20 16.00 30.20C17.18 30.20 18.14 29.12 18.14 27.50L18.14 4.66C18.14 3.27 17.97 2.40 16.00 2.40Z" fill="url(#plMetal)" stroke="rgba(15,23,42,.24)" stroke-width=".16"/><path d="M13.94 11.50C10.54 12.32 2.90 15.90 0.50 17.10L0.50 20.10C4.10 18.75 10.94 18.00 13.94 18.75ZM18.06 11.50C21.46 12.32 29.10 15.90 31.50 17.10L31.50 20.10C27.90 18.75 21.06 18.00 18.06 18.75Z" fill="rgba(15,23,42,.18)" transform="translate(0 .5)"/><path d="M13.94 11.50C10.54 12.32 2.90 15.90 0.50 17.10L0.50 20.10C4.10 18.75 10.94 18.00 13.94 18.75ZM18.06 11.50C21.46 12.32 29.10 15.90 31.50 17.10L31.50 20.10C27.90 18.75 21.06 18.00 18.06 18.75Z" fill="url(#plWing)" stroke="rgba(15,23,42,.34)" stroke-width=".18"/><path d="M13.94 11.50C10.54 12.32 2.90 15.90 0.50 17.10" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M18.06 11.50C21.46 12.32 29.10 15.90 31.50 17.10" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M0.50 17.10l-1.7-2.3l.4-.7l2.1 2.0Z" fill="url(#plMetal)"/><path d="M31.50 17.10l1.7-2.3l-.4-.7l-2.1 2.0Z" fill="url(#plMetal)"/><path d="M15.45 26.20L11.70 27.70L11.70 29.40L15.45 27.90ZM16.55 26.20L20.30 27.70L20.30 29.40L16.55 27.90Z" fill="url(#plWing)" stroke="rgba(15,23,42,.20)" stroke-width=".14"/><path d="M14.76 24.90L16.00 30.90L17.24 24.90Z" fill="var(--pl-accent)" stroke="rgba(15,23,42,.22)" stroke-width=".12"/><rect x="7.86" y="10.60" width="2.28" height="3.89" rx="1.14" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="7.86" y="10.60" width="2.28" height="0.55" rx="1.14" fill="var(--pl-accent)"/><rect x="8.10" y="11.35" width=".34" height="2.24" rx=".17" fill="#fff" opacity=".32"/><rect x="21.86" y="10.60" width="2.28" height="3.89" rx="1.14" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="21.86" y="10.60" width="2.28" height="0.55" rx="1.14" fill="var(--pl-accent)"/><rect x="22.10" y="11.35" width=".34" height="2.24" rx=".17" fill="#fff" opacity=".32"/><path d="M15.50 4.20L16.50 4.20L16.27 26.00L15.72 26.00Z" fill="#fff" opacity=".55"/><ellipse cx="16.00" cy="4.70" rx="1.24" ry="1.00" fill="#26384a" opacity=".78"/><path d="M14.9 6.80h2.2M14.9 22.00h2.2" stroke="#64748b" stroke-width=".2" opacity=".30"/><rect x="6.00" y="19.20" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/><rect x="25.45" y="19.20" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/></symbol><symbol id="pl-b747" viewBox="0 0 32 32"><path d="M16.00 2.00C13.81 2.00 13.62 2.93 13.62 4.42L13.62 27.70C13.62 29.26 14.69 30.30 16.00 30.30C17.31 30.30 18.38 29.26 18.38 27.70L18.38 4.42C18.38 2.93 18.19 2.00 16.00 2.00Z" fill="url(#plMetal)" stroke="rgba(15,23,42,.24)" stroke-width=".16"/><path d="M13.70 11.20C10.30 12.02 4.40 16.10 2.00 17.30L2.00 20.30C5.60 18.95 10.70 17.80 13.70 18.55ZM18.30 11.20C21.70 12.02 27.60 16.10 30.00 17.30L30.00 20.30C26.40 18.95 21.30 17.80 18.30 18.55Z" fill="rgba(15,23,42,.18)" transform="translate(0 .5)"/><path d="M13.70 11.20C10.30 12.02 4.40 16.10 2.00 17.30L2.00 20.30C5.60 18.95 10.70 17.80 13.70 18.55ZM18.30 11.20C21.70 12.02 27.60 16.10 30.00 17.30L30.00 20.30C26.40 18.95 21.30 17.80 18.30 18.55Z" fill="url(#plWing)" stroke="rgba(15,23,42,.34)" stroke-width=".18"/><path d="M13.70 11.20C10.30 12.02 4.40 16.10 2.00 17.30" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M18.30 11.20C21.70 12.02 27.60 16.10 30.00 17.30" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M2.00 17.30l-1.7-2.3l.4-.7l2.1 2.0Z" fill="url(#plMetal)"/><path d="M30.00 17.30l1.7-2.3l-.4-.7l-2.1 2.0Z" fill="url(#plMetal)"/><path d="M15.45 26.20L11.70 27.70L11.70 29.40L15.45 27.90ZM16.55 26.20L20.30 27.70L20.30 29.40L16.55 27.90Z" fill="url(#plWing)" stroke="rgba(15,23,42,.20)" stroke-width=".14"/><path d="M14.55 24.90L16.00 30.90L17.45 24.90Z" fill="var(--pl-accent)" stroke="rgba(15,23,42,.22)" stroke-width=".12"/><rect x="7.51" y="10.20" width="1.78" height="3.89" rx="0.89" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="7.51" y="10.20" width="1.78" height="0.55" rx="0.89" fill="var(--pl-accent)"/><rect x="7.75" y="10.95" width=".34" height="2.23" rx=".17" fill="#fff" opacity=".32"/><rect x="10.51" y="10.20" width="1.78" height="3.89" rx="0.89" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="10.51" y="10.20" width="1.78" height="0.55" rx="0.89" fill="var(--pl-accent)"/><rect x="10.75" y="10.95" width=".34" height="2.23" rx=".17" fill="#fff" opacity=".32"/><rect x="19.71" y="10.20" width="1.78" height="3.89" rx="0.89" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="19.71" y="10.20" width="1.78" height="0.55" rx="0.89" fill="var(--pl-accent)"/><rect x="19.95" y="10.95" width=".34" height="2.23" rx=".17" fill="#fff" opacity=".32"/><rect x="22.71" y="10.20" width="1.78" height="3.89" rx="0.89" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="22.71" y="10.20" width="1.78" height="0.55" rx="0.89" fill="var(--pl-accent)"/><rect x="22.95" y="10.95" width=".34" height="2.23" rx=".17" fill="#fff" opacity=".32"/><ellipse cx="16" cy="6.6" rx="2.0" ry="2.8" fill="#fff" opacity=".14"/><path d="M15.50 3.80L16.50 3.80L16.27 26.10L15.72 26.10Z" fill="#fff" opacity=".55"/><ellipse cx="16.00" cy="4.30" rx="1.34" ry="1.00" fill="#26384a" opacity=".78"/><path d="M14.9 6.40h2.2M14.9 22.10h2.2" stroke="#64748b" stroke-width=".2" opacity=".30"/><rect x="6.00" y="19.40" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/><rect x="25.45" y="19.40" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/></symbol><symbol id="pl-c919" viewBox="0 0 32 32"><path d="M16.00 2.20C14.42 2.20 14.28 2.95 14.28 4.15L14.28 27.30C14.28 29.04 15.05 30.20 16.00 30.20C16.95 30.20 17.72 29.04 17.72 27.30L17.72 4.15C17.72 2.95 17.58 2.20 16.00 2.20Z" fill="url(#plMetal)" stroke="rgba(15,23,42,.24)" stroke-width=".16"/><path d="M14.35 11.80C10.95 12.62 3.60 16.00 1.20 17.20L1.20 19.80C4.80 18.45 11.35 17.25 14.35 18.00ZM17.65 11.80C21.05 12.62 28.40 16.00 30.80 17.20L30.80 19.80C27.20 18.45 20.65 17.25 17.65 18.00Z" fill="rgba(15,23,42,.18)" transform="translate(0 .5)"/><path d="M14.35 11.80C10.95 12.62 3.60 16.00 1.20 17.20L1.20 19.80C4.80 18.45 11.35 17.25 14.35 18.00ZM17.65 11.80C21.05 12.62 28.40 16.00 30.80 17.20L30.80 19.80C27.20 18.45 20.65 17.25 17.65 18.00Z" fill="url(#plWing)" stroke="rgba(15,23,42,.34)" stroke-width=".18"/><path d="M14.35 11.80C10.95 12.62 3.60 16.00 1.20 17.20" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M17.65 11.80C21.05 12.62 28.40 16.00 30.80 17.20" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M1.20 17.60C-0.20 16.00 1.30 14.10 2.60 13.80" fill="none" stroke="url(#plMetal)" stroke-width="1.25" stroke-linecap="round"/><path d="M30.80 17.60C32.20 16.00 30.70 14.10 29.40 13.80" fill="none" stroke="url(#plMetal)" stroke-width="1.25" stroke-linecap="round"/><path d="M15.45 26.20L11.70 27.70L11.70 29.40L15.45 27.90ZM16.55 26.20L20.30 27.70L20.30 29.40L16.55 27.90Z" fill="url(#plWing)" stroke="rgba(15,23,42,.20)" stroke-width=".14"/><path d="M14.98 24.90L16.00 30.90L17.02 24.90Z" fill="var(--pl-accent)" stroke="rgba(15,23,42,.22)" stroke-width=".12"/><rect x="8.95" y="10.90" width="1.90" height="3.70" rx="0.95" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="8.95" y="10.90" width="1.90" height="0.55" rx="0.95" fill="var(--pl-accent)"/><rect x="9.19" y="11.65" width=".34" height="2.05" rx=".17" fill="#fff" opacity=".32"/><rect x="21.15" y="10.90" width="1.90" height="3.70" rx="0.95" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="21.15" y="10.90" width="1.90" height="0.55" rx="0.95" fill="var(--pl-accent)"/><rect x="21.39" y="11.65" width=".34" height="2.05" rx=".17" fill="#fff" opacity=".32"/><path d="M15.50 4.00L16.50 4.00L16.27 26.00L15.72 26.00Z" fill="#fff" opacity=".55"/><ellipse cx="16.00" cy="4.50" rx="1.02" ry="1.00" fill="#26384a" opacity=".78"/><path d="M14.9 6.60h2.2M14.9 22.00h2.2" stroke="#64748b" stroke-width=".2" opacity=".30"/><rect x="7.00" y="19.30" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/><rect x="24.45" y="19.30" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/></symbol><symbol id="pl-arj21" viewBox="0 0 32 32"><path d="M16.00 2.60C14.62 2.60 14.50 3.26 14.50 4.32L14.50 27.40C14.50 28.84 15.18 29.80 16.00 29.80C16.82 29.80 17.50 28.84 17.50 27.40L17.50 4.32C17.50 3.26 17.38 2.60 16.00 2.60Z" fill="url(#plMetal)" stroke="rgba(15,23,42,.24)" stroke-width=".16"/><path d="M14.55 12.20C11.15 13.02 4.80 15.80 2.40 17.00L2.40 19.20C6.00 17.85 11.55 16.49 14.55 17.24ZM17.45 12.20C20.85 13.02 27.20 15.80 29.60 17.00L29.60 19.20C26.00 17.85 20.45 16.49 17.45 17.24Z" fill="rgba(15,23,42,.18)" transform="translate(0 .5)"/><path d="M14.55 12.20C11.15 13.02 4.80 15.80 2.40 17.00L2.40 19.20C6.00 17.85 11.55 16.49 14.55 17.24ZM17.45 12.20C20.85 13.02 27.20 15.80 29.60 17.00L29.60 19.20C26.00 17.85 20.45 16.49 17.45 17.24Z" fill="url(#plWing)" stroke="rgba(15,23,42,.34)" stroke-width=".18"/><path d="M14.55 12.20C11.15 13.02 4.80 15.80 2.40 17.00" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M17.45 12.20C20.85 13.02 27.20 15.80 29.60 17.00" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><rect x="2.30" y="17.20" width=".7" height="2.70" rx=".3" fill="var(--pl-accent)"/><rect x="29.00" y="17.20" width=".7" height="2.70" rx=".3" fill="var(--pl-accent)"/><path d="M15.45 25.10L10.60 26.60L10.60 28.50L15.45 27.00ZM16.55 25.10L21.40 26.60L21.40 28.50L16.55 27.00Z" fill="url(#plWing)" stroke="rgba(15,23,42,.20)" stroke-width=".14"/><path d="M15.02 23.80L16.00 29.80L16.98 23.80Z" fill="var(--pl-accent)" stroke="rgba(15,23,42,.22)" stroke-width=".12"/><rect x="11.98" y="21.60" width="1.65" height="4.30" rx="0.82" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="11.98" y="21.60" width="1.65" height=".55" rx="0.82" fill="var(--pl-accent)"/><rect x="18.38" y="21.60" width="1.65" height="4.30" rx="0.82" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="18.38" y="21.60" width="1.65" height=".55" rx="0.82" fill="var(--pl-accent)"/><ellipse cx="16.00" cy="4.90" rx="0.94" ry="1.00" fill="#26384a" opacity=".78"/><path d="M14.9 7.00h2.2M14.9 21.60h2.2" stroke="#64748b" stroke-width=".2" opacity=".30"/><rect x="7.00" y="19.10" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/><rect x="24.45" y="19.10" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/></symbol><symbol id="pl-crj" viewBox="0 0 32 32"><path d="M16.00 2.70C14.67 2.70 14.55 3.33 14.55 4.34L14.55 27.40C14.55 28.78 15.20 29.70 16.00 29.70C16.80 29.70 17.45 28.78 17.45 27.40L17.45 4.34C17.45 3.33 17.33 2.70 16.00 2.70Z" fill="url(#plMetal)" stroke="rgba(15,23,42,.24)" stroke-width=".16"/><path d="M14.60 12.40C11.20 13.22 5.10 15.70 2.70 16.90L2.70 18.90C6.30 17.55 11.60 16.38 14.60 17.12ZM17.40 12.40C20.80 13.22 26.90 15.70 29.30 16.90L29.30 18.90C25.70 17.55 20.40 16.38 17.40 17.12Z" fill="rgba(15,23,42,.18)" transform="translate(0 .5)"/><path d="M14.60 12.40C11.20 13.22 5.10 15.70 2.70 16.90L2.70 18.90C6.30 17.55 11.60 16.38 14.60 17.12ZM17.40 12.40C20.80 13.22 26.90 15.70 29.30 16.90L29.30 18.90C25.70 17.55 20.40 16.38 17.40 17.12Z" fill="url(#plWing)" stroke="rgba(15,23,42,.34)" stroke-width=".18"/><path d="M14.60 12.40C11.20 13.22 5.10 15.70 2.70 16.90" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M17.40 12.40C20.80 13.22 26.90 15.70 29.30 16.90" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M15.45 25.10L11.00 26.60L11.00 28.40L15.45 26.90ZM16.55 25.10L21.00 26.60L21.00 28.40L16.55 26.90Z" fill="url(#plWing)" stroke="rgba(15,23,42,.20)" stroke-width=".14"/><path d="M15.08 23.80L16.00 29.80L16.92 23.80Z" fill="var(--pl-accent)" stroke="rgba(15,23,42,.22)" stroke-width=".12"/><rect x="12.22" y="22.00" width="1.55" height="3.90" rx="0.78" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="12.22" y="22.00" width="1.55" height=".55" rx="0.78" fill="var(--pl-accent)"/><rect x="18.23" y="22.00" width="1.55" height="3.90" rx="0.78" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="18.23" y="22.00" width="1.55" height=".55" rx="0.78" fill="var(--pl-accent)"/><ellipse cx="16.00" cy="5.00" rx="0.90" ry="1.00" fill="#26384a" opacity=".78"/><path d="M14.9 7.10h2.2M14.9 21.50h2.2" stroke="#64748b" stroke-width=".2" opacity=".30"/><rect x="7.00" y="19.00" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/><rect x="24.45" y="19.00" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/></symbol><symbol id="pl-ejet" viewBox="0 0 32 32"><path d="M16.00 2.60C14.56 2.60 14.44 3.26 14.44 4.32L14.44 27.40C14.44 28.90 15.14 29.90 16.00 29.90C16.86 29.90 17.56 28.90 17.56 27.40L17.56 4.32C17.56 3.26 17.44 2.60 16.00 2.60Z" fill="url(#plMetal)" stroke="rgba(15,23,42,.24)" stroke-width=".16"/><path d="M14.50 11.80C11.10 12.62 4.40 15.80 2.00 17.00L2.00 19.30C5.60 17.95 11.50 16.51 14.50 17.26ZM17.50 11.80C20.90 12.62 27.60 15.80 30.00 17.00L30.00 19.30C26.40 17.95 20.50 16.51 17.50 17.26Z" fill="rgba(15,23,42,.18)" transform="translate(0 .5)"/><path d="M14.50 11.80C11.10 12.62 4.40 15.80 2.00 17.00L2.00 19.30C5.60 17.95 11.50 16.51 14.50 17.26ZM17.50 11.80C20.90 12.62 27.60 15.80 30.00 17.00L30.00 19.30C26.40 17.95 20.50 16.51 17.50 17.26Z" fill="url(#plWing)" stroke="rgba(15,23,42,.34)" stroke-width=".18"/><path d="M14.50 11.80C11.10 12.62 4.40 15.80 2.00 17.00" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M17.50 11.80C20.90 12.62 27.60 15.80 30.00 17.00" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><rect x="1.90" y="17.20" width=".7" height="2.80" rx=".3" fill="var(--pl-accent)"/><rect x="29.40" y="17.20" width=".7" height="2.80" rx=".3" fill="var(--pl-accent)"/><path d="M15.45 26.20L11.70 27.70L11.70 29.40L15.45 27.90ZM16.55 26.20L20.30 27.70L20.30 29.40L16.55 27.90Z" fill="url(#plWing)" stroke="rgba(15,23,42,.20)" stroke-width=".14"/><path d="M15.06 24.90L16.00 30.90L16.94 24.90Z" fill="var(--pl-accent)" stroke="rgba(15,23,42,.22)" stroke-width=".12"/><rect x="9.65" y="10.90" width="1.90" height="3.70" rx="0.95" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="9.65" y="10.90" width="1.90" height="0.55" rx="0.95" fill="var(--pl-accent)"/><rect x="9.89" y="11.65" width=".34" height="2.05" rx=".17" fill="#fff" opacity=".32"/><rect x="20.45" y="10.90" width="1.90" height="3.70" rx="0.95" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="20.45" y="10.90" width="1.90" height="0.55" rx="0.95" fill="var(--pl-accent)"/><rect x="20.69" y="11.65" width=".34" height="2.05" rx=".17" fill="#fff" opacity=".32"/><path d="M15.50 4.40L16.50 4.40L16.27 25.70L15.72 25.70Z" fill="#fff" opacity=".55"/><ellipse cx="16.00" cy="4.90" rx="0.94" ry="1.00" fill="#26384a" opacity=".78"/><path d="M14.9 7.00h2.2M14.9 21.70h2.2" stroke="#64748b" stroke-width=".2" opacity=".30"/><rect x="7.00" y="19.10" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/><rect x="24.45" y="19.10" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/></symbol><symbol id="pl-atr" viewBox="0 0 32 32"><path d="M16.00 2.80C14.64 2.80 14.52 3.43 14.52 4.44L14.52 27.30C14.52 28.68 15.19 29.60 16.00 29.60C16.81 29.60 17.48 28.68 17.48 27.30L17.48 4.44C17.48 3.43 17.36 2.80 16.00 2.80Z" fill="url(#plMetal)" stroke="rgba(15,23,42,.24)" stroke-width=".16"/><path d="M14.60 14.60C11.20 15.42 4.80 17.80 2.40 19.00L2.40 21.00C6.00 19.65 11.60 18.47 14.60 19.22ZM17.40 14.60C20.80 15.42 27.20 17.80 29.60 19.00L29.60 21.00C26.00 19.65 20.40 18.47 17.40 19.22Z" fill="rgba(15,23,42,.18)" transform="translate(0 .5)"/><path d="M14.60 14.60C11.20 15.42 4.80 17.80 2.40 19.00L2.40 21.00C6.00 19.65 11.60 18.47 14.60 19.22ZM17.40 14.60C20.80 15.42 27.20 17.80 29.60 19.00L29.60 21.00C26.00 19.65 20.40 18.47 17.40 19.22Z" fill="url(#plWing)" stroke="rgba(15,23,42,.34)" stroke-width=".18"/><path d="M14.60 14.60C11.20 15.42 4.80 17.80 2.40 19.00" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M17.40 14.60C20.80 15.42 27.20 17.80 29.60 19.00" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M15.45 26.20L11.70 27.70L11.70 29.40L15.45 27.90ZM16.55 26.20L20.30 27.70L20.30 29.40L16.55 27.90Z" fill="url(#plWing)" stroke="rgba(15,23,42,.20)" stroke-width=".14"/><path d="M15.16 24.90L16.00 30.90L16.84 24.90Z" fill="var(--pl-accent)" stroke="rgba(15,23,42,.22)" stroke-width=".12"/><circle cx="4.4" cy="16.8" r="3.4" fill="#e2ebf4" opacity=".38"/><circle cx="27.6" cy="16.8" r="3.4" fill="#e2ebf4" opacity=".38"/><g stroke="#64748b" stroke-width=".36" opacity=".8"><path d="M4.4 13.4v6.8M1 16.8h6.8M2 14.4l4.8 4.8M6.8 14.4L2 19.2"/><path d="M27.6 13.4v6.8M24.2 16.8H31M25.2 14.4l4.8 4.8M30 14.4l-4.8 4.8"/></g><path d="M12.4 24.4h7.2" stroke="url(#plMetal)" stroke-width="1.2" stroke-linecap="round"/><ellipse cx="16.00" cy="5.10" rx="0.90" ry="1.00" fill="#26384a" opacity=".78"/><path d="M14.9 7.20h2.2M14.9 21.40h2.2" stroke="#64748b" stroke-width=".2" opacity=".30"/><rect x="7.00" y="21.10" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/><rect x="24.45" y="21.10" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/></symbol><symbol id="pl-unknown" viewBox="0 0 32 32"><path d="M16.00 2.20C14.51 2.20 14.38 2.95 14.38 4.15L14.38 27.30C14.38 29.04 15.11 30.20 16.00 30.20C16.89 30.20 17.62 29.04 17.62 27.30L17.62 4.15C17.62 2.95 17.49 2.20 16.00 2.20Z" fill="rgba(100,116,139,.42)" stroke="rgba(100,116,139,.95)" stroke-width=".5" stroke-dasharray="1.1 1"/><path d="M14.45 11.80C11.05 12.62 3.60 16.00 1.20 17.20L1.20 19.00C4.80 17.65 11.45 15.67 14.45 16.42ZM17.55 11.80C20.95 12.62 28.40 16.00 30.80 17.20L30.80 19.00C27.20 17.65 20.55 15.67 17.55 16.42Z" fill="rgba(100,116,139,.22)" stroke="rgba(100,116,139,.72)" stroke-width=".45" stroke-dasharray="1.1 1"/><path d="M15.45 26.20L10.80 27.70L10.80 29.70L15.45 28.20ZM16.55 26.20L21.20 27.70L21.20 29.70L16.55 28.20Z" fill="rgba(100,116,139,.22)" stroke="rgba(100,116,139,.72)" stroke-width=".4" stroke-dasharray="1.1 1"/></symbol><symbol id="pl-narrow" viewBox="0 0 32 32"><path d="M16.00 2.20C14.40 2.20 14.26 2.95 14.26 4.15L14.26 27.30C14.26 29.04 15.04 30.20 16.00 30.20C16.96 30.20 17.74 29.04 17.74 27.30L17.74 4.15C17.74 2.95 17.60 2.20 16.00 2.20Z" fill="url(#plMetal)" stroke="rgba(15,23,42,.24)" stroke-width=".16"/><path d="M14.34 11.80C10.94 12.62 3.60 16.00 1.20 17.20L1.20 19.70C4.80 18.35 11.34 17.14 14.34 17.89ZM17.66 11.80C21.06 12.62 28.40 16.00 30.80 17.20L30.80 19.70C27.20 18.35 20.66 17.14 17.66 17.89Z" fill="rgba(15,23,42,.18)" transform="translate(0 .5)"/><path d="M14.34 11.80C10.94 12.62 3.60 16.00 1.20 17.20L1.20 19.70C4.80 18.35 11.34 17.14 14.34 17.89ZM17.66 11.80C21.06 12.62 28.40 16.00 30.80 17.20L30.80 19.70C27.20 18.35 20.66 17.14 17.66 17.89Z" fill="url(#plWing)" stroke="rgba(15,23,42,.34)" stroke-width=".18"/><path d="M14.34 11.80C10.94 12.62 3.60 16.00 1.20 17.20" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M17.66 11.80C21.06 12.62 28.40 16.00 30.80 17.20" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M15.45 26.20L11.70 27.70L11.70 29.40L15.45 27.90ZM16.55 26.20L20.30 27.70L20.30 29.40L16.55 27.90Z" fill="url(#plWing)" stroke="rgba(15,23,42,.20)" stroke-width=".14"/><path d="M15.00 24.90L16.00 30.90L17.00 24.90Z" fill="var(--pl-accent)" stroke="rgba(15,23,42,.22)" stroke-width=".12"/><rect x="9.05" y="10.90" width="1.90" height="3.70" rx="0.95" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="9.05" y="10.90" width="1.90" height="0.55" rx="0.95" fill="var(--pl-accent)"/><rect x="9.29" y="11.65" width=".34" height="2.05" rx=".17" fill="#fff" opacity=".32"/><rect x="21.05" y="10.90" width="1.90" height="3.70" rx="0.95" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="21.05" y="10.90" width="1.90" height="0.55" rx="0.95" fill="var(--pl-accent)"/><rect x="21.29" y="11.65" width=".34" height="2.05" rx=".17" fill="#fff" opacity=".32"/><path d="M15.50 4.00L16.50 4.00L16.27 26.00L15.72 26.00Z" fill="#fff" opacity=".55"/><ellipse cx="16.00" cy="4.50" rx="1.05" ry="1.00" fill="#26384a" opacity=".78"/><path d="M14.9 6.60h2.2M14.9 22.00h2.2" stroke="#64748b" stroke-width=".2" opacity=".30"/><rect x="7.00" y="19.30" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/><rect x="24.45" y="19.30" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/></symbol><symbol id="pl-wide" viewBox="0 0 32 32"><path d="M16.00 2.30C13.99 2.30 13.82 3.17 13.82 4.56L13.82 27.30C13.82 28.98 14.80 30.10 16.00 30.10C17.20 30.10 18.18 28.98 18.18 27.30L18.18 4.56C18.18 3.17 18.01 2.30 16.00 2.30Z" fill="url(#plMetal)" stroke="rgba(15,23,42,.24)" stroke-width=".16"/><path d="M13.90 11.70C10.50 12.52 3.30 16.10 0.90 17.30L0.90 20.20C4.50 18.85 10.90 17.98 13.90 18.73ZM18.10 11.70C21.50 12.52 28.70 16.10 31.10 17.30L31.10 20.20C27.50 18.85 21.10 17.98 18.10 18.73Z" fill="rgba(15,23,42,.18)" transform="translate(0 .5)"/><path d="M13.90 11.70C10.50 12.52 3.30 16.10 0.90 17.30L0.90 20.20C4.50 18.85 10.90 17.98 13.90 18.73ZM18.10 11.70C21.50 12.52 28.70 16.10 31.10 17.30L31.10 20.20C27.50 18.85 21.10 17.98 18.10 18.73Z" fill="url(#plWing)" stroke="rgba(15,23,42,.34)" stroke-width=".18"/><path d="M13.90 11.70C10.50 12.52 3.30 16.10 0.90 17.30" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M18.10 11.70C21.50 12.52 28.70 16.10 31.10 17.30" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M15.45 26.20L11.70 27.70L11.70 29.40L15.45 27.90ZM16.55 26.20L20.30 27.70L20.30 29.40L16.55 27.90Z" fill="url(#plWing)" stroke="rgba(15,23,42,.20)" stroke-width=".14"/><path d="M14.78 24.90L16.00 30.90L17.22 24.90Z" fill="var(--pl-accent)" stroke="rgba(15,23,42,.22)" stroke-width=".12"/><rect x="8.00" y="10.80" width="2.40" height="4.10" rx="1.20" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="8.00" y="10.80" width="2.40" height="0.55" rx="1.20" fill="var(--pl-accent)"/><rect x="8.24" y="11.55" width=".34" height="2.45" rx=".17" fill="#fff" opacity=".32"/><rect x="21.60" y="10.80" width="2.40" height="4.10" rx="1.20" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="21.60" y="10.80" width="2.40" height="0.55" rx="1.20" fill="var(--pl-accent)"/><rect x="21.84" y="11.55" width=".34" height="2.45" rx=".17" fill="#fff" opacity=".32"/><path d="M15.50 4.10L16.50 4.10L16.27 25.90L15.72 25.90Z" fill="#fff" opacity=".55"/><ellipse cx="16.00" cy="4.60" rx="1.20" ry="1.00" fill="#26384a" opacity=".78"/><path d="M14.9 6.70h2.2M14.9 21.90h2.2" stroke="#64748b" stroke-width=".2" opacity=".30"/><rect x="6.00" y="19.40" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/><rect x="25.45" y="19.40" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/></symbol><symbol id="pl-regional" viewBox="0 0 32 32"><path d="M16.00 2.70C14.62 2.70 14.50 3.36 14.50 4.42L14.50 27.40C14.50 28.84 15.18 29.80 16.00 29.80C16.82 29.80 17.50 28.84 17.50 27.40L17.50 4.42C17.50 3.36 17.38 2.70 16.00 2.70Z" fill="url(#plMetal)" stroke="rgba(15,23,42,.24)" stroke-width=".16"/><path d="M14.56 12.00C11.16 12.82 4.80 15.80 2.40 17.00L2.40 19.20C6.00 17.85 11.56 16.39 14.56 17.14ZM17.44 12.00C20.84 12.82 27.20 15.80 29.60 17.00L29.60 19.20C26.00 17.85 20.44 16.39 17.44 17.14Z" fill="rgba(15,23,42,.18)" transform="translate(0 .5)"/><path d="M14.56 12.00C11.16 12.82 4.80 15.80 2.40 17.00L2.40 19.20C6.00 17.85 11.56 16.39 14.56 17.14ZM17.44 12.00C20.84 12.82 27.20 15.80 29.60 17.00L29.60 19.20C26.00 17.85 20.44 16.39 17.44 17.14Z" fill="url(#plWing)" stroke="rgba(15,23,42,.34)" stroke-width=".18"/><path d="M14.56 12.00C11.16 12.82 4.80 15.80 2.40 17.00" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M17.44 12.00C20.84 12.82 27.20 15.80 29.60 17.00" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M15.45 26.20L11.70 27.70L11.70 29.40L15.45 27.90ZM16.55 26.20L20.30 27.70L20.30 29.40L16.55 27.90Z" fill="url(#plWing)" stroke="rgba(15,23,42,.20)" stroke-width=".14"/><path d="M15.08 24.90L16.00 30.90L16.92 24.90Z" fill="var(--pl-accent)" stroke="rgba(15,23,42,.22)" stroke-width=".12"/><rect x="9.45" y="11.10" width="1.90" height="3.70" rx="0.95" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="9.45" y="11.10" width="1.90" height="0.55" rx="0.95" fill="var(--pl-accent)"/><rect x="9.69" y="11.85" width=".34" height="2.05" rx=".17" fill="#fff" opacity=".32"/><rect x="20.65" y="11.10" width="1.90" height="3.70" rx="0.95" fill="url(#plEngine)" stroke="rgba(15,23,42,.30)" stroke-width=".16"/><rect x="20.65" y="11.10" width="1.90" height="0.55" rx="0.95" fill="var(--pl-accent)"/><rect x="20.89" y="11.85" width=".34" height="2.05" rx=".17" fill="#fff" opacity=".32"/><path d="M15.50 4.50L16.50 4.50L16.27 25.60L15.72 25.60Z" fill="#fff" opacity=".55"/><ellipse cx="16.00" cy="5.00" rx="0.92" ry="1.00" fill="#26384a" opacity=".78"/><path d="M14.9 7.10h2.2M14.9 21.60h2.2" stroke="#64748b" stroke-width=".2" opacity=".30"/><rect x="7.00" y="19.10" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/><rect x="24.45" y="19.10" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/></symbol><symbol id="pl-turboprop" viewBox="0 0 32 32"><path d="M16.00 2.80C14.64 2.80 14.52 3.43 14.52 4.44L14.52 27.30C14.52 28.68 15.19 29.60 16.00 29.60C16.81 29.60 17.48 28.68 17.48 27.30L17.48 4.44C17.48 3.43 17.36 2.80 16.00 2.80Z" fill="url(#plMetal)" stroke="rgba(15,23,42,.24)" stroke-width=".16"/><path d="M14.60 14.60C11.20 15.42 4.80 17.80 2.40 19.00L2.40 21.00C6.00 19.65 11.60 18.47 14.60 19.22ZM17.40 14.60C20.80 15.42 27.20 17.80 29.60 19.00L29.60 21.00C26.00 19.65 20.40 18.47 17.40 19.22Z" fill="rgba(15,23,42,.18)" transform="translate(0 .5)"/><path d="M14.60 14.60C11.20 15.42 4.80 17.80 2.40 19.00L2.40 21.00C6.00 19.65 11.60 18.47 14.60 19.22ZM17.40 14.60C20.80 15.42 27.20 17.80 29.60 19.00L29.60 21.00C26.00 19.65 20.40 18.47 17.40 19.22Z" fill="url(#plWing)" stroke="rgba(15,23,42,.34)" stroke-width=".18"/><path d="M14.60 14.60C11.20 15.42 4.80 17.80 2.40 19.00" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M17.40 14.60C20.80 15.42 27.20 17.80 29.60 19.00" fill="none" stroke="#fff" stroke-width=".26" opacity=".5" stroke-linecap="round"/><path d="M15.45 26.20L11.70 27.70L11.70 29.40L15.45 27.90ZM16.55 26.20L20.30 27.70L20.30 29.40L16.55 27.90Z" fill="url(#plWing)" stroke="rgba(15,23,42,.20)" stroke-width=".14"/><path d="M15.16 24.90L16.00 30.90L16.84 24.90Z" fill="var(--pl-accent)" stroke="rgba(15,23,42,.22)" stroke-width=".12"/><circle cx="4.4" cy="16.8" r="3.4" fill="#e2ebf4" opacity=".38"/><circle cx="27.6" cy="16.8" r="3.4" fill="#e2ebf4" opacity=".38"/><g stroke="#64748b" stroke-width=".36" opacity=".8"><path d="M4.4 13.4v6.8M1 16.8h6.8M2 14.4l4.8 4.8M6.8 14.4L2 19.2"/><path d="M27.6 13.4v6.8M24.2 16.8H31M25.2 14.4l4.8 4.8M30 14.4l-4.8 4.8"/></g><path d="M12.4 24.4h7.2" stroke="url(#plMetal)" stroke-width="1.2" stroke-linecap="round"/><ellipse cx="16.00" cy="5.10" rx="0.90" ry="1.00" fill="#26384a" opacity=".78"/><path d="M14.9 7.20h2.2M14.9 21.40h2.2" stroke="#64748b" stroke-width=".2" opacity=".30"/><rect x="7.00" y="21.10" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/><rect x="24.45" y="21.10" width=".55" height="1.3" rx=".26" fill="url(#plEngine)" opacity=".85"/></symbol></svg>
 <header id="hdcard"><h1><span class="logo"><svg class="ic" aria-hidden="true"><use href="#i-plane"></use></svg></span>机票监控台</h1>
  <div class="hdx"><span id="ntBtn" class="hbtn" role="button" tabindex="0" aria-label="达标浏览器通知开关" onclick="togNotify()" title="达标时浏览器通知+提示音"><svg class="ic" aria-hidden="true"><use href="#i-bell-off"></use></svg></span><span id="themeBtn" class="hbtn" role="button" tabindex="0" aria-label="切换亮暗主题" onclick="cycleTheme()" title="亮/暗/自动"><svg class="ic" aria-hidden="true"><use href="#i-contrast"></use></svg></span><span id="denBtn" class="hbtn" role="button" tabindex="0" aria-label="切换界面密度" onclick="cycleDensity()" title="密度"><svg class="ic" aria-hidden="true"><use href="#i-rows"></use></svg></span><span class="pill" id="pill" title="数据通道状态：加载中" onclick="jumpQual()">加载中…</span>
-  <span class="hdmeta"><span id="nextrun" class="cdt" role="timer" aria-label="距下一轮扫描倒计时" style="display:none"></span><span id="nrLive" class="vh" aria-live="polite"></span><span id="updated" style="font-family:var(--num)"></span></span></div></header>
+  <span class="huser" id="mtabUser" style="display:none" tabindex="0" role="button" aria-label="切换用户" onclick="mtabUserNext()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();mtabUserNext()}"></span><span class="hdmeta"><span id="nextrun" class="cdt" role="timer" aria-label="距下一轮扫描倒计时" style="display:none"></span><span id="nrLive" class="vh" aria-live="polite"></span><span id="updated" style="font-family:var(--num)"></span></span></div></header>
 
 <div id="citypanel" style="display:none" role="dialog" aria-modal="true" aria-label="城市选择面板">
  <div class="cp-search"><input id="cpq" type="text" placeholder="搜索：中文 / 拼音 / 三字码" aria-label="搜索城市" oninput="cityPanelFilter(this.value)" onkeydown="cityPanelKey(event)"><button type="button" class="cp-x" aria-label="关闭城市面板" onclick="cityPanelClose()">✕</button></div>
@@ -7330,11 +7501,10 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
 <div class="tabs" id="montabs" style="display:none" onkeydown="_roving(event,this);_rovingV(event,this)">
  <span class="mtab on" data-t="overview" data-rv tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showMonTab(this.dataset.t)}"><svg class="ic" aria-hidden="true"><use href="#i-target"></use></svg>概览<i id="ovAlert" role="img" aria-label="采集或推送通道有异常，详情见渠道健康" title="采集失败或推送连败——详情见「渠道健康」" style="display:none;width:7px;height:7px;border-radius:50%;background:var(--red);margin-left:5px;vertical-align:2px"></i></span>
  <span class="mtab" data-t="specials" data-rv tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showMonTab(this.dataset.t)}"><svg class="ic" aria-hidden="true"><use href="#i-target"></use></svg>特价雷达</span>
- <span class="mtab" data-t="trend" data-rv tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showMonTab(this.dataset.t)}"><svg class="ic" aria-hidden="true"><use href="#i-chart"></use></svg>关注航线走势</span>
- <span class="mtab" data-t="watch" data-rv tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showMonTab(this.dataset.t)}"><svg class="ic" aria-hidden="true"><use href="#i-target"></use></svg>关注航班走势<i id="wsTabN" style="display:none;font-style:normal;font-family:var(--num);font-size:10px;color:var(--mut);margin-left:4px"></i></span>
- <span class="mtab" data-t="details" data-rv tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showMonTab(this.dataset.t)}"><svg class="ic" aria-hidden="true"><use href="#i-file"></use></svg>关注航班明细</span>
- <span class="mtab" data-t="health" data-rv tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showMonTab(this.dataset.t)}"><svg class="ic" aria-hidden="true"><use href="#i-shield"></use></svg>渠道健康</span>
- <span class="uchip" id="mtabUser" style="display:none" data-rv tabindex="0" role="button" aria-label="切换用户" onclick="mtabUserNext()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();mtabUserNext()}"></span></div>
+ <span class="mtab" data-t="trend" data-rv tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showMonTab(this.dataset.t)}"><svg class="ic" aria-hidden="true"><use href="#i-chart"></use></svg>航线走势</span>
+ <span class="mtab" data-t="watch" data-rv tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showMonTab(this.dataset.t)}"><svg class="ic" aria-hidden="true"><use href="#i-target"></use></svg>航班走势<i id="wsTabN" style="display:none;font-style:normal;font-family:var(--num);font-size:10px;color:var(--mut);margin-left:4px"></i></span>
+ <span class="mtab" data-t="details" data-rv tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showMonTab(this.dataset.t)}"><svg class="ic" aria-hidden="true"><use href="#i-file"></use></svg>航班明细</span>
+ <span class="mtab" data-t="health" data-rv tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showMonTab(this.dataset.t)}"><svg class="ic" aria-hidden="true"><use href="#i-shield"></use></svg>渠道健康</span></div>
 <!-- montabs 形制裁决（审计 P3-1 再立案防线）：维持 r275 button 形制
      不升 role=tablist/tab——mtabUser 用户切换 chip（role=button）混入
      tablist 即纯性破缺（tablist 子元素应尽为 tab），按 #tabs 同律统一
@@ -7376,7 +7546,7 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
 <div id="montab-specials" role="tabpanel" style="display:none">
 <div class="ucard spmon" id="spRadarMonitor">
  <div class="uhead">
-  <span style="display:flex;align-items:center;gap:9px;flex-wrap:wrap"><span class="seclab inline"><span class="no">01</span><span class="zh">特价监控</span><span class="en">RADAR TREND</span></span><span class="muted" id="spMonMeta">读取监控记录…</span></span>
+  <span style="display:flex;align-items:center;gap:9px;flex-wrap:wrap"><span class="seclab inline"><span class="no">01</span><span class="zh">特价监控</span></span><span class="muted" id="spMonMeta">读取监控记录…</span></span>
   <span class="muted"><button class="btn2" type="button" onclick="spMonRefresh()">刷新监控</button></span>
  </div>
  <div id="spMonSum" class="spmon-sum"></div>
@@ -7430,7 +7600,7 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
 </div>
 
 <div id="montab-trend" role="tabpanel" style="display:none">
-<div class="ucard mon-card" id="chartcard"><div class="uhead mon-cardhead"><span style="display:flex;align-items:center;gap:9px;flex-wrap:wrap"><span class="seclab inline"><span class="no">01</span><span class="zh">关注航线走势</span><span class="en">ROUTE TREND</span></span><span id="chartTitle" style="font-weight:700;font-size:14px"></span></span>
+<div class="ucard mon-card" id="chartcard"><div class="uhead mon-cardhead"><span style="display:flex;align-items:center;gap:9px;flex-wrap:wrap"><span class="seclab inline"><span class="no">01</span><span class="zh">航线走势</span><span class="en">ROUTE TREND</span></span><span id="chartTitle" style="font-weight:700;font-size:14px"></span></span>
  <span style="display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="mdgrp"><span class="rngchip on" id="mdLine" onclick="setMode('line')">折线</span>
  <span class="rngchip" id="mdK" onclick="setMode('kline')">K线</span></span>
  <span class="mdgrp"><span class="rngchip on" id="rng48" onclick="setRange('48h')">48h</span>
@@ -7456,10 +7626,10 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
  <div class="ws-card mon-card">
   <header class="ws-head mon-cardhead">
    <div class="ws-head-copy">
-    <div class="ws-eyebrow"><span class="seclab inline"><span class="no">01</span><span class="zh">关注航班</span><span class="en">WATCH</span></span>
+    <div class="ws-eyebrow"><span class="seclab inline"><span class="no">01</span><span class="zh">关注航班</span></span>
      <span class="ws-live" id="wsLive"><i></i>真实落库回放</span></div>
     <h2 class="ws-title sr-only" id="wsTitle">关注航班</h2>
-    <p class="ws-sub">关注航班是配置关注航线+日期明细集合中的指定航班子集；日期/渠道/目标独立保存，走势只画该航线的真实采集点。</p>
+    <p class="ws-sub">按航线切换；走势只画真实采集点，目标与渠道独立保存。</p>
     <div class="ws-previewbar" id="wsPreviewBar" hidden><b>试看航班</b><span id="wsPreviewTxt">数据来自全航线采集，不依赖关注配置，也未写入关注清单。</span><span class="sp"></span><button class="ws-btn" type="button" data-wsact="previewwatch">去配置关注</button><button class="ws-btn" type="button" data-wsact="previewexit">返回关注清单</button></div>
    </div>
    <div class="ws-head-act">
@@ -7487,7 +7657,7 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
    </div>
    <div class="ws-chart-foot" id="wsChartFoot"><span>正在读取真实采集点…</span></div>
    <div class="ws-chartwrap mon-chartwrap" id="wsChartWrap">
-    <canvas id="wsChart" tabindex="0" role="img" aria-label="关注航班价格走势：真实采集点、目标线与最新价；聚焦后按左右方向键逐点读数"></canvas>
+    <canvas id="wsChart" tabindex="0" role="img" title="折线端点为最后落库的单渠道价；当前最低为跨渠道最低价" aria-label="关注航班价格走势：真实采集点、目标线与最新价；折线端点为最后落库单渠道价，当前最低为跨渠道最低价；聚焦后按左右方向键逐点读数"></canvas>
     <div class="ws-empty" id="wsChartEmpty"><b>正在读取关注清单</b><span>走势只使用真实落库行，不用日历价补点。</span></div>
     <div class="ws-tip" id="wsTip" role="status" aria-live="polite"></div>
    </div>
@@ -7629,11 +7799,10 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
 
 <div id="searchview" role="main" class="srx-ov-collapsed" style="display:none">
  <section class="srx-hero" aria-label="检索台">
-  <div class="srx-hero-copy srx-folded" id="srxHeroCopy">
+  <div class="srx-hero-copy" id="srxHeroCopy">
    <div class="srx-eyebrow"><span class="srx-live" id="srxLiveTag"><i></i>LIVE</span><span id="srxModeLabel">监控数据</span><span>·</span><span id="srxHeroMeta">等待真实数据</span></div>
    <h1>多平台实时检索</h1>
-   <p id="srxHeroSub">五渠道真实采集行 · 解析 ⇄ 镜像 ⇄ RAW 三重对齐 · 缺失一律标未供/未采，不伪造截图与同班。</p>
-   <button type="button" class="srx-foldbtn" onclick="srxFold('srxHeroCopy',this)" aria-expanded="false">说明</button>
+   <p id="srxHeroSub" class="sr-only">五渠道真实采集行 · 解析 ⇄ 镜像 ⇄ RAW 三重对齐 · 缺失一律标未供/未采，不伪造截图与同班。</p>
   </div>
   <div class="srx-hero-act">
    <label for="srxUser">用户</label><select id="srxUser" onchange="srxSwitchUser(this.value)" aria-label="切换检索用户"></select>
@@ -7658,7 +7827,9 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
    <button type="button" class="srx-btn" data-sec onclick="srxOpenCfgRoutes()" title="配置航线/日期与心理线">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
     配置航线</button>
-   <button type="button" class="srx-btn srx-more-btn" aria-expanded="false" title="展开/收起检索工具" onclick="var p=this.closest('.srx-hero-act');p.classList.toggle('open');var on=p.classList.contains('open');this.setAttribute('aria-expanded',on?'true':'false');this.textContent=on?'收起':'更多'">更多</button>
+   <button type="button" class="srx-btn" data-sec onclick="srxSpOpen()" title="打开特价监控：官方低价日历/榜单与真实探针">特价雷达</button>
+   <button type="button" class="srx-btn srx-ovhbtn" id="srxOvHero" onclick="srxToggleOverview()" aria-expanded="false" title="展开/收起检索概览">概览</button>
+   <button type="button" class="srx-btn srx-more-btn" aria-expanded="false" title="展开/收起检索工具" onclick="var p=this.closest('.srx-hero-act');p.classList.toggle('open');var on=p.classList.contains('open');this.setAttribute('aria-expanded',on?'true':'false');this.textContent=on?'收起':'更多工具'">更多工具</button>
   </div>
  </section>
 
@@ -7669,7 +7840,7 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
     <button type="button" class="srx-taskbtn" id="srxTaskBtn" onclick="srxTaskOpen()" style="display:none">进度 <b id="srxTaskBtnN">0/0</b></button>
     <button type="button" class="srx-taskbtn" onclick="srxSpOpen()">特价雷达</button>
     <button type="button" class="srx-sessbtn" onclick="srxOpenSessions()" style="height:26px;padding:0 8px;font-size:11px">探针会话</button>
-    <button type="button" class="srx-probe-toggle" id="srxProbeToggle" onclick="srxToggleProbe()" aria-expanded="true">收起</button>
+    <button type="button" class="srx-probe-toggle" id="srxProbeToggle" onclick="srxToggleProbe()" aria-expanded="true">收起探针</button>
    </span></div>
   <div class="srx-probeform">
    <div class="srx-qrow">
@@ -7748,10 +7919,6 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
   </div>
  </section>
 
- <details class="srx-sp" id="srxSp" ontoggle="if(this.open)srxSpLoad()">
-  <summary><b>特价雷达 / 特价机票</b><em>五渠道 PC/H5 · 来源透明</em><span id="srxSpCount"></span></summary>
-  <div id="srxSpBody" class="srx-spbody"><span class="muted">展开加载特价渠道能力与最近核实特价。</span></div>
- </details>
 
  <div class="srx-mobilebar" id="srxMobilebar" role="group" aria-label="移动端概览与筛选">
   <button type="button" class="srx-mbtn" data-mobile="overview" aria-expanded="false">概览</button>
@@ -7760,7 +7927,7 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
   <span class="srx-msum" id="srxMobileSummary">—</span>
  </div>
 
- <span class="srx-ovbar" id="srxOvBar" aria-label="检索概览摘要"><span class="srx-ovsum" id="srxOvSum">概览加载中…</span><button type="button" class="srx-ovbtn" id="srxOvToggle" onclick="srxToggleOverview()" aria-expanded="false">展开概览</button></span>
+ <span class="srx-ovbar" id="srxOvBar" role="button" tabindex="0" aria-label="检索概览摘要（点击展开）" aria-expanded="false" onclick="srxToggleOverview()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();srxToggleOverview()}"><span class="srx-ovsum" id="srxOvSum">概览加载中…</span></span>
 <section class="srx-band" id="srxBand" aria-label="价格日历带">
   <div class="srx-band-h"><b id="srxBandTitle">14 日出发价带</b><span id="srxBandMeta">按出发日 · 真实落库最低价</span>
    <span class="srx-bandnav" role="group" aria-label="价带日期窗口翻页">
@@ -7800,6 +7967,7 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
     </select>
     <button type="button" class="srx-btn srx-ctxbtn" id="srxFilterBtn" onclick="srxToggleCtx()" aria-expanded="false" aria-controls="srxContext">筛选</button>
     <button type="button" class="srx-btn" id="srxViewBtn" onclick="srxToggleView()" title="列表 / 航班×渠道矩阵">矩阵</button>
+    <button type="button" class="srx-btn" id="srxRestoreLink" onclick="srxRestoreApply()" hidden>恢复上次条件</button>
    </div>
   </div>
   <div class="srx-line"><span class="srx-lab">日期</span><div class="srx-chips" id="srxDates"></div></div>
@@ -8148,7 +8316,7 @@ function render(){const s=S;
   chipsRefocus('userPills',()=>{
   up.innerHTML='<span class="chiplab">用户：</span>'+(s.users||[]).map((x,i)=>
    `<span class="chip${i===U?' on':''}" onclick="pickUser(${i})">${he(x.name)}</span>`).join('')
-   +'<span class="muted">以下视图均按所选用户过滤：关注航线走势 / 特价雷达 / 关注航班走势 / 关注航班明细</span>';});}
+   +'<span class="muted">以下视图按当前用户过滤：航线走势 / 特价雷达 / 航班走势 / 航班明细（右上角切换用户）</span>';});}
  else up.style.display='none';
  mtabUserSync();   /* 吸顶 chip 同拍（审计 P2-1）：与 userPills 同数据源同显隐 */
  maybeNotify(s);
@@ -8281,8 +8449,11 @@ function mtabUserSync(){const el=$('mtabUser');if(!el)return;
  const us=(S&&S.users)||[];
  if(us.length<1){el.style.display='none';return;}
  el.style.display='';
- el.textContent='👤 '+(((us[U]||{}).name||'').slice(0,6)||'用户')+' · 用户视图';
- el.title='以下视图按当前用户过滤：'+((us[U]||{}).name||'')+'（点击循环切换用户）';
+ /* 窄屏只留头像图标：头部一行要同时装下工具钮/状态 pill/账号，
+    姓名在 title 与 aria 里完整可读（微信式头像位）。 */
+ el.textContent=(window.innerWidth<=600?'👤'
+   :'👤 '+(((us[U]||{}).name||'').slice(0,6)||'用户'));
+ el.title='当前查看：'+((us[U]||{}).name||'')+'（点击切换用户）';
  /* audit P3-3：读屏名随拍带当前用户（themeBtn「态入名」家族）——
     aria 静态「切换用户」在多用户下与视觉 chip 信息不同步 */
  el.setAttribute('aria-label','切换用户 · 当前：'+((us[U]||{}).name||''));}
@@ -8344,9 +8515,10 @@ function srxFold(id,btn){
   m[id]=folded;localStorage.setItem('jpsrx_folds',JSON.stringify(m));
  }catch(e){}
 }
+
 try{
  const _fm=JSON.parse(localStorage.getItem('jpsrx_folds')||'{}');
- Object.keys(_fm).forEach(id=>{if(_fm[id])srxSetFold(id,true)});
+ Object.keys(_fm).forEach(id=>{if(id==='srxBrief'||id==='srxHeroCopy')return;if(_fm[id])srxSetFold(id,true)});
 }catch(e){}
 try{
  document.querySelectorAll('.srx-foldbtn,.srx-more-btn,.srx-probe-toggle,.srx-batchtoggle').forEach(btn=>{
@@ -9422,7 +9594,7 @@ function table(){if(!S||!S.users.length)return;/* 状态未到不渲染（render
  const _ncal=rows.filter(f=>f.cal).length,_nst=rows.filter(f=>f.stale).length;
  $('fcnt').textContent=u.name+'：'+rows.length+' 条报价 / '+_qn+' 班'
   +(rows.length?(' · 达标 '+_q+' 条'+( _ncal?' · 日历 '+_ncal+' 行':'')
-   +( _nst?' · 补位 '+_nst+' 行':'' )+(_lo!=null?' · 最低 ￥'+Math.round(_lo):'')):'');
+   +( _nst?' · 补位 '+_nst+' 行':'' )+(_lo!=null?' · 当轮最低 ￥'+Math.round(_lo):'')):'');
  updFltN();renderFltSum();mkactAll();}
  /* ===== 走势图：多航线可切（routesArr），单航线回落旧行为；48h/7d 范围 ===== */
  /* 擦边带宽单源（脚本顶层，chart() 的 TIER 与 drawHover() 的 fl 两处消费）：
@@ -9935,6 +10107,9 @@ function wsFiltered(){
  return list;
 }
 function wsStatusOf(w){if(w.active===false)return'pause';if(!w.inScope)return'out';return w.scopeState==='flight_missing'?'wait':'on'}
+/* 渠道覆盖是计数口径：均值为整数时不带 .0（"2.0 / 5" 看着像两个半
+   渠道），确有跨航班差异时才保留一位小数。 */
+function _covTxt(v){return Number.isInteger(v)?String(v):v.toFixed(1);}
 function wsKpi(label,val,unit,foot,cls){
  return '<div class="ws-kpi"><div class="k">'+he(label)+'</div><div class="v"><b class="'+(cls||'')+'">'+he(val)+'</b>'+(unit?'<span>'+he(unit)+'</span>':'')+'</div><div class="f">'+foot+'</div></div>';
 }
@@ -9945,7 +10120,7 @@ function wsRenderHead(){
  if(sel){const us=(S&&S.users||[]).map((u,i)=>'<option value="'+i+'"'+(i===U?' selected':'')+'>'+he(u.name)+'</option>').join('');
   sel.innerHTML=us;sel.style.display=(S&&S.users&&S.users.length>1)?'':'none';sel.disabled=WS.loading}
  if(live){live.classList.toggle('off',!!WS.err||!WS.list.length);
-  live.innerHTML='<i></i>'+(S&&S.demo?'DEMO · 合成关注（非真实报价） · ':'')+(WS.preview?'试看航班 · 未加入关注':(WS.err?'读取失败':(WS.list.length?(WS.list.length+' 个关注 · '+WS.list.filter(w=>w.active!==false&&w.inScope).length+' 个监控中'):'暂无关注航班')))}
+  live.innerHTML='<i></i>'+(S&&S.demo?'DEMO · 合成关注（非真实报价）':(WS.preview?'试看航班 · 未加入关注':(WS.err?'读取失败':(WS.list.length?'真实落库回放':'暂无关注航班'))))}
  const meta=$('wsRouteMeta');
  if(meta){if(WS.preview)meta.textContent='试看 '+((WS.preview.code||'')+' · '+srxPairName(WS.preview.from||'',WS.preview.to||'')+' · '+(WS.preview.date||''))+' · 数据来自全航线采集，未写入关注清单';
   else if(!WS.list.length)meta.textContent='还没有关注航班。关注航班必须来自已配置的航线/日期：请在配置台从采集明细中选择，或对检索列表里已配置航线/日期的真实航班点 ☆。';
@@ -9959,7 +10134,7 @@ function wsRenderKpis(){
   box.innerHTML=wsKpi('试看航班','1','条','数据来自全航线采集 · 不依赖关注配置','')
    +wsKpi('监控中','0','条','未加入关注 · 不参与目标提醒','')
    +wsKpi('目标达标','—','','未设目标 · 可去配置关注','')
-   +wsKpi('渠道覆盖',covN?(cov/covN).toFixed(1):'—','/ 5','最近采集 '+(last?srxWatchAgo(last):'—'),'');
+   +wsKpi('渠道覆盖',covN?_covTxt(cov/covN):'—','/ 5','最近采集 '+(last?srxWatchAgo(last):'—'),'');
   return}
 
  list.forEach(w=>{const q=wsQuote(w),t=wsTargetInfo(w,q);if(t.state==='hit')hit++;else if(t.state==='near')near++;else if(t.state==='miss')miss++;else if(t.state==='none')none++;else if(t.state==='wait')wait++;
@@ -9969,7 +10144,7 @@ function wsRenderKpis(){
  box.innerHTML=wsKpi('关注航班',String(list.length),'条',list.length?('覆盖 '+wsRouteGroups().length+' 个航线/日期 · '+(out?out+' 条范围外':'全部在扫描范围')):'从配置台或检索列表添加','')
   +wsKpi('监控中',String(active),'条',paused?('暂停 '+paused+' 条 · 范围外 '+out+' 条'):('全部启用 · 范围外 '+out+' 条'),'')
   +wsKpi('目标达标',String(hit),'条','高于目标 '+miss+' 条 · 接近 '+near+' 条 · 仅观察 '+none+' 条'+(wait?' · 等待 '+wait+' 条':''),hit?'ok':(near?'warn':''))
-  +wsKpi('渠道覆盖',avg?avg.toFixed(1):'—','/ 5','最近采集 '+(last?srxWatchAgo(last):'—'),avg>=4?'ok':'');
+  +wsKpi('渠道覆盖',avg?_covTxt(avg):'—','/ 5','最近采集 '+(last?srxWatchAgo(last):'—'),avg>=4?'ok':'');
 }
 function wsRouteMatch(){
  const g=wsCurrentGroup();if(!g)return null;
@@ -9998,9 +10173,11 @@ function wsRenderRoutes(){
  if(!WS.route||!gs.some(g=>g.key===WS.route)){WS.route=gs[0].key}
  box.innerHTML=gs.map(g=>{
   const on=g.key===WS.route,hit=g.hit>0;
-  return '<button type="button" class="ws-route'+(on?' on':'')+(hit?' hit':'')+'" data-wsroute="'+he(g.key)+'" aria-pressed="'+(on?'true':'false')+'" title="'+he(g.label+' · '+g.date+' · '+g.count+' 个关注')+'">'
+  const _w0=g.rows.find(w=>w.active!==false)||g.rows[0],_q0=_w0?wsQuote(_w0):null,_t0=_w0?wsTargetInfo(_w0,_q0):null;
+  const _tag=g.rows.some(w=>w.preview)?'试看':(hit?'达标 '+g.hit:(_t0&&_t0.state!=='none'&&_t0.state!=='wait')?_t0.text:(_t0&&_t0.state==='none'?'仅观察':'等待真实行'));
+  return '<button type="button" class="ws-route'+(on?' on':'')+(hit?' hit':'')+'" data-wsroute="'+he(g.key)+'" aria-pressed="'+(on?'true':'false')+'" title="'+he(g.label+' · '+g.date+' · '+g.count+' 个关注 · '+_tag)+'">'
    +'<span class="ws-rt-top"><b>'+he(g.label.split('→')[0]||g.label)+'</b><i>→</i><b>'+he(g.label.split('→')[1]||'')+'</b><span class="ws-rt-date">'+he(wsMmdd(g.date))+'</span></span>'
-   +'<span class="ws-rt-bot"><b>'+(g.low!=null?wsMoney(g.low):'—')+'</b><span>最低</span><span class="sp"></span>'+(g.rows.some(w=>w.preview)?'<i class="tag">试看</i>':(hit?'<i class="tag">达标 '+g.hit+'</i>':'<i class="tag">'+g.active+'/'+g.count+' 监控</i>'))+'</span></button>';
+   +'<span class="ws-rt-bot"><b>'+(g.low!=null?wsMoney(g.low):'—')+'</b><span>最低</span><span class="sp"></span><i class="tag ws-rt-gap">'+he(_tag)+'</i></span></button>';
  }).join('');
  wsRenderRouteWatch();
 }
@@ -10085,7 +10262,7 @@ function wsDrawChart(){
  const info=wsChartData();const empty=$('wsChartEmpty');
  const title=$('wsChartTitle'),sub=$('wsChartSub'),foot=$('wsChartFoot');
  const g=wsCurrentGroup();
- if(title)title.textContent=g?(g.label+' · '+wsMmdd(g.date)+' · '+g.count+' 个关注'):'关注航班价格走势';
+ if(title)title.textContent=g?(g.label+' · '+wsMmdd(g.date)+(g.count>1?(' · '+g.count+' 个关注'):'')):'关注航班价格走势';
  if(sub){
   let _sp='';
   if(!info.empty){
@@ -10101,7 +10278,9 @@ function wsDrawChart(){
   wsRouteWatches().forEach(w=>{const q=wsQuote(w),t=wsTargetInfo(w,q);if(t.state==='hit')hit++;else if(t.state==='near')near++;else if(t.state==='miss')miss++;else if(t.state==='none')none++;else if(t.state==='wait')wait++;if(q){pts+=(WS.trends[w.id]&&WS.trends[w.id].points||[]).length;cov+=q.coverage||0;covn++;if(q.at>last)last=q.at}});
   foot.innerHTML='<span>本航线 <b>'+wsRouteWatches().length+'</b> 班</span><span>达标 <b class="'+(hit?'ok':'')+'">'+hit+'</b></span><span>接近 <b>'+near+'</b></span><span>高于目标 <b>'+miss+'</b></span><span>仅观察 <b>'+none+'</b></span>'+(wait?'<span>等待 <b>'+wait+'</b></span>':'')+'<span class="sp"></span><span>覆盖 <b>'+((covn?cov/covn:0).toFixed(1))+'/5</b> 渠道</span><span>最近采集 <b>'+he(last?srxWatchAgo(last):'—')+'</b></span><span title="折线端点是最后落库的单渠道价；当前最低是跨渠道最低价">端点=最后落库单渠道价</span>';
  }
- if(info.empty){if(empty){empty.hidden=false;empty.innerHTML='<b>'+he(info.reason)+'</b><span>'+(WS.loading?'正在读取真实落库行…':'没有采集点就不画线；可到配置台检查航线/日期与渠道。')+'</span>'}return}
+ if(info.empty){c.parentElement&&c.parentElement.classList.add('is-empty');
+  if(empty){empty.hidden=false;empty.innerHTML='<b>'+he(info.reason)+'</b><span>'+(WS.loading?'正在读取真实落库行…':'没有采集点就不画线；可到配置台检查航线/日期与渠道。')+'</span>'}return}
+ c.parentElement&&c.parentElement.classList.remove('is-empty');
  if(empty)empty.hidden=true;
  const W=c.offsetWidth,H=c.offsetHeight;if(!W||!H)return;
  if(WS.mode==='kline'){wsDrawKline(c,W,H,info);return}
@@ -12178,9 +12357,14 @@ function spMonRender(){
  const j=SPMON.data;if(!j)return;
  const q=j.query||{},dates=j.dates||[],low=j.lowest||{},runs=j.runs||[];
  const meta=$('spMonMeta'),cfg=$('spRadarCfgSum'),lr=j.last_run||{};
- const _alertTxt=SPMON.alertCfg?(' · 提醒：'+(SPMON.alertCfg.enabled?'开':'关')+(SPMON.lastAlert?' · 上次 '+String(SPMON.lastAlert.sent_at||'').slice(5,16):'')):'';
  const _runTxt=lr.status&&lr.status!=='ok'?(' · 最近运行 '+(SPMON_RUN_LABEL[lr.status]||lr.status)):'';
- if(meta)meta.textContent=(S&&S.demo?'DEMO · 合成监控 · ':'')+spMonCfgText(q)+' · '+(j.snapshots||0)+' 次监控'+(j.last_at?' · 最近 '+j.last_at.slice(5,16):' · 尚未采集')+' · 自动每 '+he(String(j.auto_interval_h||2))+' 小时'+_alertTxt+_runTxt;
+ if(meta){
+  const _cfg=spMonCfgText(q).replace(/(\d{4})-/g,'');
+  const _last=j.last_at?('最近 '+j.last_at.slice(5,16)):'尚未采集';
+  const _full=_cfg+' · 每 '+he(String(j.auto_interval_h||2))+' 小时自动 · '+_last+_runTxt;
+  meta.textContent=innerWidth<=560?(_cfg.split(' · ')[0]+' · '+_last+_runTxt):((S&&S.demo?'DEMO · 合成监控 · ':'')+_full);
+  meta.title=(S&&S.demo?'DEMO · 合成监控 · ':'')+_full;
+ }
  if(cfg)cfg.textContent=spMonCfgText(q);
  const sum=$('spMonSum');
  if(sum){
@@ -12195,9 +12379,7 @@ function spMonRender(){
     +'<span>'+he(String(low.date||'').slice(5))+'</span><span class="sep">/</span>'
     +'<span>'+srxPlatIcon(low.channel)+he(_ch)+'</span>'
     +(_dt?'<span class="sep">/</span><span>较上次 '+he(_dt)+'</span>':'')
-    +'<span class="sep">/</span><span>覆盖 '+_nCh+'/'+_qCh+' 渠道</span>'
-    +'<span class="sep">/</span><span>'+(j.snapshots||0)+' 次监控</span>'
-    +'<span class="sep">/</span><span>提醒 '+((SPMON.alertCfg&&SPMON.alertCfg.enabled)?'开':'关')+'</span>';
+    +'<span class="sep">/</span><span>覆盖 '+_nCh+'/'+_qCh+' 渠道</span>';
   }
  }
  const cal=$('spMonCal');
@@ -12290,7 +12472,8 @@ function spMonCalFit(){
  const sel=cal.querySelector('.spmon-day.sel');
  if(sel)try{sel.scrollIntoView({inline:'nearest',block:'nearest'})}catch(e){}
 }
-function spMonPick(date){SPMON.date=date;spMonRender();setTimeout(spMonCalFit,0);}
+function spMonPanState(){const w=document.querySelector('.spmon-chartwrap');if(w)w.classList.toggle('pan-x',w.scrollWidth>w.clientWidth+4)}
+function spMonPick(date){SPMON.date=date;spMonRender();setTimeout(()=>{spMonCalFit();spMonPanState()},0);}
 function spMonSyncTools(){
  document.querySelectorAll('#spMonRange button').forEach(b=>b.classList.toggle('on',+b.dataset.spmrange===SPMON.range));
  document.querySelectorAll('#spMonMode button').forEach(b=>b.classList.toggle('on',b.dataset.spmmode===SPMON.mode));
@@ -12347,7 +12530,7 @@ function spMonDraw(dateSeries,selDate,lowDate){
   const mk=x.date===lowDate?(x.date===selDate?'最低日 · 选中':'最低日'):(x.date===selDate?'选中':'');
   return '<tr><td>'+he(String(p.at||''))+'</td><td>¥'+he(String(p.p))+'</td><td>'+he(x.date)+'</td><td>'+he(SRX_RADAR_NAMES[p.ch]||p.ch||'')+'</td><td>'+he(mk)+'</td></tr>';
  })).join('');
- const padL=44,padR=10,padT=12,padB=22;
+ const padL=44,padR=18,padT=12,padB=22;
  ctx.strokeStyle=cssv('--grid')||'#d7dee8';ctx.lineWidth=1;ctx.fillStyle=cssv('--mut')||'#5a6c7d';ctx.font='10px var(--num)';
  const fmtAt=t=>{const d=new Date(t);return String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')};
  if(SPMON.mode==='kline'){
@@ -12380,6 +12563,15 @@ function spMonDraw(dateSeries,selDate,lowDate){
   return;
  }
  const ps=all.map(x=>x.p);let mn=Math.min(...ps),mx=Math.max(...ps);
+ if(focus&&focus.pts&&focus.pts.length){
+  /* 口径混排会让 Y 轴被旧口径的裸价拉垮（实测裸 ¥185 与含税 ¥685
+     同轴 → 新价挤在顶端、旧价贴地）。以最近一次采集的口径为主尺：
+     主口径点连续成线，旧口径点只留小点不连线——既不伪造平滑，
+     也不把「口径修正」画成暴涨。 */
+  const lb=focus.pts[focus.pts.length-1].basis||'';
+  const main=all.filter(p=>(p.basis||'')===lb).map(p=>p.p);
+  if(main.length){mn=Math.min(...main);mx=Math.max(...main);}
+ }
  const pad=Math.max(1,(mx-mn)*0.08);mn=Math.max(0,mn-pad);mx+=pad;
  const X=t=>padL+(t-times[0])/Math.max(1,times[times.length-1]-times[0])*(W-padL-padR);
  const Y=p=>padT+(mx-p)/(mx-mn)*(H-padT-padB);
@@ -12387,9 +12579,23 @@ function spMonDraw(dateSeries,selDate,lowDate){
  for(let i=0;i<4;i++){const p=mx-(mx-mn)*i/3,yy=Y(p);ctx.beginPath();ctx.moveTo(padL,yy);ctx.lineTo(W-padR,yy);ctx.stroke();ctx.fillText('¥'+Math.round(p),4,yy+3)}
  series.forEach(x=>{
   const low=x.date===lowDate,sel=x.date===selDate;
+  const mainBasis=(focus&&focus.pts&&focus.pts.length)?(focus.pts[focus.pts.length-1].basis||''):null;
   ctx.strokeStyle=low?(cssv('--red')||'#c22a2e'):(sel?(cssv('--blue')||'#0b62d6'):'#aab4c0');
-  ctx.lineWidth=low||sel?2.4:1;ctx.globalAlpha=low||sel?1:.38;
-  ctx.beginPath();x.pts.forEach((p,i)=>{const xx=X(p.t),yy=Y(p.p);i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy)});ctx.stroke();
+  ctx.lineWidth=low||sel?2.4:1;ctx.globalAlpha=low||sel?1:.38;ctx.lineJoin='round';ctx.lineCap='round';
+  /* 旧口径点只留小点、不连线：裸票价与含税价不是同一把尺子，
+     连起来会把「口径修正」画成一次暴涨（实测裸 ¥185 → 含税 ¥685
+     的垂线）。同口径连续，跨口径断笔。 */
+  let seg=[];
+  const flush=()=>{if(!seg.length)return;
+   if(seg.length===1){ctx.beginPath();ctx.arc(X(seg[0].t),Y(seg[0].p),1.6,0,Math.PI*2);ctx.fillStyle=ctx.strokeStyle;ctx.fill()}
+   else{ctx.beginPath();seg.forEach((p,i)=>{const xx=X(p.t),yy=Y(p.p);i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy)});ctx.stroke()}
+   seg=[];};
+  x.pts.forEach(p=>{
+   const isMain=(mainBasis==null)||((p.basis||'')===mainBasis);
+   if(seg.length&&((seg[seg.length-1].basis||'')!==(p.basis||'')||!isMain))flush();
+   seg.push(p);
+   if(!isMain)flush();});
+  flush();
   const last=x.pts[x.pts.length-1];
   if(low||sel){ctx.fillStyle=low?(cssv('--red')||'#c22a2e'):(cssv('--blue')||'#0b62d6');ctx.beginPath();ctx.arc(X(last.t),Y(last.p),3.2,0,Math.PI*2);ctx.fill()}
   ctx.globalAlpha=1;
@@ -12406,23 +12612,8 @@ function spMonDraw(dateSeries,selDate,lowDate){
   ctx.textAlign=align;ctx.fillText(label,xx,H-6);lastRight=left+tw;
  }
  ctx.textAlign='left';
- const marks=[];
- if(lowDate){const s=series.find(x=>x.date===lowDate);if(s)marks.push({s,c:cssv('--red')||'#c22a2e'})}
- if(selDate&&selDate!==lowDate){const s=series.find(x=>x.date===selDate);if(s)marks.push({s,c:cssv('--blue')||'#0b62d6'})}
- if(marks.length){
-  ctx.font='600 10px var(--num)';
-  let prevY=-1e9;
-  marks.map(m=>{const last=m.s.pts[m.s.pts.length-1];return{s:m.s,c:m.c,last,y:Math.max(padT+8,Y(last.p)-8)}})
-   .sort((a,b)=>a.y-b.y).forEach(m=>{
-    if(m.y<prevY+12)m.y=prevY+12;if(m.y>H-padB-2)m.y=H-padB-2;prevY=m.y;
-    const txt=m.s.date.slice(5)+' ¥'+Math.round(m.last.p),tx=W-padR-4,tw=ctx.measureText(txt).width;
-    ctx.fillStyle=cssv('--r-surface-2')||'#f6f8fb';
-    ctx.fillRect(tx-tw-3,m.y-10,tw+6,13);
-    ctx.fillStyle=m.c;ctx.fillText(txt,tx,m.y);
-   });
-  ctx.textAlign='left';
- }
- if(note)note.textContent='每线=一个出发日期 · 红=最低日'+(lowDate===selDate?'/选中':'')+' · 蓝=选中 · 线尾标日期/价格'+((dateSeries||[]).some(x=>x.basis_changed)?' · 含口径变化日':'')+' · 范围 '+SPMON.range+' 天 · '+times.length+' 次采集 · 最近 '+fmtAt(times[times.length-1]);
+ if(note)note.textContent='每线=一个出发日期 · 红=最低日'+(lowDate===selDate?'/选中':'')+' · 蓝=选中 · 线尾圆点=最新采集价'+((dateSeries||[]).some(x=>x.basis_changed)?' · 含口径变化日':'')+' · 范围 '+SPMON.range+' 天 · '+times.length+' 次采集 · 最近 '+fmtAt(times[times.length-1]);
+ requestAnimationFrame(spMonPanState);
 }
 window.addEventListener('resize',function(){
  clearTimeout(SPMON.rt);
@@ -12454,17 +12645,33 @@ function spMonHover(e){
 }
 (function(){
  const c=$('spMonChart');if(!c)return;
- let tipT=0;
+ const w=c.closest('.spmon-chartwrap');
+ let tipT=0,raf=0;
  const hideTip=function(){const t=$('spMonTip');if(t)t.hidden=true;const x=$('spMonCross');if(x)x.style.display='none'};
- c.addEventListener('pointermove',spMonHover);
- c.addEventListener('pointerdown',function(e){clearTimeout(tipT);spMonHover(e)});
- c.addEventListener('pointerup',function(){
-  clearTimeout(tipT);tipT=setTimeout(hideTip,2600);
- });
- c.addEventListener('pointercancel',function(){clearTimeout(tipT);hideTip()});
- c.addEventListener('pointerleave',function(e){
-  if(e&&e.pointerType==='touch')return;hideTip()});
+ const move=e=>{if(SPMON.panning)return;const x=e.clientX,y=e.clientY;
+  if(raf)return;raf=requestAnimationFrame(()=>{raf=0;spMonHover({clientX:x,clientY:y})})};
+ c.addEventListener('pointermove',move);
+ c.addEventListener('pointerdown',function(e){SPMON.panning=false;clearTimeout(tipT);spMonHover(e)});
+ c.addEventListener('pointerup',function(){SPMON.panning=false;clearTimeout(tipT);tipT=setTimeout(hideTip,2600);});
+ c.addEventListener('pointercancel',function(){SPMON.panning=false;clearTimeout(tipT);hideTip()});
+ c.addEventListener('pointerleave',function(e){if(e&&e.pointerType==='touch')return;hideTip()});
  window.addEventListener('scroll',hideTip,{passive:true});
+ if(w){
+  let down=false,sx=0,sl=0,moved=false;
+  w.addEventListener('pointerdown',function(e){
+   if(e.pointerType==='touch'||e.button!==0)return;
+   if(w.scrollWidth<=w.clientWidth+4)return;
+   down=true;moved=false;sx=e.clientX;sl=w.scrollLeft;SPMON.panning=true;
+   w.classList.add('dragging');try{w.setPointerCapture(e.pointerId)}catch(_){}
+  },true);
+  w.addEventListener('pointermove',function(e){
+   if(!down)return;
+   const dx=e.clientX-sx;if(Math.abs(dx)>3)moved=true;
+   if(moved){e.preventDefault();w.scrollLeft=sl-dx;hideTip()}
+  });
+  const up=function(){if(!down)return;down=false;w.classList.remove('dragging');setTimeout(()=>{SPMON.panning=false},40)};
+  w.addEventListener('pointerup',up);w.addEventListener('pointercancel',up);w.addEventListener('pointerleave',function(e){if(down&&e.buttons===0)up()});
+ }
 })();
 (function(){
  try{const r=+localStorage.getItem('jpspmrange');if([2,7,30,90,180].includes(r))SPMON.range=r;
@@ -13006,7 +13213,7 @@ document.addEventListener('wheel',function(ev){
  if(!ev.deltaY)return;
  const t=ev.target;
  if(!(t&&t.closest))return;
- const wrap=t.closest('.hcells,#montabs');
+ const wrap=t.closest('.hcells,#montabs,.spmon-chartwrap,.spmon-cal');
  if(!wrap||wrap.scrollWidth<=wrap.clientWidth+4)return;
  ev.preventDefault();
  wrap.scrollLeft+=ev.deltaY;
@@ -13375,12 +13582,14 @@ var CHLINK_CFG_DATA=null;
 const CHLINK_VARIANTS=[["pc","domestic"],["h5","domestic"],["pc","intl"],["h5","intl"]];
 function chlinkName(p){return ((SRX_PLATS&&SRX_PLATS[p]&&SRX_PLATS[p][0])||LOGIN_CN[p]||p)}
 function chlinkChip(c,special){
- if(!c)return '<span class="chlink off"><span class="chlink-top"><b>—</b><span class="chlink-go">未配置</span></span></span>';
- const scope=he(special?(c.surface_label||c.surface):((c.surface_label||c.surface)+(c.scope_label?(' '+c.scope_label):'')));
- if(!c.ok)return '<span class="chlink off" title="'+he(c.note||'不供')+'"><span class="chlink-top"><b>'+scope+'</b><span class="chlink-go">不供</span></span><span class="chlink-note">'+he(c.note||'')+'</span></span>';
+ if(!c)return '<span class="chlink off"><span class="chlink-surface">—</span><span class="chlink-top"><b>未配置</b></span></span>';
+ const surface=special?((((c.surface_label||c.surface)||'')+' 特价')):((c.surface_label||c.surface)+(c.scope_label?(' '+c.scope_label):''));
+ if(!c.ok)return '<span class="chlink off" data-surface="'+he(surface)+'" title="'+he(c.note||'不供')+'"><span class="chlink-surface">'+he(surface)+'</span><span class="chlink-top"><b>不供</b></span><span class="chlink-note">'+he(c.note||'')+'</span></span>';
+ let title=String(c.note||'').replace(/^(PC|H5)\s*/i,'').replace(/^(国内|国际)\s*/,'').trim();
+ if(!title)title=special?'特价机票':'机票搜索';
  const kind=c.note==='航线直达'?'直达':(c.note&&c.note.indexOf('其他范围')===0?'入口':'打开');
  const auth=c.login?('<span class="chlink-auth '+(c.login_required?'req':'opt')+'" title="'+he('页面登录：'+c.login+(c.login_required?'（必须登录）':'（可选）'))+'">'+he(c.login)+'</span>'):'';
- return '<a class="chlink" href="'+he(c.url)+'" target="_blank" rel="noopener noreferrer" onclick="return srxOpenChannel(this.href,event)" title="'+he(c.url+' · '+(c.note||'')+(c.login?(' · 页面需'+c.login):''))+'"><span class="chlink-top"><b>'+scope+'</b><span class="chlink-go">'+kind+'</span></span><span class="chlink-note">'+he(c.note||'')+'</span>'+auth+'</a>';
+ return '<a class="chlink" data-surface="'+he(surface)+'" href="'+he(c.url)+'" target="_blank" rel="noopener noreferrer" onclick="return srxOpenChannel(this.href,event)" title="'+he(c.url+' · '+(c.note||'')+(c.login?(' · 页面需'+c.login):''))+'"><span class="chlink-surface">'+he(surface)+'</span><span class="chlink-top"><b>'+he(title)+'</b></span>'+auth+'<span class="chlink-go">'+kind+' ↗</span></a>';
 }
 function chMeta(j,p){
  const a=(j&&j.channels)||[];
@@ -13392,11 +13601,12 @@ function chBandHTML(p,cells,specials,meta,probe,extraNote){
  const dot=av?('<span class="chdot '+he(av.tone||'')+'" title="'+he(av.label||'')+'"></span>'):'';
  let h='<div class="chband" role="group" aria-label="'+he(chlinkName(p))+'渠道入口" style="--chc:var(--c-'+p+')" data-channel="'+p+'">';
  h+='<div class="chband-id"><div class="chband-name">'+srxPlatIcon(p)+'<b>'+he(chlinkName(p))+'</b>'+dot+'</div>';
- if(probe)h+='<div class="chband-meta"><span class="chsess '+he((meta&&meta.session)||'')+'">'+he((meta&&meta.session_label)||'登录要求未知')+'</span></div>';
+ const _sl=(meta&&meta.session_label)||'';
+ if(_sl)h+='<div class="chband-meta"><span class="chsess '+he((meta&&meta.session)||'')+'">'+he(_sl)+'</span></div>';
  if(extraNote)h+='<div class="chband-note" title="'+he(extraNote)+'">'+he(extraNote)+'</div>';
  h+='</div><div class="chband-body">';
- if(cells)h+='<div class="chband-row"><span class="chband-k">机票</span><div class="chband-links search">'+cells.map(c=>chlinkChip(c)).join('')+'</div></div>';
- if(specials)h+='<div class="chband-row"><span class="chband-k">特价</span><div class="chband-links spec">'+specials.map(c=>chlinkChip(c,true)).join('')+'</div></div>';
+ if(cells)h+='<div class="chband-grid">'+cells.map(c=>chlinkChip(c)).join('')+'</div>';
+ if(specials)h+='<div class="chband-specs">'+specials.map(c=>chlinkChip(c,true)).join('')+'</div>';
  if(probe&&meta&&meta.login_note)h+='<div class="chband-login-note">'+he(meta.login_note)+'</div>';
  return h+'</div></div>';
 }
@@ -13409,7 +13619,7 @@ function srxChLinksHTML(j,probe){
  const by={};(j.cells||[]).forEach(c=>{by[c.plat+'|'+c.surface+'|'+c.scope]=c});
  const sp={};(j.specials||[]).forEach(c=>{sp[c.plat+'|'+c.surface]=c});
  const plats=['ctrip','qunar','fliggy','tongcheng','tuniu'];
- let html='<div class="chboard">';
+ let html='<div class="chboard"><div class="chboard-head"><span>渠道</span><span>PC 国内</span><span>H5 国内</span><span>PC 国际</span><span>H5 国际</span></div>';
  plats.forEach(p=>{
   const cells=CHLINK_VARIANTS.map(v=>by[p+'|'+v[0]+'|'+v[1]]);
   const specials=Object.keys(sp).length?['pc','h5'].map(s=>sp[p+'|'+s]):null;
@@ -13485,7 +13695,7 @@ async function srxSpLoad(force){
   const cnt=$('srxSpCount');if(cnt)cnt.textContent=((sj.deals||[]).length?((sj.deals||[]).length+' 条最近特价'):'暂无核实特价');
  }catch(e){body.innerHTML='<span class="muted">特价雷达加载失败：'+he(e.message||e)+'</span>'}
 }
-function srxSpOpen(){const d=$('srxSp');if(!d)return;d.open=true;srxSpLoad(true);try{d.scrollIntoView({block:'nearest'})}catch(e){}}
+function srxSpOpen(){try{switchView('mon');showMonTab('specials');setTimeout(function(){const c=$('spRadarMonitor');if(c)try{c.scrollIntoView({block:'start'})}catch(_){}},80)}catch(e){}}
 async function loadLogin(b,force){
  if(b&&b.classList.contains('busy'))return;
  if(b)b.classList.add('busy');
@@ -17769,7 +17979,7 @@ function srxRenderBand(){
      无数据航线永久渲染 14 个「未采」格，日期带收敛能力失效。 */
  const _bk=(SRX.pair||'')+'|'+(SRX.date||'');
  if(SRX._bandKey!==_bk){SRX._bandKey=_bk;SRX.bandExpand=false}
- if(!SRX.pair||!SRX.date){box.innerHTML='<div class="srx-band-empty"><span>近 14 天出发价带需选定出发日；只画真实落库点，未采不补价。</span></div>';if(note)note.textContent='';if(sec)sec.classList.add('compact');return}
+ if(!SRX.pair||!SRX.date){box.innerHTML='<div class="srx-band-empty"><span>选定出发日后显示真实价带；未采不补价。</span><button type="button" data-bandpick="1">选择出发日</button></div>';if(note)note.textContent='';if(sec)sec.classList.add('compact');return}
  const anchor=SRX.bandAnchor||SRX.date;
  const key=srxCalKey();
  if(!SRX_CAL[key]&&!SRX_CAL_PEND[key]){
@@ -17866,7 +18076,8 @@ function srxRenderBrief(){
    +'<span class="srx-src-a">'+(link.url?'<a href="#" data-openlink="'+he(link.url)+'" onclick="event.stopPropagation();srxOpen(this.dataset.openlink);return false">打开原页</a>':'<span>本态不供落地页</span>')+'</span>'
    +'</div>';
  }).join('');
- el.innerHTML='<button type="button" class="srx-foldbtn srx-brieffold" data-foldtarget="srxBrief" onclick="srxFold(this.dataset.foldtarget,this)" aria-expanded="true">收起五源</button>'+cards;
+ el.classList.remove('srx-folded');
+ el.innerHTML=cards;
  if(!el.dataset.xhooked){el.dataset.xhooked='1';el.addEventListener('scroll',srxBriefHint,{passive:true})}
  requestAnimationFrame(srxBriefHint);
 }
@@ -17934,15 +18145,21 @@ function srxRenderCapbar(){
  const _curBad=legs.map(lg=>Object.values(lg.channels||{})).flat().find(c=>c&&['login_required','blocked','challenge'].includes(c.status));
  if(_curBad)html+='<span class="capchip auth" title="会话 本次需登录">本次需登录</span>';
  const need=SRX_PLAT_ORDER.filter(p=>channelAuthView(p).needsLogin);
- const _sessLabels=SRX_PLAT_ORDER.map(p=>channelAuthView(p)).filter(v=>['active','saving','pending','available','saved','save_error','login_required'].includes(v.status)&&v.label).map(v=>v.label);
+ const _sessLabels=[...new Set(SRX_PLAT_ORDER.map(p=>channelAuthView(p)).filter(v=>['active','saving','pending','available','saved','save_error','login_required'].includes(v.status)&&v.label).map(v=>v.label))];
  if(_sessLabels.length)html+='<span class="sr-only">'+he(_sessLabels.join('；'))+'</span>';
  html+='<span class="sp"></span>';
+ const _ei=srxEmptyInfo();
+ if(_ei&&_ei.kind==='fallback'){
+  html+='<span class="capstate" title="'+he(_ei.body||'')+'">无真实明细</span>';
+  if(!SRX.probe)html+='<button type="button" class="capact" onclick="srxFocusProbe()">发起探针</button>';
+ }
  if(need.length)html+='<button type="button" onclick="srxGoLogin()" title="'+he(need.map(p=>channelAuthView(p).label).join('；'))+'">渠道登录</button>';
  else html+='<button type="button" onclick="srxGoLogin()">渠道登录</button>';
  el.innerHTML=html;el.hidden=false;
 }
 function srxRenderKpis(){
  const el=$('srxKpis');if(!el)return;
+ el.hidden=false;
  const rows=srxFiltered(),all=srxBase(),c=srxCountModel();
  const real=rows.filter(f=>!srxIsCal(f)&&!srxIsStale(f));
  const qual=real.filter(f=>f.qual).length;
@@ -17954,6 +18171,8 @@ function srxRenderKpis(){
   if(info.kind==='channel'||info.kind==='filter')acts.push('<button type="button" onclick="srxClearFilters()">清除结果筛选</button>');
   if(info.kind==='fallback'&&!SRX.probe)acts.push('<button type="button" onclick="srxFocusProbe()">发起探针补明细</button>');
   if(SRX.probe)acts.push('<button type="button" onclick="srxTaskOpen()">查看探针进度</button>');
+  const _cap=$('srxCapbar');
+  if(info.kind==='fallback'&&_cap&&!_cap.hidden){el.classList.add('srx-audit-empty');el.innerHTML='';el.hidden=true;return}
   el.classList.add('srx-audit-empty');
   el.innerHTML='<div class="srx-kpi-empty"><b>'+he(info.title)+'</b><span>'+he(info.body)+'</span>'+(acts.length?'<span class="acts">'+acts.join('')+'</span>':'')+'</div>';
   return}
@@ -17984,22 +18203,19 @@ function srxRenderKpis(){
 }
 function srxRenderOv(){
  const el=$('srxOvSum');if(!el)return;
- const names={ctrip:'携程',qunar:'去哪儿',fliggy:'飞猪',tongcheng:'同程',tuniu:'途牛'};
- const parts=[];
- document.querySelectorAll('#searchview .srx-src').forEach(x=>{
-  const p=x.getAttribute('data-src')||'';
-  const c=(x.querySelector('.srx-src-big')||{}).textContent||'';
-  if(p&&c&&c.trim()!=='—')parts.push((names[p]||p)+' '+c.trim());
- });
+ const srcs=[...document.querySelectorAll('#searchview .srx-src')];
+ const src=srcs.filter(x=>{const c=(x.querySelector('.srx-src-big')||{}).textContent||'';return c.trim()&&c.trim()!=='—'}).length;
+ const total=srcs.length||5;
+ const ei=(typeof srxEmptyInfo==='function')?srxEmptyInfo():null;
+ if(ei&&ei.kind==='fallback'){el.textContent=ei.title+'（展开概览看来源）';return}
  const kpis=[];
  document.querySelectorAll('#searchview .srx-kpi').forEach(x=>{
   const k=(x.querySelector('.k')||{}).textContent||'';
   const v=(x.querySelector('.v')||{}).textContent||'';
-  if(k&&v)kpis.push(k+' '+v);
+  if(k&&/可出手机票|本次明细|同班覆盖/.test(k)&&v)kpis.push(k+' '+v);
  });
- if(!kpis.length){const e=document.querySelector('#srxKpis .srx-kpi-empty b');if(e)kpis.push(e.textContent||'')}
  const sub=(document.querySelector('#srxKpis .srx-kpi-sub')||{}).textContent||'';
- el.textContent=(parts.length?'来源 '+parts.join(' · ')+' ｜ ':'')+(kpis.join(' · ')||'检索概览')+(sub?' ｜ '+sub.trim():'');
+ el.textContent='来源 '+src+'/'+total+' 渠道'+(kpis.length?' ｜ '+kpis.join(' · '):'')+(sub?' ｜ '+sub.trim():'');
 }
 function srxToggleOverview(){
  const v=$('searchview');if(!v)return;
@@ -18007,6 +18223,9 @@ function srxToggleOverview(){
  v.classList.toggle('srx-ov-collapsed',!on);
  const b=$('srxOvToggle');
  if(b){b.textContent=on?'收起概览':'展开概览';b.setAttribute('aria-expanded',on)}
+ const hb=$('srxOvHero');if(hb)hb.setAttribute('aria-expanded',on?'true':'false');
+ const bar=$('srxOvBar');if(bar)bar.setAttribute('aria-expanded',on?'true':'false');
+ srxRenderCtx();
  try{localStorage.setItem('jpsrx_ovopen',on?'1':'0')}catch(e){}
  if(on)setTimeout(srxRenderOv,0);
 }
@@ -18171,9 +18390,10 @@ function srxRenderFacets(force){
 function srxRenderMobileSummary(){
  const el=$('srxMobileSummary');if(!el)return;
  const rows=srxFiltered(),real=rows.filter(f=>!srxIsCal(f)&&!srxIsStale(f));
- const plats=new Set(rows.filter(f=>!srxIsStale(f)).map(f=>f.platKey).filter(Boolean)).size;
+ const plats=new Set(rows.map(f=>f.platKey).filter(Boolean)).size;
  const g=srxGroup(real).groups.filter(x=>new Set(x.rows.map(r=>r.platKey)).size>1).length;
- el.textContent=rows.length+' 行 · '+plats+'/5 渠道 · '+g+' 同班';
+ const _ei=(typeof srxEmptyInfo==='function')?srxEmptyInfo():null;
+ el.textContent=(_ei&&_ei.kind==='fallback'?'无真实明细 · ':'')+rows.length+' 行 · 来源 '+plats+'/5 · '+g+' 同班';
 }
 function srxCloseMobilePanels(){
  const v=$('searchview');if(!v)return false;let any=false;
@@ -18955,7 +19175,7 @@ function srxPrefillProbe(){
  if(!SRX._probeInit){SRX._probeInit=true;
   let po='0';try{po=localStorage.getItem('jpsrx_probeopen2')||'0'}catch(e){}
   const p=$('srxProbe'),t=$('srxProbeToggle');
-  if(po==='0'){if(p)p.classList.remove('open');if(t){t.textContent='展开';t.setAttribute('aria-expanded','false')}}
+  if(po==='0'){if(p)p.classList.remove('open');if(t){t.textContent='展开探针';t.setAttribute('aria-expanded','false')}}
   else if(p&&!p.classList.contains('open')){p.classList.add('open');if(t){t.textContent='收起';t.setAttribute('aria-expanded','true')}}
   if(!SRX_TASK)srxTaskResume();
  }
@@ -18969,7 +19189,7 @@ function srxPrefillProbe(){
 }
  function srxBatchToggle(){
   SRX.batchOpen=!SRX.batchOpen;
-  if(SRX.batchOpen){const p=$('srxProbe');if(p&&!p.classList.contains('open')){p.classList.add('open');const b=$('srxProbeToggle');if(b){b.setAttribute('aria-expanded','true');b.textContent='收起'}}}
+  if(SRX.batchOpen){const p=$('srxProbe');if(p&&!p.classList.contains('open')){p.classList.add('open');const b=$('srxProbeToggle');if(b){b.setAttribute('aria-expanded','true');b.textContent='收起探针'}}}
   srxBatchRender()}
 
 function srxBatchLegs(){if(!Array.isArray(SRX.batchLegs))SRX.batchLegs=[];return SRX.batchLegs}
@@ -19435,7 +19655,7 @@ function srxExitProbe(){
 }
 
 /* ---------- actions ---------- */
-function srxToggleProbe(){const p=$('srxProbe');if(!p)return;const on=!p.classList.contains('open');p.classList.toggle('open',on);const b=$('srxProbeToggle');if(b){b.setAttribute('aria-expanded',on);b.textContent=on?'收起':'展开'}try{localStorage.setItem('jpsrx_probeopen2',on?'1':'0')}catch(e){}srxRenderProbeMini()}
+function srxToggleProbe(){const p=$('srxProbe');if(!p)return;const on=!p.classList.contains('open');p.classList.toggle('open',on);const b=$('srxProbeToggle');if(b){b.setAttribute('aria-expanded',on);b.textContent=on?'收起探针':'展开探针'}try{localStorage.setItem('jpsrx_probeopen2',on?'1':'0')}catch(e){}srxRenderProbeMini()}
 function srxRenderProbeMini(j){
  const el=$('srxProbeMini'),p=$('srxProbe');if(!el)return;
  if(!p||p.classList.contains('open')){el.hidden=true;el.textContent='';return}
@@ -19554,11 +19774,12 @@ function srxRenderRestore(){
   }
   el.hidden=true;el.innerHTML='';SRX.restore=null;return;
  }
- el.hidden=false;
- el.innerHTML='<b>已保持中性视图</b><span>上次条件未自动应用：'+he(parts.join(' · '))+'。当前展示'+(SRX.pair&&SRX.pair!=='|'?('航线 '+he(srxPairName(...SRX.pair.split('|')))+' 的'):'')+'全部日期与渠道。</span><button type="button" data-restore="1">恢复上次条件</button><button type="button" data-restoreoff="1">忽略</button>';
+ SRX.restoreChip=parts.join(' · ');
+ el.hidden=true;el.innerHTML='';
 }
 function srxRestoreApply(){
  const st=SRX.restore;if(!st)return;
+ SRX.restoreChip=null;
  if(st.pair&&st.pair!=='|'){
   const pk=st.pair,save=srxAll().some(f=>(f.from||'')+'|'+(f.to||'')===pk);
   if(!save){toast('上次航线已不在当前数据中，无法恢复','err');return}
@@ -19576,6 +19797,8 @@ function srxRestoreApply(){
 function srxRenderCtx(){
  const sec=$('srxContext'),b=$('srxFilterBtn');if(!sec)return;
  sec.classList.toggle('ctx-collapsed',!SRX.ctx);
+ const rl=$('srxRestoreLink');if(rl){const _has=!!(SRX.restoreChip&&SRX.restore);rl.hidden=!_has;rl.title=_has?('恢复上次条件：'+SRX.restoreChip):'';}
+
  if(b){b.setAttribute('aria-expanded',SRX.ctx?'true':'false');
   const n=srxCtxCount();
   b.innerHTML='筛选'+(n?'<span class="n">'+n+'</span>':'')+(SRX.ctx?' ▴':' ▾');}
@@ -19600,6 +19823,7 @@ function srxMoreRows(){
  else SRX.limit+=SRX_PAGE;
  srxRenderRows();
 }
+function srxPickDeparture(){SRX.ctx=true;srxRenderCtx();const d=$('srxDates');if(!d)return;try{d.scrollIntoView({block:'nearest'})}catch(e){}const c=Array.from(d.querySelectorAll('.srx-chip')).find(x=>!x.classList.contains('on'))||d.querySelector('.srx-chip');if(c)try{c.focus({preventScroll:true})}catch(e){}}
 function srxClearFilters(){SRX.f={...SRX_DEFAULT_F,airlines:[],depAs:[],arrAs:[],cabins:[],pss:[]};SRX.q='';SRX.plats=[];SRX.sel=null;SRX.agg=false;SRX.sort='price';SRX.detailOpen=false;const m=$('srxDmask');if(m)m.classList.remove('open');srxResetLocks();srxSave();SRX.limit=SRX_PAGE;srxRenderFacets(true);srxRenderQuick();renderSearch()}
 function srxClearAllFilters(){if(srxDateLock()){srxClearFilters();return}SRX.date='';SRX.bandAnchor='';srxClearFilters()}
 function srxFocusProbe(){const p=$('srxProbe');if(p&&!p.classList.contains('open'))srxToggleProbe();setTimeout(()=>{try{if(p)p.scrollIntoView({block:'nearest'});const f=$('srxFrom');if(f)f.focus({preventScroll:true})}catch(e){}},40)}
@@ -19723,7 +19947,8 @@ document.addEventListener('click',ev=>{
  if(t.closest('[data-restore]')){srxRestoreApply();return}
  if(t.closest('[data-bandcollapse]')){SRX.bandExpand=false;srxRenderBand();return}
  if(t.closest('[data-bandexpand]')){SRX.bandExpand=true;srxRenderBand();return}
- if(t.closest('[data-restoreoff]')){SRX.restore=null;SRX.autoDismissed=true;const rn=$('srxRestoreNote');if(rn)rn.hidden=true;srxSave();return}
+ if(t.closest('[data-bandpick]')){srxPickDeparture();return}
+ if(t.closest('[data-restoreoff]')){SRX.restore=null;SRX.restoreChip=null;SRX.autoDismissed=true;const rn=$('srxRestoreNote');if(rn)rn.hidden=true;srxSave();return}
  if(t.closest('[data-resetflt]')){srxClearAllFilters();SRX.autoDismissed=true;const rn=$('srxRestoreNote');if(rn)rn.hidden=true;toast('已重置筛选','ok');return}
  if(t.closest('[data-alldates]')){
   if(srxDateLock()){toast('已提交任务只查询了 '+SRX.date+'；查看其他日期需发起新查询','err');return}
@@ -20851,10 +21076,23 @@ def _scan_marker_window():
 
     同轮多航线按顺序完成可跨 8-10 分钟，420s 行间断口会把先完成的
     航线误判成补位；有轮次标记时以标记划轮，无标记才回退断口。
-    陈旧/损坏标记（>45min 未更新）不采，防崩溃轮把旧行当新轮。
+    陈旧/损坏标记不采，防崩溃轮把旧行当新轮——阈值随调度周期放宽：
+    固定 45min 在 30min 周期下，一轮跑久/推迟就会让标记早于最后一
+    批行失效，整页当轮真实明细被统一标成「补位」（用户实报满屏补位
+    的根因之一）。取 周期×1.5+15min，夹在 45min…6h。
     """
     try:
         from datetime import datetime as _dt
+        try:
+            _iv = float(((_State.cfg or {}).get("schedule") or {}).get(
+                "interval_minutes", 30) or 30)
+        except Exception:
+            _iv = 30.0
+        # 一整轮跨 7 航线实测 ~22min：45min 上限在扫描稍晚时就把整轮
+        # 标记判陈旧，回退 420s 断口 → 只剩最后一行算当轮，其余全标
+        # 「补位」。取 周期×1.5+30（30min 周期=75min），覆盖一轮+一次
+        # 调度延迟仍诚实（超期即不用标记，宁标补位不冒充当轮）。
+        _ttl = min(360, max(75, _iv * 1.5 + 30)) * 60
         db = _anchored(((_State.cfg or {}).get("output") or {}).get("db_path"),
                        "data/prices.db")
         p = os.path.join(os.path.dirname(os.path.abspath(db)),
@@ -20865,7 +21103,7 @@ def _scan_marker_window():
         if not start:
             return ""
         t = _dt.strptime(start[:19], "%Y-%m-%d %H:%M:%S")
-        if (_dt.now() - t).total_seconds() > 45 * 60:
+        if (_dt.now() - t).total_seconds() > _ttl:
             return ""
         return start
     except Exception:
@@ -23148,12 +23386,22 @@ def _user_state(u):
                    "data/prices.db")
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
+    # 当轮窗口随调度周期放宽：固定 -40min 在 30min 周期下，一轮跨多
+    # 航线跑 20min + 调度抖动就會整轮落在窗外，主路径一行取不到→全量
+    # 走近期补位，页面满屏「补位」（用户实报根因）。下限 40min 保留
+    # 原行为，长周期配置按 周期×1.5+20 放宽，上限 3h。
+    try:
+        _iv = float((st.cfg.get("schedule") or {}).get(
+            "interval_minutes", 30) or 30)
+    except Exception:
+        _iv = 30.0
+    _win = int(min(180, max(40, _iv * 1.5 + 20)))
     rows = conn.execute(
         "SELECT rowid AS id, platform, from_city, to_city, depart_date, price, extra, fetched_at "
         "FROM flight_prices "
         "WHERE extra != '' AND fetched_at >= "
-        "datetime('now', 'localtime', '-40 minutes') "
-        "ORDER BY id DESC").fetchall()
+        "datetime('now', 'localtime', ?) "
+        "ORDER BY id DESC", ("-%d minutes" % _win,)).fetchall()
     conn.close()
     flights, latest, seen = [], "", set()
     plat_min = {}

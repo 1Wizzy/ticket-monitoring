@@ -351,7 +351,7 @@ def test_probe_task_cancel_before_start_is_cancelled(fake_plat):
 def test_neutral_state_and_task_ui_pins():
     import pathlib
     src = pathlib.Path(webui.__file__).read_text(encoding="utf-8")
-    assert "上次条件未自动应用" in src and "data-restore=\"1\"" in src
+    assert "SRX.restoreChip" in src and "id=\"srxRestoreLink\"" in src and "恢复上次条件" in src
     assert "function srxTaskStart(payload,opts)" in src
     assert "function srxTaskCancel()" in src and "function srxTaskRetry()" in src
     assert "SRX_TASK_ROWS_SEEN" in src and "/api/probe/start" in src

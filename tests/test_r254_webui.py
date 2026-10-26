@@ -38,10 +38,28 @@ def _page_src():
 
 def test_w1_mtabuser_chip_present():
     src = _page_src()
-    assert 'id="mtabUser"' in src, "montabs 右端缺用户切换 chip 元素"
+    assert 'id="mtabUser"' in src, "缺用户切换 chip 元素"
     assert "function mtabUserNext" in src, "缺循环切换函数"
     assert "pickUser((U+1)" in src or "pickUser((U + 1)" in src, \
         "循环切换必须复用 pickUser 单源（选中态与 userPills 同拍）"
+
+
+def test_w1_mtabuser_lives_in_header_not_tabs():
+    """r372 IA：用户作用域开关驻顶部账号区，不进内容页签行。
+
+    它表达「看谁的数据」而非「看哪块内容」；曾与六个内容页签并列在
+    montabs 行尾且自称「用户视图」，用户实报排位别扭。
+    """
+    src = _page_src()
+    hdr = src[src.index('<header id="hdcard"'):src.index("</header>")]
+    assert 'id="mtabUser"' in hdr, "用户 chip 应驻 header 账号区"
+    tabs = src[src.index('<div class="tabs" id="montabs"'):]
+    tabs = tabs[:tabs.index("</div>")]
+    assert 'id="mtabUser"' not in tabs, "用户 chip 不得混入 montabs 内容页签行"
+    assert "huser" in src, "header 用户 chip 缺 huser 视觉样式"
+    i0 = src.index("function mtabUserSync")
+    assert "· 用户视图" not in src[i0:i0 + 900], \
+        "用户 chip 重复自称「用户视图」的旧文案应退役"
 
 
 def test_w1_mtabuser_sync_with_userpills():
@@ -55,10 +73,10 @@ def test_w1_mtabuser_sync_with_userpills():
 
 
 def test_w1_mtabuser_touch_floor():
-    """触控 36px 地板族（十四§4）：uchip 声明在触控增强媒体块内。"""
+    """触控 36px 地板族（十四§4）：header 用户 chip 有触控增强声明。"""
     src = _page_src()
-    assert ".tabs .uchip" in src or "#montabs .uchip" in src, \
-        "uchip 缺触控地板声明"
+    assert "#hdcard .huser" in src and "height:36px" in src, \
+        "huser 缺触控地板声明"
 
 
 # ---------- W2: 脉冲柱带状态落地 ----------

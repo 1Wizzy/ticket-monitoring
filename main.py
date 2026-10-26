@@ -14,7 +14,7 @@
 import argparse
 import json
 
-__version__ = "1.5.303"
+__version__ = "1.5.304"
 import os
 import subprocess
 import sys

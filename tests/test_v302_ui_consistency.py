@@ -42,7 +42,7 @@ def test_search_kpi_facet_and_date_filters_are_idempotent():
 def test_search_header_is_compact_and_source_strip_is_a_table():
     src = _src()
     for s in (
-        '<div class="srx-hero-copy srx-folded" id="srxHeroCopy">',
+        '<div class="srx-hero-copy" id="srxHeroCopy">',
         "let po='0';try{po=localStorage.getItem('jpsrx_probeopen2')||'0'}",
         "#searchview .srx-capbar{display:flex!important;background:transparent!important;border:0!important;",
         "#searchview .srx-probe:not(.open) .srx-probeacts>*:not(.srx-probe-toggle){display:none!important}",
@@ -70,7 +70,7 @@ def test_search_overview_summary_bar_is_desktop_only_and_collapsible():
     src = _src()
     for s in (
         'id="srxOvSum"',
-        'class="srx-ovbtn" id="srxOvToggle"',
+        'id="srxOvHero"',
         "function srxRenderOv()",
         "function srxToggleOverview()",
         "localStorage.setItem('jpsrx_ovopen'",

@@ -463,7 +463,7 @@ WC-P2-2 诊断: sh=rgb(11, 98, 214) 0px 0px 0px 2px active=true items=4
  ✓ touchcancel 手势接管全清（十字线不滞留）
  ✓ 同点二次 tap 放行跳明细（双拍跳转路径不回归）
  … r283v 图例首屏与搜索态导航
- ✓ 375 图例补位行首屏可达（预设行后，免滚动）（disp=block top=657 h=36 vh=812 fb=fbar open chips=5/7 scrollY=0）
+ ✓ 375 图例补位行首屏可达（预设行后，免滚动）（disp=block top=653 h=36 vh=812 fb=fbar open chips=5/7 scrollY=0）
  ✓ 配置搜索态左导航高亮降饱和（暂态去处语义）
  ✓ 搜索清空后左导航高亮满饱和回归
  … 吸顶切换器滚轮横滚
@@ -507,7 +507,7 @@ WC-P2-2 诊断: sh=rgb(11, 98, 214) 0px 0px 0px 2px active=true items=4
  ✓ W2 390 零新增横滚（溢出 -10px）
  ✓ W3 toast word-break=normal+overflow-wrap=anywhere（实测 normal/anywhere）
  ✓ W4 Esc 关抽屉焦点归还 fltBtn（实测 fltBtn）
- ✓ T1 demo 倒计时 chip 可见（实测 ⏱ 下轮 08:19（2 分/flex）
+ ✓ T1 demo 倒计时 chip 可见（实测 ⏱ 下轮 13:20（2 分/flex）
  ✓ R1a hdmeta 560 带独占行（flexBasis=100%）
  ✓ R1b 560 带页面零横滚（sw=550 cw=560）
  ✓ R1c 620 带回单行（flexBasis=auto）
@@ -576,7 +576,7 @@ WC-P2-2 诊断: sh=rgb(11, 98, 214) 0px 0px 0px 2px active=true items=4
  ✓ r339 高级折叠默认收起且点击展开（{"folded": true, "hidden": true, "open": true}）
  ✓ r339 只要直飞：中转阈清零+收起+恢复
  ✓ r339 航司白名单写模+intl 行条件渲染
- ✓ r349 航司常用 chips 全在容器内且不裁字 {'ok': True, 'n': 8, 'allIn': True, 'noClip': True, 'rows': 2, 'expect': 2, 'qw': 851, 'sw': 851, 'cw': 851}
+ ✓ r349 航司常用 chips 全在容器内且不裁字 {'ok': True, 'n': 8, 'allIn': True, 'noClip': True, 'rows': 2, 'expect': 2, 'qw': 879, 'sw': 879, 'cw': 879}
  ✓ r349 390 航司常用 chips 不越界 {'ok': True, 'n': 8, 'allIn': True, 'noClip': True, 'rows': 4, 'docW': 380}
  ✓ r339 往返开合+返程快速选7天（锚最早出发日）+badge×7
  ✓ r339 Bark 通道卡+写模+测试钮在场
@@ -632,6 +632,13 @@ WC-P2-2 诊断: sh=rgb(11, 98, 214) 0px 0px 0px 2px active=true items=4
  ✓ r355 1024 吸顶条不遮列表头
  ✓ r355 配置城市箭头可见
  ✓ r355 配置城市联想+码名解析
+ ✓ v304 展开概览不留下常驻摘要条
+ ✓ v304 上次条件收成工具行恢复入口
+ ✓ v304 空价带选择出发日直达日期筛选
+ ✓ v304 特价雷达入口切到监控台
+ ✓ v304 关注摘要一行且图表脚注退场
+ ✓ v304 航线卡显示目标差
+ ✓ v304 雷达图表全宽/低价证据条
  ✓ v15273 演示检索不冒充 LIVE
  ✓ v15273 矩阵表头吸附且不压列表头
  ✓ v15273 移动端操作列与输入不缩放
@@ -677,7 +684,7 @@ WC-P2-2 诊断: sh=rgb(11, 98, 214) 0px 0px 0px 2px active=true items=4
  ✓ v294 特价监控日历年/走势/低价日
  ✓ v294 渠道诊断五渠道分型
  ✓ v297 诊断证据标签不拆词
- ✓ v294 检索大块折叠入口
+ ✓ v294 无说明折叠行/价带折叠/五源常驻
  ✓ v297 雷达多日期/低日/编号
  ✓ v297 选中非最低日标记选中而非最低
  ✓ v297 选回最低日恢复低价日
@@ -701,4 +708,4 @@ WC-P2-2 诊断: sh=rgb(11, 98, 214) 0px 0px 0px 2px active=true items=4
  ✓ v297 移动端失败说明完整换行
  ✓ v297 图表点按显示明细
 JS 错误: 无
-=== 651/651 通过 ===
+=== 658/658 通过 ===

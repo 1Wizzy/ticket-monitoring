@@ -148,9 +148,9 @@ class TestTuniuBoard(unittest.TestCase):
 
 def _ctrip_payload():
     return {"responseStatus": {"Ack": "Success"}, "priceList": [
-        # 2026-10-25 ¥382（调研实证样本：/Date(ms+0800)/ 形态）
-        {"departDate": "/Date(1792857600000+0800)/", "price": 382,
-         "totalPrice": 522, "rate": 0, "flightNo": "", "airLine": ""},
+        # 2026-10-25 含税 ¥382（裸票 ¥522——解析必须取 totalPrice）
+        {"departDate": "/Date(1792857600000+0800)/", "price": 522,
+         "totalPrice": 382, "rate": 0, "flightNo": "", "airLine": ""},
         # 超线
         {"departDate": "/Date(1792512000000+0800)/", "price": 520,
          "totalPrice": 640, "rate": 0, "flightNo": "", "airLine": ""},
@@ -171,13 +171,22 @@ def _ctrip_payload():
 
 class TestCtripCalendar(unittest.TestCase):
     def test_decode_and_filters(self):
-        w = _watch()
+        """携程日历取含税总价 totalPrice，不取裸票 price。
+
+        r372 实证 SHA→BKK 2026-11-16：price=150（裸票）/ totalPrice=719
+        （含税），列表页显示 ￥670 与 totalPrice 同口径。取 price 并把
+        口径标「未标注」会把裸价混进跨渠道最低价，雷达出现 ￥150 假最低。
+        """
+        w = _watch(max_price=400)
         deals = ctrip_calendar_deals(_ctrip_payload(), "SZX", "KMG", "昆明",
                                      w, _TODAY)
         self.assertEqual(len(deals), 1)
         d = deals[0]
         self.assertEqual(d.date, "2026-10-25")
-        self.assertEqual(d.src_price, 382)
+        self.assertEqual(d.src_price, 382)      # totalPrice，不是 price=522
+        self.assertIs(d.tax_included, True)
+        self.assertEqual(d.price_basis, "tax_included")
+        self.assertEqual(d.price_basis_label, "含税总价")
         self.assertEqual(d.src, "ctrip")
         self.assertTrue(d.link.startswith(
             "https://m.ctrip.com/html5/flight/taro/first"))
@@ -197,23 +206,23 @@ class TestCtripCalendar(unittest.TestCase):
     def test_year_low_word(self):
         """「年度最低」词面（校准轮落地）：载荷整年有效价最低 300，
         候选价 ≤年低×1.01 打词面——分布比才筛得出真降价。"""
-        w = _watch(days=180, max_price=400)
+        w = _watch(days=180, max_price=900)
         # 1792857600=10-25（9 天）；1792512000=10-21（5 天）；
         # 1792857600+75*86400=2027-01-08（84 天，>60 出窗=年低本体）
         _far = (1792857600 + 75 * 86400) * 1000
         payload = {"priceList": [
             {"departDate": "/Date(1792857600000+0800)/", "price": 301,
-             "totalPrice": 420},                      # ≤299×1.01 → 打
+             "totalPrice": 411},                      # ≤410×1.01 → 打
             {"departDate": "/Date(1792512000000+0800)/", "price": 380,
-             "totalPrice": 500},                      # 年内但非低 → 不打
+             "totalPrice": 600},                      # 年内但非低 → 不打
             {"departDate": f"/Date({_far}+0800)/", "price": 299,
              "totalPrice": 410},                      # 年低本体（越窗）
         ]}
         deals = ctrip_calendar_deals(payload, "SZX", "KMG", "昆明",
                                      w, _TODAY, days=60)
         words = {d.src_price: d.discount for d in deals}
-        self.assertEqual(words[301.0], "年度最低")
-        self.assertEqual(words[380.0], "")
+        self.assertEqual(words[411.0], "年度最低")
+        self.assertEqual(words[600.0], "")
 
     def test_reverse_window_relaxed(self):
         """返程解析放宽窗（Soldier P3#7）：days 形参覆盖 watch.days——
@@ -224,8 +233,8 @@ class TestCtripCalendar(unittest.TestCase):
         # 今日 35 天：>30 去程窗外，≤37 返程窗内）
         ms = (1792857600 + 26 * 86400) * 1000
         payload = {"priceList": [
-            {"departDate": f"/Date({ms}+0800)/", "price": 380,
-             "totalPrice": 500}]}
+            {"departDate": f"/Date({ms}+0800)/", "price": 300,
+             "totalPrice": 380}]}
         strict = ctrip_calendar_deals(payload, "KMG", "SZX", "深圳",
                                       w, _TODAY)
         relaxed = ctrip_calendar_deals(payload, "KMG", "SZX", "深圳",
@@ -504,3 +513,31 @@ class TestGatingAndPush(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCtripCalendarRealBkk(unittest.TestCase):
+    """r372：真实 SHA→BKK 日历样本——裸票 150 / 含税 719 不得取裸票。
+
+    2026-10-26 实测响应同日出两档；列表页显示 ￥670 与 totalPrice 同
+    口径。雷达曾因此把 ￥150 当最低价与飞猪/同程含税价混排。
+    """
+
+    def test_bkk_row_uses_tax_inclusive_total(self):
+        import json
+        from core.specials import ctrip_calendar_deals, parse_specials
+        payload = json.loads("""{"responseStatus":{"Ack":"Success"},
+          "priceList":[
+            {"departDate":"/Date(1793203200000+0800)/","price":150,
+             "totalPrice":719,"transportPrice":150,"rate":0,"flag":1},
+            {"departDate":"/Date(1793289600000+0800)/","price":185,
+             "totalPrice":685,"transportPrice":185,"rate":0,"flag":0}]}""")
+        watch = parse_specials([{"enabled": True, "from": "SHA",
+                                 "from_name": "上海", "max_price": 900}],
+                               _TODAY)[0]
+        deals = ctrip_calendar_deals(payload, "SHA", "BKK", "曼谷",
+                                     watch, _TODAY, days=30)
+        prices = sorted(d.src_price for d in deals)
+        assert prices == [685.0, 719.0], prices
+        assert all(d.tax_included is True for d in deals)
+        assert all(d.price_basis_label == "含税总价" for d in deals)
+        assert 150.0 not in prices

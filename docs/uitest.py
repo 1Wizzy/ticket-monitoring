@@ -1635,7 +1635,7 @@ def main():
             pg.evaluate("showMonTab('trend')")
             pg.wait_for_timeout(300)
             pg.evaluate("togChart(0)")
-            pg.wait_for_timeout(700)
+            pg.wait_for_timeout(1500)
             ck("空数据+有阈值走势出空态（幽灵坐标轴守卫）", pg.evaluate(
                 "()=>{const e=document.getElementById('chartEmpty');"
                 "return e.style.display==='flex'"
@@ -6099,6 +6099,92 @@ def main():
             pg.evaluate("switchView('mon');showMonTab('overview')")
             pg.wait_for_timeout(200)
 
+            # ---- v304 人读顺序：概览/恢复/价带入口/关注摘要/雷达证据 ----
+            pg.set_viewport_size({"width": 1512, "height": 950})
+            pg.evaluate("switchView('search')")
+            pg.wait_for_selector("#searchview .srx-row", timeout=15000)
+            pg.wait_for_timeout(500)
+            pg.evaluate("""()=>{if(!document.querySelector('[data-bandpick]')){
+              SRX.date='';SRX.bandAnchor='';renderSearch();}}""")
+            pg.wait_for_timeout(500)
+            _m304 = pg.evaluate("""()=>{
+              const v=document.getElementById('searchview');
+              if(v.classList.contains('srx-ov-collapsed'))srxToggleOverview();
+              const ov=document.getElementById('srxOvBar'), oc=document.getElementById('srxOvHero');
+              return {cl:v.className,ov:getComputedStyle(ov).display,
+                ovh:Math.round(ov.getBoundingClientRect().height),
+                heroToggle:oc?oc.getAttribute('aria-expanded'):'',
+                special:!!document.getElementById('srxSp'),
+                bandPick:!!document.querySelector('[data-bandpick]')};}""")
+            ck("v304 展开概览不留下常驻摘要条",
+               _m304["ov"] == "none" and _m304["ovh"] == 0
+               and _m304["heroToggle"] == "true", str(_m304))
+            pg.evaluate("srxToggleOverview()")
+            pg.wait_for_timeout(250)
+            pg.evaluate("""()=>{SRX.restore={pair:'URC|SHA'};srxRenderRestore();srxRenderCtx();}""")
+            pg.wait_for_timeout(200)
+            _r304 = pg.evaluate("""()=>({
+              banner:document.getElementById('srxRestoreNote').hidden,
+              link:document.getElementById('srxRestoreLink').hidden,
+              title:document.getElementById('srxRestoreLink').title})""")
+            ck("v304 上次条件收成工具行恢复入口",
+               _r304["banner"] and not _r304["link"]
+               and "乌鲁木齐" in _r304["title"], str(_r304))
+            pg.evaluate("""()=>{SRX.restore=null;SRX.restoreChip=null;srxRenderCtx();
+              const b=document.querySelector('[data-bandpick]');if(b)b.click();}""")
+            pg.wait_for_timeout(350)
+            _b304 = pg.evaluate("""()=>({
+              open:!document.getElementById('srxContext').classList.contains('ctx-collapsed'),
+              dates:document.querySelectorAll('#srxDates .srx-chip').length,
+              focus:document.activeElement&&document.activeElement.className})""")
+            ck("v304 空价带选择出发日直达日期筛选",
+               _b304["open"] and _b304["dates"] > 0
+               and "srx-chip" in _b304["focus"], str(_b304))
+            pg.evaluate("""()=>{const m=document.querySelector('.srx-more-btn');
+              if(m&&!m.closest('.srx-hero-act').classList.contains('open'))m.click();}""")
+            pg.wait_for_timeout(200)
+            pg.evaluate("""()=>{const b=[...document.querySelectorAll(
+              '.srx-hero-act .srx-btn')].find(x=>x.textContent.includes('特价雷达'));
+              if(b)b.click();}""")
+            pg.wait_for_timeout(900)
+            _sp304 = pg.evaluate("""()=>({view:VIEW,tab:MONTAB,
+              radar:!!document.getElementById('spRadarMonitor')})""")
+            ck("v304 特价雷达入口切到监控台",
+               _sp304["view"] == "mon" and _sp304["tab"] == "specials"
+               and _sp304["radar"], str(_sp304))
+            pg.evaluate("showMonTab('watch')")
+            pg.wait_for_timeout(1400)
+            _w304 = pg.evaluate("""()=>{const k=document.getElementById('wsKpis');
+              const cs=getComputedStyle(k);
+              const foot=document.getElementById('wsChartFoot');
+              const tags=[...document.querySelectorAll('.ws-rt-gap')]
+                .map(x=>x.textContent.trim());
+              return {h:Math.round(k.getBoundingClientRect().height),
+                disp:cs.display,foot:getComputedStyle(foot).display,
+                tags:tags.slice(0,2),
+                chart:Math.round(document.getElementById('wsChartWrap').getBoundingClientRect().top)};}""")
+            ck("v304 关注摘要一行且图表脚注退场",
+               _w304["h"] <= 28 and _w304["foot"] == "none"
+               and _w304["chart"] <= 590, str(_w304))
+            ck("v304 航线卡显示目标差",
+               bool(_w304["tags"]) and any(
+                 t.startswith(("高于目标","接近","已达标","仅观察","等待"))
+                 for t in _w304["tags"]), str(_w304))
+            pg.evaluate("showMonTab('specials')")
+            pg.wait_for_timeout(1500)
+            _rad304 = pg.evaluate("""()=>{
+              const main=document.querySelector('.spmon-main'),
+                    low=document.getElementById('spMonLow'),
+                    meta=document.getElementById('spMonMeta');
+              return {cols:getComputedStyle(main).gridTemplateColumns.split(' ').length,
+                lowh:Math.round(low.getBoundingClientRect().height),
+                meta:meta.textContent||''};}""")
+            ck("v304 雷达图表全宽/低价证据条",
+               _rad304["cols"] == 1 and _rad304["lowh"] <= 140
+               and "次监控" not in _rad304["meta"], str(_rad304))
+            pg.evaluate("showMonTab('overview')")
+            pg.wait_for_timeout(250)
+
             # ---- v1.5.273 检索台诚实性与矩阵身份列 ----
             pg.set_viewport_size({"width": 1512, "height": 950})
             pg.evaluate("switchView('search')")
@@ -6759,7 +6845,7 @@ def main():
             _tc = pg.evaluate("""()=>{const t=document.querySelector('#srxProbeToggle');const r=t.getBoundingClientRect();
               return {open:document.querySelector('#srxProbe').classList.contains('open'),
                visible:r.width>0&&r.height>0,text:t.textContent.trim()}}""")
-            ck("goal 探针收起后仍可展开", (not _tc["open"]) and _tc["visible"] and _tc["text"] == "展开", str(_tc))
+            ck("goal 探针收起后仍可展开", (not _tc["open"]) and _tc["visible"] and _tc["text"] == "展开探针", str(_tc))
             pg.evaluate("document.querySelector('#srxProbeToggle').click()")
             pg.wait_for_timeout(300)
             _to = pg.evaluate("()=>({open:document.querySelector('#srxProbe').classList.contains('open'),form:document.querySelector('.srx-probeform').getBoundingClientRect().height})")
@@ -6807,11 +6893,13 @@ def main():
             pg.wait_for_timeout(900)
             _fd = pg.evaluate("""()=>{
               const has=s=>!!document.querySelector(s);
-              return{hero:has('[onclick*="srxHeroCopy"]'),
+              return{help:has('#srxHelpBtn'),helpPanel:has('#srxHeroHelp'),
                band:has('[onclick*="srxBand"]'),
-               brief:has('[data-foldtarget="srxBrief"]')}}""")
-            ck("v294 检索大块折叠入口", _fd["hero"] and _fd["band"]
-               and _fd["brief"], str(_fd))
+               briefCards:document.querySelectorAll('#srxBrief .srx-src').length,
+               briefFold:!!document.querySelector('[data-foldtarget="srxBrief"]')}}""")
+            ck("v294 无说明折叠行/价带折叠/五源常驻",
+               (not _fd["help"]) and (not _fd["helpPanel"]) and _fd["band"]
+               and _fd["briefCards"] > 0 and not _fd["briefFold"], str(_fd))
             # v297 雷达：多日期曲线/低日/编号/来源状态
             pg.evaluate("switchView('mon');showMonTab('specials')")
             pg.wait_for_timeout(1600)
@@ -6871,7 +6959,7 @@ def main():
             ck("v297 采集记录逐次可见",
                _runs297["rows"] == 3 and "3 次" in _runs297["n"]
                and _runs297["labels"].count("成功") == 3
-               and "线尾标日期/价格" in _runs297["note"], str(_runs297))
+               and "线尾圆点=最新采集价" in _runs297["note"], str(_runs297))
             pg.click('#spMonHist summary')
             pg.wait_for_timeout(300)
             _hist297 = pg.evaluate("""()=>({

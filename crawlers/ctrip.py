@@ -309,6 +309,36 @@ class CtripCrawler(BaseCrawler):
                 from_city, to_city, fc, tc, missing))
         return results
 
+    def _await_intl_capture(self, page, captured, date, parsed, flights,
+                            need_login, budget=16):
+        """等待 batchSearch/pull 到达并增量解析，返回 (flights, need_login)。
+
+        首包可能是 finished:false 空壳，真实行程随后由 pull 补量；有行后
+        9s 宽限收尾，见到 finished:true 立即结束。零包时不在空壳上早退，
+        由调用方决定是否重载重试（并行抓取时首包可能晚于窗口）。
+        """
+        t0 = time.monotonic()
+        first_rows_at = None
+        while time.monotonic() - t0 < budget:
+            for item in list(captured):
+                body = item.get("text") or ""
+                key = (item.get("url", ""), len(body))
+                if key in parsed:
+                    continue
+                parsed.add(key)
+                part, nl = self._extract_intl_list(body, date)
+                if part and first_rows_at is None:
+                    first_rows_at = time.monotonic()
+                flights.extend(part)
+                need_login = need_login or nl
+                if re.search(r'"finished"\s*:\s*true', body):
+                    return flights, need_login
+            if (flights and first_rows_at is not None
+                    and time.monotonic() - first_rows_at > 9):
+                break
+            page.wait_for_timeout(600)
+        return flights, need_login
+
     def _fetch_intl_list(self, from_city: str, to_city: str,
                          fc: str, tc: str, dates: List[str],
                          url_tpl: str = "", label: str = "国际") -> List[FlightPrice]:
@@ -349,34 +379,26 @@ class CtripCrawler(BaseCrawler):
                     # 行程随后由 pull 补量（实测 6.7s/9.7s 两包，均 174
                     # 行）——等到「有行且 finished=true」或首包有行后
                     # 9s 宽限，既不在空壳上早退，也不为空结果干等
-                    t0 = time.monotonic()
                     parsed, flights, need_login = set(), [], False
-                    first_rows_at = None
-                    finished = False
-                    # 有行后的 9s 宽限从首行到达起算（旧实现从 goto 起算，
-                    # 首包慢时会在 pull 补量前早退，实测 173→136 行）；
-                    # 总等待 16s 给单日最坏情况留出 15min 栅栏余量。
-                    while time.monotonic() - t0 < 16:
-                        for item in list(captured):
-                            u = item.get("url", "")
-                            if u in parsed:
-                                continue
-                            parsed.add(u)
-                            body = item.get("text") or ""
-                            part, nl = self._extract_intl_list(body, date)
-                            if part and first_rows_at is None:
-                                first_rows_at = time.monotonic()
-                            flights.extend(part)
-                            need_login = need_login or nl
-                            if not finished and re.search(
-                                    r'"finished"\s*:\s*true', body):
-                                finished = True
-                        if finished:
-                            break
-                        if (flights and first_rows_at is not None
-                                and time.monotonic() - first_rows_at > 9):
-                            break
-                        page.wait_for_timeout(600)
+                    flights, need_login = self._await_intl_capture(
+                        page, captured, date, parsed, flights, need_login,
+                        budget=16)
+                    # 五渠道并行时浏览器排队，单日页可能 16s 内一个包都
+                    # 没到（live 实测 SHA→BKK 捕获 0 包→误判空→日历补位，
+                    # 而独立抓取 2.7s 就有 268 行）。零包且无登录证据
+                    # 时重载一次再等，避免把“慢”当成“无数据”。
+                    if not flights and not captured and not need_login:
+                        self.logger.warning(
+                            "[ctrip][intl] %s 首轮 0 包，重载一次重试", date)
+                        try:
+                            page.reload(wait_until="domcontentloaded",
+                                        timeout=45000)
+                        except Exception as e:
+                            self.logger.warning(
+                                "[ctrip][intl] %s 重载失败: %s", date, e)
+                        flights, need_login = self._await_intl_capture(
+                            page, captured, date, parsed, flights,
+                            need_login, budget=20)
                     # 两包各约 2.6MB，debug 全量落盘会按日×14 膨胀数十
                     # MB；国际列表只在内存解析并落 extra 行（可溯源到
                     # 每行价格/舱位/余票/行李），这里只记捕获体积
@@ -403,7 +425,11 @@ class CtripCrawler(BaseCrawler):
                             "[ctrip][intl] %s 机场级路线过滤城市内其他机场"
                             " %d 行", date, _drop_apt)
                     try:
-                        _body = page.inner_text("body")[:1200]
+                        # 诊断取文本短超时：页面被并行队列拖住时
+                        # inner_text 会吃满 45s 页面默认超时（live 实测
+                        # 一次空结果白等 46s），这里只取前 1200 字做
+                        # 登录/风控判据。
+                        _body = page.inner_text("body", timeout=3000)[:1200]
                     except Exception:
                         _body = ""
                     if not flights and (need_login or "手机登录/注册" in _body
@@ -413,15 +439,26 @@ class CtripCrawler(BaseCrawler):
                             "[ctrip][intl] 需登录 · PC 列表需携程会话"
                             "（请在配置页「渠道登录」重登 ctrip）")
                     if not flights:
-                        self.logger.warning(
-                            "[ctrip][intl] %s PC 列表未解析到航班", date)
                         _blocked = bool(re.search(
                             r"whaleguard|验证码|安全验证|访问验证", _body))
+                        if not captured:
+                            # 一包未到=采集没拿到响应（排队/慢网/风控拦在
+                            # 请求前），不是“解析器读不懂”；两者混标会
+                            # 把可重试的慢速误当渠道无数据。
+                            _detail = ("风控验证页" if _blocked
+                                       else "国际列表请求无响应")
+                            _status = "blocked" if _blocked else "empty"
+                        else:
+                            _detail = ("风控验证页" if _blocked
+                                       else "国际列表未解析到航班")
+                            _status = ("blocked" if _blocked
+                                       else ("login" if need_login
+                                             else "empty"))
+                        self.logger.warning(
+                            "[ctrip][intl] %s PC 列表未解析到航班（%s）",
+                            date, _detail)
                         self.path_note(
-                            "PC", "blocked" if _blocked
-                            else ("login" if need_login else "empty"),
-                            date=date, detail=("风控验证页" if _blocked
-                                               else "国际列表未解析到航班"),
+                            "PC", _status, date=date, detail=_detail,
                             ms=int((time.time() - t_pc) * 1000))
                         self._sleep()
                         continue

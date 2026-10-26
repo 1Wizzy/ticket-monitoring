@@ -308,15 +308,36 @@ def ctrip_calendar_deals(payload: dict, from_code: str, to_code: str,
                          ) -> List[SpecialDeal]:
     """携程 15380 低价日历（单航线跨日期）→ 候选特价。
 
-    price=列表有票 tprice 同口径（双源互证）；尾部 0 元零填充过滤；
-    软拒形态③（200 Success 空壳）自然得空表。days 缺省=watch.days
-    （去程窗）；**返程解析须传放宽窗**（watch.days+round_trip_days，
-    Soldier P3#7——去程贴窗尾时返程日在去程窗外的合法形态曾被误滤）。
-    价带下限 PRICE_MIN=100 与五渠道爬虫同源同律（宁缺勿错）；99 元
-    超特大促档是真实存在的形态，此处有意牺牲（<100 档与垃圾价/拆分
-    价在榜单语境不可辨，误杀损失小于毒价放行损失）。"""
+    **价格口径（r372 实证）**：响应每行有两个价——`price` 是裸票价
+    （transportPrice 同值），`totalPrice` 才是含税总价。SHA→BKK
+    2026-11-16 实测 price=150 / totalPrice=719，同航班列表页显示
+    ￥670（=totalPrice 同口径）。旧实现取 price 却标「口径未标注」，
+    把裸价放进跨渠道最低价比较，雷达出现 ￥150 的假最低（真实
+    ￥670 级）。现取 totalPrice 并如实标含税；totalPrice 缺失才
+    回退 price 且保持「口径未标注」不冒充含税。
+    days 缺省=watch.days（去程窗）；**返程解析须传放宽窗**
+    （watch.days+round_trip_days，Soldier P3#7——去程贴窗尾时返程
+    日在去程窗外的合法形态曾被误滤）。价带下限 PRICE_MIN=100 与
+    五渠道爬虫同源同律（宁缺勿错）；99 元超特大促档是真实存在的
+    形态，此处有意牺牲（<100 档与垃圾价/拆分价在榜单语境不可辨，
+    误杀损失小于毒价放行损失）。"""
     rows = (payload or {}).get("priceList") or []
     win = watch.days if days is None else days
+
+    def _row_price(r):
+        """(用于比较的价, 是否含税口径)。优先含税总价。"""
+        try:
+            total = float(r.get("totalPrice") or 0)
+        except (TypeError, ValueError):
+            total = 0.0
+        if total > 0:
+            return total, True
+        try:
+            bare = float(r.get("price") or 0)
+        except (TypeError, ValueError):
+            bare = 0.0
+        return bare, False
+
     # 整年分布基线（校准轮落地）：有效价全集取最低，候选 ≤ 年低 1.01
     # 即打「年度最低」词面——绝对低价线筛不出「真降价」，分布比才筛得
     # 出（¥450 的 URC 是特价、¥480 的 BJS 只是寻常）
@@ -324,10 +345,7 @@ def ctrip_calendar_deals(payload: dict, from_code: str, to_code: str,
     for r in rows:
         if not isinstance(r, dict):
             continue
-        try:
-            _p = float(r.get("price") or 0)
-        except (TypeError, ValueError):
-            continue
+        _p, _ = _row_price(r)
         if PRICE_MIN <= _p <= PRICE_MAX and (year_min is None
                                              or _p < year_min):
             year_min = _p
@@ -338,10 +356,7 @@ def ctrip_calendar_deals(payload: dict, from_code: str, to_code: str,
         d = _decode_ctrip_date(r.get("departDate"))
         if not d or not _in_window(d, today, win):
             continue
-        try:
-            price = float(r.get("price") or 0)
-        except (TypeError, ValueError):
-            continue
+        price, incl_tax = _row_price(r)
         if not (PRICE_MIN <= price <= PRICE_MAX
                 and price <= watch.max_price):
             continue
@@ -353,8 +368,9 @@ def ctrip_calendar_deals(payload: dict, from_code: str, to_code: str,
             to_name=to_name,
             discount=("年度最低" if year_min is not None
                       and price <= year_min * 1.01 else ""),
-            tax_included=None, price_basis="unknown",
-            price_basis_label="口径未标注",
+            tax_included=(True if incl_tax else None),
+            price_basis=("tax_included" if incl_tax else "unknown"),
+            price_basis_label=("含税总价" if incl_tax else "口径未标注"),
         ))
     return out
 

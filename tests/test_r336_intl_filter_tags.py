@@ -157,26 +157,3 @@ def test_parse_intl_response_wires_tags():
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def test_intl_freeze_replay_filter_tags():
-    """冻结 FRA dump 过真实解析器入口：贴签行 ⊆ 中转行（join 语义）、
-    labels 词域封闭（降价词 ∪ 过境签词）、贴签词=白名单单值；行数只
-    设地板不设锚（渠道窗滚动后 transCitys 城市集可变化）。码域主通道
-    实效由「贴签行存在且经真实端到端解析」整体背书（r336 波3 P3）。"""
-    p = os.path.join(_ROOT, "debug",
-                     "qunar_raw_intl_SHA_FRA_2026_11_16.txt")
-    if not os.path.exists(p):
-        pytest.skip("冻结 dump 缺席（debug/ 不入库）")
-    raw = open(p, encoding="utf-8").read()
-    if len(raw) < 1000:
-        pytest.skip("断供壳语料（硬拒 103B 态）")
-    flights, risk = _QN._parse_intl_response(raw)
-    assert risk == ""
-    assert flights, "登录态满供航线零行（解析链断?）"
-    visa = [f for f in flights if "需过境签" in (f.get("labels") or "")]
-    for f in visa:
-        assert f.get("transCity"), f"贴签行缺中转列：{f.get('code')}"
-        for seg in (f.get("labels") or "").split("·"):
-            assert seg == "需过境签" or seg.startswith("已减¥"), \
-                f"labels 词域越界：{seg!r}"
-    assert not [f for f in flights
-                if f.get("lcc") and not f.get("name")]

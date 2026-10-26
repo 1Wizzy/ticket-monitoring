@@ -56,7 +56,7 @@ def test_radar_chart_controls_match_trend_chart_capabilities():
         "localStorage.setItem('jpspmmode'",
         "K线=",
         "监控快照按日聚合",
-        ".spmon-chartwrap{overflow-x:auto;overflow-y:hidden}",
+        ".spmon-chartwrap{overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;overscroll-behavior-x:contain;touch-action:pan-x;-webkit-overflow-scrolling:touch}",
         "#spMonChart{max-width:none}",
         "const units=SPMON.mode==='kline'?candles.length:times.length",
         "units>5?Math.max(baseW,Math.min(2600,units*54)):baseW",

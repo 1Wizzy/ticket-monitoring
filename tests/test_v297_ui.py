@@ -16,7 +16,7 @@ def test_radar_and_flat_source_pins():
               "_wtab.textContent=ws.length?(' · '+ws.length)",
               "每线=一个出发日期", "spMonLow(sel,q,(low||{}).date)",
               "选中日 · 非最低", ".spmon-lowdate .seltag",
-              "SPMON_RUN_LABEL", "spMonHistBody", "线尾标日期/价格",
+              "SPMON_RUN_LABEL", "spMonHistBody", "线尾圆点=最新采集价",
               "window.addEventListener('resize'", ".spmon-run{display:grid",
               ".hdiag-l span{white-space:nowrap}",
               ".hdiag-l span:not(:last-child)::after",
@@ -25,7 +25,7 @@ def test_radar_and_flat_source_pins():
               ".spmon-histempty{", "口径较上次变化", "含口径变化日",
               ".spmon-basiswarn", "(low&&low.date?low:null)",
               ".spmon.is-empty .spmon-main", ".spmon.is-empty #spMonCal{display:block}",
-              "spMonTip", "addEventListener('pointermove',spMonHover)", "SPMON.geo=null",
+              "spMonTip", "c.addEventListener('pointermove',move)", "SPMON.geo=null",
               ".sprad-fld{", ".spmon-run .note{white-space:normal",
               "addEventListener('pointerdown',function(e)",
               "isLow?'<span class=\"lowtag\">最低日</span>'"):

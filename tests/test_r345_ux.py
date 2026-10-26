@@ -175,4 +175,4 @@ def test_restart_center_non_path_rows():
 
 def test_version_bumped():
     text = open(os.path.join(ROOT, "main.py"), encoding="utf-8").read()
-    assert '__version__ = "1.5.303"' in text
+    assert '__version__ = "1.5.304"' in text

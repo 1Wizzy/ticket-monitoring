@@ -19,7 +19,6 @@ class _EmptyHandler(BaseHTTPRequestHandler):
         pass
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX TIME_WAIT 重绑行为")
 def test_server_restarts_after_serving_request():
     with _Srv(("127.0.0.1", 0), _EmptyHandler) as server:
         address = server.server_address
