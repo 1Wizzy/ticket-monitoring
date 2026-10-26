@@ -553,6 +553,22 @@ class PriceStorage:
                 "GROUP BY platform, entry_path, path_status "
                 "HAVING COUNT(*) >= ? ORDER BY n DESC",
                 ("-%d hours" % hours, int(min_count))).fetchall()
+            # 每个复发组合附最近一条现场：证据可直接点开对照，不用再翻日志
+            evidence = {}
+            for r in rows:
+                try:
+                    er = c.execute(
+                        "SELECT request_url, http_status, note, rows, "
+                        "fetched_at FROM fetch_paths WHERE platform=? AND "
+                        "entry_path=? AND path_status=? ORDER BY id DESC "
+                        "LIMIT 1",
+                        (r["platform"], r["entry_path"],
+                         r["path_status"])).fetchone()
+                except Exception:
+                    er = None
+                if er:
+                    evidence[(r["platform"], r["entry_path"],
+                              r["path_status"])] = dict(er)
         out = []
         for r in rows:
             st = str(r["path_status"] or "")
@@ -567,6 +583,8 @@ class PriceStorage:
                          "login" if st == "login" else
                          "blocked" if st == "blocked" else
                          "empty" if st == "empty" else "error"),
+                "evidence": evidence.get(
+                    (r["platform"], r["entry_path"], r["path_status"])) or {},
             })
         return out
 

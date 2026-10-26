@@ -15045,7 +15045,9 @@ async function loadPacing(){
       +esc((j.recurrences||[]).slice(0,5).map(x=>{
         const k=x.kindLabel||x.kind||x.status;
         const auto=x.autoHeal?'（自动）':'（需人工）';
-        return (CN[x.platform]||x.platform)+' '+x.path+' '+k+'×'+x.count+auto;
+        const ev=x.evidence||{};
+        const tail=ev.note?(' · '+String(ev.note).slice(0,28)):'';
+        return (CN[x.platform]||x.platform)+' '+x.path+' '+k+'×'+x.count+auto+tail;
       }).join(' · '))+'</div>'):'')
    +'<div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:4px">'+chips+'</div>'
    +'<div>本轮计划 '+plan+' 次（快 '+lr.fast+' / 慢 '+lr.slow+' / TTL 内 '+lr.skip+'） · 实发 '+(lr.sent||0)+' 次'
