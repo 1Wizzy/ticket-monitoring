@@ -2200,11 +2200,19 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
         if pac is not None:
             try:
                 if not force and pac.quiet_now():
+                    # r391：窗口结束即补采。跳过轮不落轮次标记，但若照常
+                    # 按 24–37 分钟的间隔接力，07:00 窗口结束后最坏还要
+                    # 再等半小时才有第一轮（数据已 6 小时陈旧）。把下次
+                    # 触发重排到窗口结束 +1 分钟。
+                    _until = pac.seconds_until_quiet_end()
+                    if _until is not None:
+                        rt["_wake_at"] = _until
                     logger.info(
                         "[节流] 夜间静默窗 %s–%s 内，本轮跳过采集"
-                        "（手动「立即扫描」可强制）",
+                        "（手动「立即扫描」可强制；窗口结束 %s 后自动补采）",
                         pac.cfg.get("scan_quiet_start") or "-",
-                        pac.cfg.get("scan_quiet_end") or "-")
+                        pac.cfg.get("scan_quiet_end") or "-",
+                        ("%.0f 分钟" % (_until / 60.0)) if _until else "-")
                     return
             except Exception as _pe:
                 logger.warning("[节流] 静默窗判定失败，本轮照常扫描: %s", _pe)
@@ -3306,12 +3314,21 @@ def main():
                 (cfg.get("output") or {}).get("db_path"), "data/prices.db")))
 
         def _first_run():
-            """首轮节流（语义见 _FirstRunGate）：仅启动后的首次触发检查。"""
-            if _first_gate.should_skip():
-                logger.info("[启动] 上轮 %.0f 分钟前已完成，跳过首轮",
-                            (_first_gate.last_age or 0) / 60)
-                return
-            sweep()
+            """首轮节流（语义见 _FirstRunGate）：仅启动后的首次触发检查。
+
+            同时把 sweep 期间登记的「静默窗结束即唤醒」转交调度器
+            （r391）：窗口内跳过轮把秒数写 rt["_wake_at"]，这里落到
+            sched_state，_schedule_next 才会把下一轮提前。"""
+            try:
+                if _first_gate.should_skip():
+                    logger.info("[启动] 上轮 %.0f 分钟前已完成，跳过首轮",
+                                (_first_gate.last_age or 0) / 60)
+                    return
+                sweep()
+            finally:
+                _wake = rt.pop("_wake_at", None)
+                if _wake:
+                    sched_state["wake_at"] = _wake
 
         run_scheduler(_first_run, sched_state,
                       run_on_start)  # BlockingScheduler，阻塞至此

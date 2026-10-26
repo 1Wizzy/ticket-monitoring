@@ -811,6 +811,31 @@ class Pacing:
         return new
 
     # ---------- 1 区：静默窗 ----------
+    def seconds_until_quiet_end(self, now=None):
+        """距静默窗结束还有多少秒；不在窗内/未配置返回 None。
+
+        供调度把下一轮重排到窗口刚结束（r391）：否则跳过轮按 24–37 分钟
+        接力，窗口结束后最坏再陈旧半小时。
+        """
+        now = self._clock() if now is None else now
+        if not self.quiet_now(now):
+            return None
+        _s = parse_hhmm(self.cfg["scan_quiet_start"])
+        _e = parse_hhmm(self.cfg["scan_quiet_end"])
+        if _s is None or _e is None:
+            return None
+        lt = time.localtime(now)
+        cur = lt.tm_hour * 60 + lt.tm_min
+        # 窗口结束时刻在「今天」还是「明天」：_e > _s 时同一天（cur<_e
+        # 才在窗内），否则跨午夜窗且 cur 已过午夜 → 结束在今天。
+        if _e > _s:
+            left = _e - cur
+        else:
+            # 跨午夜：cur >= _s 说明还在午夜前（结束在明天），否则已过
+            # 午夜（结束在今天）
+            left = ((24 * 60 - cur) + _e) if cur >= _s else (_e - cur)
+        return float(max(0, left) * 60)
+
     def quiet_now(self, now=None):
         now = self._clock() if now is None else now
         lt = time.localtime(now)

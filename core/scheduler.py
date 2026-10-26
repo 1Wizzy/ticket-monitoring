@@ -23,6 +23,11 @@ def _schedule_next(sched, state, job_id="price_monitor"):
         if sched.get_job(job_id) is None:
             return None
         delta = max(1, iv + random.uniform(-jm, jm))
+        # r391：静默窗跳过轮把「窗口结束 +1 分钟」写进 state["wake_at"]，
+        # 这里取较短的那个——否则窗口结束后还要等满一个间隔才补采。
+        _wake = state.pop("wake_at", None)
+        if isinstance(_wake, (int, float)) and _wake > 0:
+            delta = min(delta, max(1.0, _wake / 60.0))
         next_time = datetime.now(sched.timezone) + timedelta(minutes=delta)
         sched.modify_job(job_id, next_run_time=next_time)
         logger.info("下次抓取计划: %s (间隔 %.1f 分钟)",
