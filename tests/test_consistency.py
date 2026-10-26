@@ -173,29 +173,20 @@ def test_specials_deep_links_same_origin_as_crawlers():
     assert {"depCity", "arrCity", "depDate"} <= _keys(fl[0].link)
 
 
-def test_tongcheng_intl_view_url_matches_crawler_single_source():
-    """r384：同程国际链接不再"宁缺"——book1 页匿名与登录都出逐日价。
+def test_tongcheng_intl_view_url_is_absent():
+    """r390：同程国际深链在无痕会话 302 到 passport/login，点开只见登录页。
 
-    链接必须由爬虫同一构造器 `_intl_h5_url` 生成（城市码归并、中文名、
-    往返参数随爬虫走），否则改版时爬虫与出链各写一套=挂羊头。
+    r384 曾据一次"匿名可出价"改为出链——那次实测复用了带 cookie 的上下文，
+    样本不成立。按宁缺勿错，国际不给链接（消费端真值门剥壳只出文本）。
     """
-    from core.intl import airport_city_code, city_short_of
+    from core.models import Route
     a = _a()
     for fc, fn, tc, tn, d in (
             ("NRT", "东京成田", "SHA", "上海", "2026-11-16"),
-            ("SHA", "上海", "BKK", "曼谷", "2026-11-16"),
-            ("PVG", "浦东", "NRT", "成田", "2026-12-20")):
+            ("SHA", "上海", "BKK", "曼谷", "2026-11-16")):
         r = Route(from_code=fc, from_name=fn, to_code=tc, to_name=tn,
                   dates=[d])
-        got = a._build_view_url(r, d, "tongcheng")
-        f2, t2 = airport_city_code(fc), airport_city_code(tc)
-        exp = TongchengCrawler._intl_h5_url(
-            f2, t2, d,
-            TongchengCrawler.CITY_NAME.get(f2) or city_short_of(f2),
-            TongchengCrawler.CITY_NAME.get(t2) or city_short_of(t2))
-        assert got == exp, f"{fc}->{tc}\n  got {got}\n  exp {exp}"
-        # 机场码必须归并成城市码（NRT→TYO/PVG→SHA），否则页面反查失败
-        assert f"dc={f2}&" in got and f"ac={t2}&" in got
+        assert a._build_view_url(r, d, "tongcheng") == "", (fc, tc)
 
 
 def test_tongcheng_domestic_view_url_unchanged():

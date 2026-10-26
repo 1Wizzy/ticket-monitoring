@@ -101,9 +101,9 @@ def test_srx_links_five_and_intl_supported():
     by = {x["key"]: x for x in intl["links"]}
     assert by["tuniu"]["ok"] is True
     assert "m.tuniu.com/m2015/intlFlight/flight/list" in by["tuniu"]["url"]
-    # r384：同程国际从"无链接"改为 book1 深链（匿名与登录都出逐日价）
-    assert by["tongcheng"]["ok"] is True, by["tongcheng"]
-    assert "m.ly.com/tiflight/book1.html" in by["tongcheng"]["url"]
+    # r390 反证：同程国际深链在无痕会话 302 到登录页 → 维持"宁缺"
+    assert by["tongcheng"]["ok"] is False, by["tongcheng"]
+    assert by["tongcheng"]["url"] == ""
     assert by["qunar"]["ok"] and by["ctrip"]["ok"] and by["fliggy"]["ok"]
 
 

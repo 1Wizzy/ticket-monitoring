@@ -4967,21 +4967,15 @@ class Alerter:
                 f"&acity={_tc_v}&acityName={tn}&ddate={date}"
             )
         if platform == "tongcheng":
-            # r384 实证推翻旧注（"国际列表双端强制登录，宁缺链接"）：
-            # m.ly.com/tiflight/book1.html 在**匿名与登录两种会话**下都
-            # 直接出逐日价（SHA→HKG 11-16 ¥897，与窗历同值、无验证码）。
-            # 国际链接改由爬虫同一 URL 构造器生成（`_intl_h5_url` 单源，
-            # 城市码归并/中文名/往返参数随爬虫走），杜绝"挂羊头"。
+            # r390 反证：同程国际 book1 **在无痕会话一律 302 到
+            # m.ly.com/passport/login.html**（手机/桌面 UA 均然），读者点开
+            # 看到的是登录页而不是价格。r384 曾据一次"匿名可出价"改为出链，
+            # 那次实测复用了带 cookie 的上下文，样本不成立——已回退。
+            # 按"宁缺勿错"：国际不给链接（消费端真值门剥壳只出文本），
+            # 与途牛先例一致。可替代的入口（iflight / ft/touch/index）anon
+            # 可打开但无价，同样不作为"去查看"。
             if _intl_route(fc_up, tc_up):
-                from core.intl import airport_city_code as _apcity2
-                _fc_i, _tc_i = _apcity2(fc_up), _apcity2(tc_up)
-                from crawlers.tongcheng import TongchengCrawler as _TCC
-                _fn_i = (_TCC.CITY_NAME.get(_fc_i)
-                         or _ICN.get(_fc_i) or route.from_name)
-                _tn_i = (_TCC.CITY_NAME.get(_tc_i)
-                         or _ICN.get(_tc_i) or route.to_name)
-                return _TCC._intl_h5_url(_fc_i, _tc_i, date,
-                                         _fn_i, _tn_i)
+                return ""
             # 与 crawlers/tongcheng.py URL_TPL 同参：book1 页缺中文城市名
             # 参数（fromCity/toCity/acn/dcn）时曾不出列表——挂羊头预防
             return (

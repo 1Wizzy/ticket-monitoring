@@ -203,12 +203,10 @@ def test_build_view_url_intl_same_source():
     assert "depCity=SHA" in uf and "arrCity=TYO" in uf, uf
     assert "depDate=2026-10-20" in uf, uf
     assert "searchBy=" not in uf and "arrDate=" not in uf, uf
-    # 同程国际：r384 推翻了旧注（"列表双端登录墙，宁缺链接"）——
-    # m.ly.com/tiflight/book1.html 匿名与登录会话都出逐日价（SHA→HKG
-    # 11-16 ¥897，与窗历同值、无验证码）。出链改由爬虫同源构造器生成。
-    uti = Alerter._build_view_url(None, r, "2026-10-20", "tongcheng")
-    assert "m.ly.com/tiflight/book1.html" in uti, uti
-    assert "dc=SHA" in uti and "ac=TYO" in uti, uti   # 机场/城市码归并
+    # 同程国际：r390 反证——book1 在**无痕会话一律 302 到 passport/login**，
+    # 读者点开只见登录页（r384 的"匿名可出价"样本复用了带 cookie 上下文）。
+    # 按宁缺勿错：国际不给链接。
+    assert Alerter._build_view_url(None, r, "2026-10-20", "tongcheng") == ""
     # 两渠道国内零变化锚
     uf2 = Alerter._build_view_url(None, r_dom, "2026-10-20", "fliggy")
     assert "sjipiao.fliggy.com/flight_search_result.htm" in uf2, uf2
