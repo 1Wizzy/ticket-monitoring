@@ -579,7 +579,8 @@ def effect_verdict(effect):
                          % (b * 100, a * 100)), "act"
 
 
-def advise(plat, ch=None, paths=None, now=None, node=None):
+def advise(plat, ch=None, paths=None, now=None, node=None,
+           quiet=None):
     """把一个渠道的现状翻译成「用户该做什么」。
 
     返回 {"state","action","hint","eta_s","severity"}：
@@ -755,6 +756,15 @@ def advise(plat, ch=None, paths=None, now=None, node=None):
         if a is not None:
             ages.append(a)
     if ages and min(ages) > 120:
+        # 夜间静默窗内「点立即扫描」也会被窗拦住（sweep 里 quiet_now 直接
+        # return，只有 force 才绕过），给这条建议会变成空头支票。
+        # quiet 由调用方从 snapshot 传入；窗内如实说"等窗口结束"。
+        if isinstance(quiet, dict) and quiet.get("active"):
+            return {"state": "stale", "action": "wait", "severity": "wait",
+                    "hint": "最近一次成功已 %d 分钟；当前在夜间静默窗"
+                            "（%s–%s），窗口结束后自动恢复采集"
+                            % (int(min(ages)), quiet.get("start") or "?",
+                               quiet.get("end") or "?"), "eta_s": 0}
         return {"state": "stale", "action": "probe", "severity": "wait",
                 "hint": "最近一次成功已 %d 分钟，点「立即扫描」或等下一轮"
                         % int(min(ages)), "eta_s": 0}

@@ -193,3 +193,47 @@ def test_fresh_degraded_path_still_reported():
     a = P.advise("qunar", {}, paths, now=now, node=_node(paths))
     assert a["state"] == "path_degraded", a
     assert "API" in a["hint"]
+
+
+# ---- r391：静默窗内不得给「点立即扫描」这种做不到的建议 ----
+
+def _stale_paths():
+    return {"H5": {"attempts": 10, "ok": 10, "rate": 1.0,
+                   "rate_excl_empty": 1.0,
+                   "last_ok_at": "2026-10-27 01:00:00"}}
+
+
+def test_stale_inside_quiet_window_does_not_suggest_scan():
+    """静默窗内 sweep 会直接 return（只有 force 绕过），
+    「点立即扫描」= 空头支票 → 应改为等窗口结束。"""
+    import time as _t
+    from core.pacing import advise
+    now = _t.mktime(_t.strptime("2026-10-27 04:00:00", "%Y-%m-%d %H:%M:%S"))
+    a = advise("ctrip", {}, _stale_paths(), now=now,
+               node={"paths": _stale_paths()},
+               quiet={"start": "01:00", "end": "07:00", "active": True})
+    assert a["state"] == "stale"
+    assert a["action"] != "probe", a
+    assert "立即扫描" not in a["hint"], a
+    assert "静默窗" in a["hint"] and "07:00" in a["hint"], a
+
+
+def test_stale_outside_quiet_window_still_suggests_scan():
+    import time as _t
+    from core.pacing import advise
+    now = _t.mktime(_t.strptime("2026-10-27 09:00:00", "%Y-%m-%d %H:%M:%S"))
+    a = advise("ctrip", {}, _stale_paths(), now=now,
+               node={"paths": _stale_paths()},
+               quiet={"start": "01:00", "end": "07:00", "active": False})
+    assert a["state"] == "stale" and a["action"] == "probe", a
+    assert "立即扫描" in a["hint"]
+
+
+def test_advise_quiet_param_is_optional():
+    """老调用方不传 quiet 时行为不变（向后兼容）。"""
+    import time as _t
+    from core.pacing import advise
+    now = _t.mktime(_t.strptime("2026-10-27 04:00:00", "%Y-%m-%d %H:%M:%S"))
+    a = advise("ctrip", {}, _stale_paths(), now=now,
+               node={"paths": _stale_paths()})
+    assert a["action"] == "probe"
