@@ -217,6 +217,11 @@ class QunarCrawler(BaseCrawler):
         # (from_city, to_city, date) -> {"min": 阈值}，main.py 按查询注入；
         # 幻影低价恰好落在达标线附近时单采样不可信（见 _fetch_pc）
         self.threshold_hints = {}
+        # (fc|tc|date) -> 国际列表 1999/8 连续未放行次数（r385 A/B：
+        # 单次=间歇放行，连续≥2 才疑会话失效）
+        self._qn1999_streak = {}
+        # (fc|tc|date) -> 是否已在本轮做过短退避重试（只重试一次）
+        self._qn1999_retried = {}
 
     CITY_NAME = {
         "SZX": "深圳", "KMG": "昆明", "PEK": "北京", "BJS": "北京",
@@ -272,6 +277,9 @@ class QunarCrawler(BaseCrawler):
     # 冷却期类级共享（多查询间生效），拿到数据即重置
     _MIN_GAP_S = 8                 # 相邻查询礼貌间隔（登录态实测零限流，20→12→8；失败有阶梯退避兜底）
     _BACKOFF_S = (90, 180, 300)    # 疑似限流的阶梯退避
+    # r385：国际列表 1999 单次间歇放行的同轮短退避（A/B 实测 1.5 分钟
+    # 内自愈；取 45s 兼顾"够它放行"与"不拖死整轮"）
+    INTL_1999_RETRY_S = 45
     _last_done_ts = 0.0
     _cooldown_until = 0.0
 
@@ -1793,6 +1801,64 @@ class QunarCrawler(BaseCrawler):
         c = str(code).upper()
         return self.CITY_NAME.get(c) or city_short_of(c) or code
 
+    def _intl_list_once(self, fc: str, tc: str, date: str) -> list:
+        """单日国际列表再取一次（r385：1999 单次间歇放行后的同轮重试）。
+
+        与主流程同形：新开页面、拦 touchInterList、滚动触发、解析首份
+        有效报文。返回航班列表；仍 1999/无数据返回 []（调用方按空处理，
+        不会把"重试失败"写成成功）。独立 try/except：重试失败绝不
+        打断外层日期循环。
+        """
+        bodies: list = []
+        url = self.INTL_URL_TPL.format(
+            from_name=urllib.parse.quote(self._intl_city_name(fc)),
+            to_name=urllib.parse.quote(self._intl_city_name(tc)),
+            date=date)
+
+        def _cap(route):
+            try:
+                resp = route.fetch()
+                try:
+                    bodies.append(resp.text())
+                except Exception:
+                    pass
+                route.fulfill(response=resp)
+            except Exception:
+                try:
+                    route.continue_()
+                except Exception:
+                    pass
+
+        try:
+            with self.browser() as ctx:
+                page = self.new_page(ctx)
+                page.route("**/*touchInterList*", _cap)
+                page.goto(url, wait_until="load")
+                for _ in range(12):
+                    page.wait_for_timeout(2000)
+                    try:
+                        page.mouse.wheel(0, 1500)
+                    except Exception:
+                        pass
+                    if bodies:
+                        break
+                try:
+                    page.close()
+                except Exception:
+                    pass
+            # 重试页已关：_last_page 复位，否则外层收尾截图/取 URL
+            # 会打到已关闭的页面（TargetClosedError 噪音）
+            self._last_page = None
+            for t in bodies:
+                flights, risk = self._parse_intl_response(t)
+                if flights:
+                    self._stamp_intl(flights, fc, tc)
+                    return flights
+        except Exception as e:
+            self._last_page = None
+            self.logger.warning("[qunar][intl] %s 同轮重试异常: %s", date, e)
+        return []
+
     # r336 T1/T2：intl filter 字典面的行级 join 词表。白名单收口
     # 「宁缺勿错」：渠道未来新增同槽词（如「需落地签」）不自动透传，
     # 按同槽扩表并过词面安全集审（LESSONS 二十八§1 新字符过禁律）
@@ -2277,19 +2343,80 @@ class QunarCrawler(BaseCrawler):
                 self._sleep()
                 continue
             if risk == "login":
-                # 登录态卡片分层「会话可能失效」同款证据（国内 313 同律）
-                QunarCrawler.login_suspect = True
-                self.path_note("H5", "login", date=date,
-                               detail="国际列表 1999/8 未登录硬拒")
-                # 1999 硬拒不设 30 分钟冷却（r339 观测轮 2 定谳：cooldown
-                # sleep 在 worker 线程内同步等 1776s——错峰等待即栅栏内
-                # 泊车，每查询吃满 900s 路由栅栏实录 8 条/日）。硬拒面
-                # 已由 login_suspect 砍退避门（fetch 外壳单次放弃）+
-                # 下轮调度自然承接，30min 压制面的「1999 风暴」防御
-                # 对象已消失；「成功一次即自清」复位律不变
-                self.logger.warning(
-                    "[qunar][intl] %s 未登录硬拒（1999/8）——请在配置页"
-                    "「渠道登录」重登 qunar；本轮放弃不压制", date)
+                # r385 受控 A/B（同 profile、零介入、6 轮 × SHA→LHR）：
+                # 1999 只在首轮出现，紧接着 5 轮全部出数——**同一会话
+                # 未重登就自愈**。真登录墙不会自愈，故 1999 单次是
+                # "间歇放行"而非"会话失效"。
+                #
+                # 旧口径把 1999 一律判 login：置 login_suspect + 15 分钟
+                # 登录冷却 + 提示重登，等于把 1.5 分钟能好的事罚成 15
+                # 分钟不采，并把用户推去做无效重登（48h 账本 60 次）。
+                #
+                # 新口径按**连续次数**分层：单次=soft_reject（不冷却、
+                # 下一轮自然重试）；同航线连续 ≥2 次才升 login（那才像
+                # 真会话失效）。真登录页文本（_risk_signal 命中
+                # login_signal 的 passport/请登录字样）不受此影响。
+                _key = "%s|%s|%s" % (fc, tc, date)
+                self._qn1999_streak[_key] = self._qn1999_streak.get(
+                    _key, 0) + 1
+                _n = self._qn1999_streak[_key]
+                if _n >= 2:
+                    QunarCrawler.login_suspect = True
+                    self.path_note("H5", "login", date=date,
+                                   detail="国际列表 1999/8 连续 %d 次"
+                                          "未放行（疑会话失效）" % _n)
+                    self.logger.warning(
+                        "[qunar][intl] %s 1999/8 连续 %d 次未放行——疑会话"
+                        "失效，请在配置页「渠道登录」重登 qunar", date, _n)
+                else:
+                    self.path_note("H5", "soft_reject", date=date,
+                                   detail="国际列表 1999/8 间歇放行（单次，"
+                                          "免登录冷却）")
+                    self.logger.info(
+                        "[qunar][intl] %s 1999/8 单次间歇放行（r385 A/B："
+                        "同会话 1.5 分钟后自愈）——不冷却、不提重登，"
+                        "%.0fs 后同轮重开页面再试一次",
+                        date, self.INTL_1999_RETRY_S)
+                    # A/B 显示自愈只要 1.5 分钟：与其等下一轮（监控周期
+                    # 5–30 分钟），不如本轮内短退避重开一次页面。只重试
+                    # 一次——连续性已计数，二次仍 1999 会落 login 分支。
+                    _rk = "%s|%s|%s" % (fc, tc, date)
+                    if not self._qn1999_retried.get(_rk):
+                        self._qn1999_retried[_rk] = 1
+                        time.sleep(self.INTL_1999_RETRY_S)
+                        _again = self._intl_list_once(fc, tc, date)
+                        if _again:
+                            # 同轮重试拿到数：撤掉刚才的 soft_reject 记账，
+                            # 按真实成功落账（否则本轮账上会同时有"软拒"
+                            # 和"出数"，成功率被自己压低）
+                            if (self.paths and self.paths[-1].get("date")
+                                    == date
+                                    and self.paths[-1].get("status")
+                                    == "soft_reject"):
+                                self.paths.pop()
+                            self._qn1999_streak.pop(_rk, None)
+                            self.path_note(
+                                "H5", "ok", rows=len(_again), date=date,
+                                detail="touch.qunar.com 国际列表（1999 "
+                                       "同轮重试后放行）")
+                            best = min(_again, key=lambda f: f["price"])
+                            self.logger.info(
+                                "[qunar][intl] %s 1999 重试后放行：%d 行，"
+                                "最低 ￥%.0f", date, len(_again),
+                                best["price"])
+                            results.append(FlightPrice(
+                                platform=self.name,
+                                from_city=from_city, to_city=to_city,
+                                depart_date=date, price=float(best["price"]),
+                                airline=str(best.get("airlineCode") or ""),
+                                flight_no=str(best.get("code")
+                                              or "").split("/")[0],
+                                depart_time=best.get("depTime", ""),
+                                arrive_time=best.get("arrTime", ""),
+                                extra=json.dumps(_again,
+                                                 ensure_ascii=False),
+                            ))
+                            type(self).login_suspect = False
                 self._sleep()
                 continue
             if risk in ("slider", "captcha", "refresh"):
@@ -2303,6 +2430,8 @@ class QunarCrawler(BaseCrawler):
                 self._sleep()
                 continue
             if flights:
+                # 出数即证明会话可用：清该航线 1999 计数（连续语义复位）
+                self._qn1999_streak.pop("%s|%s|%s" % (fc, tc, date), None)
                 self.path_note("H5", "ok", rows=len(flights), date=date,
                                detail="touch.qunar.com 国际列表")
                 self._stamp_intl(flights, fc, tc)
