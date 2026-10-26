@@ -614,7 +614,8 @@ class Pacing:
         self._health = {}
         self._plan = []
         self._round = {"at": "", "fast": 0, "slow": 0, "skip": 0,
-                       "trips": [], "busy": []}
+                       "trips": [], "busy": [],
+                       "sent": 0, "paced": 0, "sent_by": {}, "paced_by": {}}
 
     # ---------- 配置热更新 ----------
     def refresh(self, cfg):
