@@ -14970,7 +14970,7 @@ async function loadPacing(){
    if(ef&&ef.state&&ef.state!=='none'){
     const ecol=(ef.severity==='ok')?'#1a9e75':(ef.severity==='act'?'var(--red)':'#b07700');
     t+=' <span style="color:'+ecol+';font-size:11px" title="'+esc(ef.hint||'')+'">干预'+
-       (ef.state==='improved'||ef.state==='recovered'?'有效':(ef.state==='pending'?'待观察':(ef.state==='provisional'?'待复验':(ef.state==='no_effect'?'无效':'部分改善'))))+'</span>';
+       (ef.state==='improved'||ef.state==='recovered'?'有效':(ef.state==='pending'?'待观察':(ef.state==='provisional'?'待复验':(ef.state==='no_effect'?'无效':(ef.state==='regressed'?'先好后坏':'部分改善')))))+'</span>';
    }
    if(v.state==='cooldown')acts=' <a href="javascript:void(0)" onclick="paceReset(\''+k+'\')" style="color:var(--blue);font-size:11px">解除</a>'+acts;
    if(v.needs_login||(v.state==='cooldown'&&(v.reason==='ip'||v.reason==='captcha')))
@@ -15080,7 +15080,9 @@ async function showTrace(p){
     +' → <b style="color:'+((eff.after==null)?'var(--mut)':((eff.after>=0.5)?'#1a9e75':'var(--red)'))+'">'
     +(eff.after==null?'无样本':(Math.round(eff.after*100)+'%（'+eff.after_n+'）'))+'</b>'
     +(eff.after==null?' · <span style="color:var(--mut)">干预后还没有新样本</span>':'')+'</div>'):'';
-  out.innerHTML=effLine+'<div style="margin-top:6px;font-size:11px;color:var(--mut)">'+esc(p)+' 最近尝试（时间 · 入口 · 状态 · 证据）</div>'+(rows||'<div style="color:var(--mut)">无记录</div>')
+  const tr=(eff.trend||[]).map(t=>((t.rate==null)?'—':(Math.round(t.rate*100)+'%'))).join(' · ');
+  const trLine=tr?('<div style="margin-top:2px;font-size:11px;color:var(--mut)">干预后每 30 分钟：'+esc(tr)+(eff.regressed?' <span style="color:var(--red)">（最近回落）</span>':'')+'</div>'):'';
+  out.innerHTML=effLine+trLine+'<div style="margin-top:6px;font-size:11px;color:var(--mut)">'+esc(p)+' 最近尝试（时间 · 入口 · 状态 · 证据）</div>'+(rows||'<div style="color:var(--mut)">无记录</div>')
    +'<div style="margin-top:6px;font-size:11px;color:var(--mut)">'+esc(p)+' 干预记录（时间 · 动作 · 结果 · 耗时）</div>'+(ivs||'<div style="color:var(--mut)">暂无干预</div>');
  }catch(e){out.textContent='溯源失败：'+e;}
 }

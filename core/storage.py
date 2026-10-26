@@ -269,11 +269,40 @@ class PriceStorage:
                 (str(platform), at, at,
                  "-%d hours" % max(1, int(hours))))
             after, an = _rate("fetched_at >= ?", (str(platform), at))
+            # 一致性不是"一次性通了"，而是"之后还一直通"。给出
+            # 干预后每 30 分钟窗口的成功率序列，供面板画小趋势/判断回落。
+            trend = []
+            try:
+                rows2 = c.execute(
+                    "SELECT (CAST(strftime('%s', fetched_at) AS INTEGER) - "
+                    "CAST(strftime('%s', ?) AS INTEGER)) / 1800 AS bucket, "
+                    "SUM(CASE WHEN path_status IN ('ok','calendar') "
+                    "THEN 1 ELSE 0 END) AS ok, COUNT(*) AS n "
+                    "FROM fetch_paths WHERE platform=? AND fetched_at >= ? "
+                    "GROUP BY bucket ORDER BY bucket LIMIT 16",
+                    (at, str(platform), at)).fetchall()
+                for r in rows2:
+                    n2 = int(r["n"] or 0)
+                    trend.append({
+                        "bucket": int(r["bucket"] or 0),
+                        "rate": (round(int(r["ok"] or 0) / n2, 3)
+                                 if n2 else None),
+                        "n": n2})
+            except Exception:
+                trend = []
+            # 回落判定：干预后曾有 ≥70% 的窗口，最后一个窗口 <40%
+            regressed = False
+            if trend:
+                _seen_ok = any((t["rate"] or 0) >= 0.7 for t in trend)
+                _last = trend[-1]["rate"]
+                regressed = bool(_seen_ok and _last is not None
+                                 and _last < 0.4)
             return {"ok": True, "platform": platform, "has": True,
                     "at": at, "action": str(iv["action"] or ""),
                     "iv_ok": bool(iv["ok"]),
                     "before": before, "before_n": bn,
-                    "after": after, "after_n": an}
+                    "after": after, "after_n": an,
+                    "trend": trend, "regressed": regressed}
 
     def interventions(self, platform="", limit=20):
         """最近 N 条干预，按时间倒序（可观测：干预是否真的有效）。"""

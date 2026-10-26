@@ -523,6 +523,12 @@ def effect_verdict(effect):
     if not e.get("has"):
         return "none", "", "ok"
     b, a = e.get("before"), e.get("after")
+    # 回落优先于一切：干预后先好后坏，一致性已不成立，不该被
+    # "干预前无样本"或"样本不足"掩盖。
+    if e.get("regressed"):
+        return "regressed", ("干预后出现过恢复但最近一个窗口回落到 %.0f%%："
+                            "一致性不成立，建议复查会话/入口"
+                            % ((a or 0) * 100)), "act"
     if a is None:
         return "pending", ("干预后还没有新样本（%s）：等下一轮采集再判断"
                            % (e.get("action") or "干预")), "wait"

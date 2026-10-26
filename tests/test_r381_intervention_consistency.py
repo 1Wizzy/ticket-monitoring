@@ -342,3 +342,32 @@ def test_advice_no_longer_contradicts_effect():
     src = inspect.getsource(webui)
     assert '"recovering"' in src
     assert "旧 24h 样本仍含" in src
+
+
+def test_effect_trend_and_regression(tmp_path):
+    """干预后先好后坏 = 一致性不成立，必须判 regressed。"""
+    import sqlite3
+    from core.pacing import effect_verdict
+    st = PriceStorage(str(tmp_path / "p.db"))
+    st.save_fetch_path("qunar", "SHA", "PEK", "2027-06-01", "H5", "blocked",
+                       attempt_id="old1")
+    st.save_intervention("qunar", "verify", ok=True, rows=3)
+    iv_at = st.interventions("qunar", 1)[0]["at"]
+    # 干预后：一个 30min 窗口全 ok，另一个窗口全 blocked
+    with st._conn() as c:
+        for i in range(3):
+            c.execute(
+                "INSERT INTO fetch_paths (fetched_at,platform,from_city,"
+                "to_city,depart_date,entry_path,path_status,rows,attempt_id) "
+                "VALUES (datetime(?, '+5 minutes'),'qunar','SHA','PEK',"
+                "'2027-06-01','H5','ok',1,?)", (iv_at, "t%d" % i))
+        for i in range(3):
+            c.execute(
+                "INSERT INTO fetch_paths (fetched_at,platform,from_city,"
+                "to_city,depart_date,entry_path,path_status,rows,attempt_id) "
+                "VALUES (datetime(?, '+65 minutes'),'qunar','SHA','PEK',"
+                "'2027-06-01','H5','blocked',0,?)", (iv_at, "r%d" % i))
+    eff = st.intervention_effect("qunar")
+    assert len(eff["trend"]) >= 2
+    assert eff["regressed"] is True
+    assert effect_verdict(eff)[0] == "regressed"
