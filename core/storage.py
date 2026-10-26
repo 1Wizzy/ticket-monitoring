@@ -709,6 +709,53 @@ class PriceStorage:
                 (f"-{int(days)} days",))
             return cur.rowcount
 
+    # SQLite 删除行不会缩小文件；不 VACUUM 的话「清理」只腾出内部空闲页，
+    # 文件仍占满（实测 406 MB 库删掉 1.1 万行后体积不变）。VACUUM 会整库
+    # 重写并短暂独占锁，所以只在「删得多 + 距上次够久 + 空间够」时做。
+    VACUUM_MIN_FREE_MB = 400
+    VACUUM_MIN_INTERVAL_H = 24 * 7
+
+    def maybe_vacuum(self, deleted: int = 0, min_deleted: int = 2000) -> bool:
+        """按条件回收磁盘；返回是否真的执行了 VACUUM。
+
+        条件（全部满足才做）：
+        - 本次 purge 删了 >= min_deleted 行（少量删除不值得重写整库）
+        - 距上次 VACUUM >= VACUUM_MIN_INTERVAL_H 小时（标记文件在库旁）
+        - 磁盘剩余 >= VACUUM_MIN_FREE_MB（重写期间需要同样大的空间）
+        """
+        import os as _os
+        import shutil as _shutil
+        import time as _time
+        if int(deleted or 0) < int(min_deleted):
+            return False
+        stamp = _os.path.join(_os.path.dirname(self.db_path) or ".",
+                              ".last_vacuum")
+        try:
+            if _os.path.isfile(stamp):
+                age_h = (_time.time() - _os.path.getmtime(stamp)) / 3600.0
+                if age_h < self.VACUUM_MIN_INTERVAL_H:
+                    return False
+        except OSError:
+            pass
+        try:
+            _free_mb = _shutil.disk_usage(
+                _os.path.dirname(self.db_path) or ".").free / 1048576.0
+        except OSError:
+            return False
+        if _free_mb < self.VACUUM_MIN_FREE_MB:
+            return False
+        try:
+            with self._conn() as c:
+                c.execute("VACUUM")
+        except Exception:
+            return False
+        try:
+            open(stamp, "w", encoding="utf-8").write(
+                _time.strftime("%Y-%m-%d %H:%M:%S"))
+        except OSError:
+            pass
+        return True
+
     def refresh_daily(self, from_city: str, to_city: str,
                       depart_date: str, day: str = "") -> None:
         """重算某 (航线, 出发日期) 在聚合日 day（缺省=今日，按本地

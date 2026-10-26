@@ -129,3 +129,42 @@ def test_purge_default_uses_retention_constant(tmp_path):
         left = [r[0] for r in c.execute(
             "SELECT price FROM flight_prices")]
     assert left == [100.0]
+
+
+# ---- r392b：删除不缩文件，需受控 VACUUM ----
+
+def test_maybe_vacuum_skips_small_delete(tmp_path):
+    from core.storage import PriceStorage
+    st = PriceStorage(str(tmp_path / "p.db"))
+    assert st.maybe_vacuum(10) is False, "少量删除不值得重写整库"
+
+
+def test_maybe_vacuum_respects_interval(tmp_path):
+    import os as _os
+    from core.storage import PriceStorage
+    st = PriceStorage(str(tmp_path / "p.db"))
+    stamp = _os.path.join(_os.path.dirname(st.db_path) or ".", ".last_vacuum")
+    open(stamp, "w", encoding="utf-8").write("x")
+    assert st.maybe_vacuum(5000) is False, "间隔未到不得重复重写"
+    _os.remove(stamp)
+    assert st.maybe_vacuum(5000) is True, "条件满足时应执行"
+
+
+def test_vacuum_actually_shrinks_file(tmp_path):
+    """端到端：塞大量 extra 后删除再 VACUUM，文件必须变小。"""
+    import os as _os
+    import sqlite3
+    from core.storage import PriceStorage
+    st = PriceStorage(str(tmp_path / "p.db"))
+    big = "x" * 20000
+    with sqlite3.connect(st.db_path) as c:
+        for i in range(60):
+            c.execute(
+                "INSERT INTO flight_prices (platform, from_city, to_city, "
+                "depart_date, price, extra, fetched_at) VALUES "
+                "('qunar','A','B','2026-11-16',100,?, "
+                "datetime('now','localtime','-30 days'))", (big,))
+    size0 = _os.path.getsize(st.db_path)
+    st.purge()                      # 全删（都超 8 天）
+    assert st.maybe_vacuum(60, min_deleted=50) is True
+    assert _os.path.getsize(st.db_path) < size0

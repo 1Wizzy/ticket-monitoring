@@ -2878,9 +2878,19 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
         # 保留天数单源在 PriceStorage.RAW_RETAIN_DAYS（8 天）：所有
         # 读取方都在 168h 内，14 天纯占盘（实测白占 184 MB）。
         try:
+            _sz0 = os.path.getsize(storage.db_path) if os.path.isfile(
+                storage.db_path) else 0
             n = storage.purge()
             if n:
                 logger.info("[存储] 已清理 %d 条过期价格记录", n)
+                # 删除不缩文件：删得多且距上次够久才 VACUUM（会短暂锁库）
+                if storage.maybe_vacuum(n):
+                    try:
+                        _sz1 = os.path.getsize(storage.db_path)
+                        logger.info("[存储] VACUUM 完成：%.0f MB → %.0f MB",
+                                    _sz0 / 1048576.0, _sz1 / 1048576.0)
+                    except OSError:
+                        logger.info("[存储] VACUUM 完成")
         except Exception as e:
             logger.warning("[存储] 过期清理失败: %s", e)
         # 控制台缓存预热：扫描写库使 /api/state 签名失效，后台先重建，
