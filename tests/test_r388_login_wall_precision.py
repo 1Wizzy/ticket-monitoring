@@ -203,9 +203,12 @@ def _stale_paths():
                    "last_ok_at": "2026-10-27 01:00:00"}}
 
 
-def test_stale_inside_quiet_window_does_not_suggest_scan():
-    """静默窗内 sweep 会直接 return（只有 force 绕过），
-    「点立即扫描」= 空头支票 → 应改为等窗口结束。"""
+def test_stale_inside_quiet_window_still_offers_manual_scan():
+    """静默窗内仍可点「立即扫描」——手动入口注入的是 sweep(force=True)。
+
+    实测 05:28 手动触发，五个渠道各写 3 条新行；所以建议必须保留 probe，
+    只补一句"不点的话等到几点"（曾误判为"点了没用"而改成 wait，已回退）。
+    """
     import time as _t
     from core.pacing import advise
     now = _t.mktime(_t.strptime("2026-10-27 04:00:00", "%Y-%m-%d %H:%M:%S"))
@@ -213,8 +216,8 @@ def test_stale_inside_quiet_window_does_not_suggest_scan():
                node={"paths": _stale_paths()},
                quiet={"start": "01:00", "end": "07:00", "active": True})
     assert a["state"] == "stale"
-    assert a["action"] != "probe", a
-    assert "立即扫描" not in a["hint"], a
+    assert a["action"] == "probe", a
+    assert "立即扫描" in a["hint"], a
     assert "静默窗" in a["hint"] and "07:00" in a["hint"], a
 
 
