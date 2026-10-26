@@ -534,6 +534,42 @@ class PriceStorage:
                 finish(sc)
         return out
 
+    def failure_recurrence(self, hours=24, min_count=3):
+        """同一渠道×入口×状态反复出现 → 可跟踪的"复发问题"。
+
+        连续零数据告警要等 3 轮（可能 90 分钟）；而"同一类失败在 24h 里
+        出现 N 次"能更早指出根因（如 444 反复、1999 反复）。
+        只统计非成功状态，并按最近一次时间倒序。
+        """
+        hours = max(1, min(24 * 90, int(hours or 24)))
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT platform, entry_path, path_status, COUNT(*) n, "
+                "MAX(fetched_at) last_at, "
+                "MIN(fetched_at) first_at "
+                "FROM fetch_paths "
+                "WHERE fetched_at >= datetime('now','localtime', ?) "
+                "AND path_status NOT IN ('ok','calendar') "
+                "GROUP BY platform, entry_path, path_status "
+                "HAVING COUNT(*) >= ? ORDER BY n DESC",
+                ("-%d hours" % hours, int(min_count))).fetchall()
+        out = []
+        for r in rows:
+            st = str(r["path_status"] or "")
+            out.append({
+                "platform": str(r["platform"] or ""),
+                "path": str(r["entry_path"] or ""),
+                "status": st,
+                "count": int(r["n"] or 0),
+                "first_at": str(r["first_at"] or ""),
+                "last_at": str(r["last_at"] or ""),
+                "kind": ("soft" if st == "soft_reject" else
+                         "login" if st == "login" else
+                         "blocked" if st == "blocked" else
+                         "empty" if st == "empty" else "error"),
+            })
+        return out
+
     def latest_prices(self, hours=24 * 7):
         """每个 platform×航线×日期 最近一条「真实明细」价，用于重启续 TTL。
 

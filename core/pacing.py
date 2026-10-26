@@ -256,6 +256,26 @@ def stagger_offset(plat, base_seconds):
     return round((zlib.crc32(str(plat).encode("utf-8")) % 1000) / 1000 * base, 1)
 
 
+# 统一异常词表：code → (中文名, 建议动作, 是否自动自愈)
+# UI/日志/建议引擎共用一套，避免"同一个 444 在三处说三种话"。
+FAILURE_KINDS = {
+    "ip": ("IP/频率限流", "等冷却，必要时换出口", False),
+    "captcha": ("人机验证", "用采集同一会话去验证", False),
+    "login": ("登录态失效", "重登该渠道", False),
+    "soft": ("会话层软拒", "下一轮自动预热（无需人工）", True),
+    "timeout": ("请求超时", "等下一轮；连续出现再降频", True),
+    "parse_error": ("解析失败", "多为页面改版，需排查", False),
+    "empty": ("真无票", "无需处理", True),
+    "error": ("未知错误", "看现场；连续出现再干预", False),
+}
+
+
+def failure_kind(code):
+    """code → (中文名, 建议动作, 自动自愈?)，未知码如实返回。"""
+    c = str(code or "")
+    return FAILURE_KINDS.get(c, ("未分类", "看日志", False))
+
+
 def classify_failure(statuses, note=""):
     """把一次采集的路径状态归成 ip/captcha/login/""。
 
@@ -263,11 +283,13 @@ def classify_failure(statuses, note=""):
     触发冷却，重试也不会变好，但没有理由停手整个渠道。
     """
     low = str(note or "").lower()
-    if _IP_CODE_RE.search(low) or any(k in low for k in _IP_MARKS):
-        return "ip"
     sts = {str(s or "") for s in (statuses or [])}
+    # 软拒优先短路：它常带 444/202 字样，不能先被下面的 IP 规则吃掉，
+    # 否则"会话没养熟"会被当成"IP 被限流"冷却整家渠道。
     if "soft_reject" in sts or any(k in str(note or "") for k in _SOFT_MARKS):
         return "soft"
+    if _IP_CODE_RE.search(low) or any(k in low for k in _IP_MARKS):
+        return "ip"
     if "blocked" in sts or any(k.lower() in low for k in _CAPTCHA_MARKS):
         return "captcha"
     if "login" in sts or any(k in str(note or "") for k in _LOGIN_MARKS):

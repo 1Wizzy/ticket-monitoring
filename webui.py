@@ -15041,6 +15041,12 @@ async function loadPacing(){
   box.innerHTML='<div style="margin-bottom:4px"><b>节流状态</b> · 静默窗 '+qs
    +' <a href="javascript:void(0)" onclick="loadPacing()" style="color:var(--blue);margin-left:6px">刷新</a></div>'
    +adviceRow
+  +((j.recurrences||[]).length?('<div style="margin:2px 0;white-space:normal;overflow-wrap:anywhere;color:#b07700">反复出现：'
+      +esc((j.recurrences||[]).slice(0,5).map(x=>{
+        const k=x.kindLabel||x.kind||x.status;
+        const auto=x.autoHeal?'（自动）':'（需人工）';
+        return (CN[x.platform]||x.platform)+' '+x.path+' '+k+'×'+x.count+auto;
+      }).join(' · '))+'</div>'):'')
    +'<div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:4px">'+chips+'</div>'
    +'<div>本轮计划 '+plan+' 次（快 '+lr.fast+' / 慢 '+lr.slow+' / TTL 内 '+lr.skip+'） · 实发 '+(lr.sent||0)+' 次'
    +(lr.paced?(' · 主动未发 '+(lr.paced||0)+' 次'):'')
@@ -25761,6 +25767,25 @@ class _Handler(BaseHTTPRequestHandler):
                     _ps = (_paths_payload(24).get("platforms") or {})
                     _scene = getattr(_State, "scene", None) or {}
                     _eff = {}
+                    _rec = []
+                    try:
+                        _dbp3 = _anchored(
+                            ((_State.cfg or {}).get("output") or {}).get(
+                                "db_path"), "data/prices.db")
+                        if os.path.isfile(_dbp3):
+                            _rec = PriceStorage(_dbp3).failure_recurrence(24, 3)
+                    except Exception:
+                        _rec = []
+                    try:
+                        from core.pacing import failure_kind
+                        for _r in _rec:
+                            _lbl, _act, _auto = failure_kind(_r.get("kind"))
+                            _r["kindLabel"] = _lbl
+                            _r["advice"] = _act
+                            _r["autoHeal"] = bool(_auto)
+                    except Exception:
+                        pass
+                    data["recurrences"] = _rec
                     try:
                         _dbp2 = _anchored(
                             ((_State.cfg or {}).get("output") or {}).get(

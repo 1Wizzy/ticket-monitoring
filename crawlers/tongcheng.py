@@ -507,7 +507,9 @@ class TongchengCrawler(BaseCrawler):
                         body = r.get("body") or ""
                     else:
                         _hs = (r or {}).get("status")
-                        cal_fail = ("login" if _hs == 444 else "error",
+                        # 444 = 会话/边缘层门拒（预热可解），不是"账号未登录"：
+                        # 记 soft_reject，下一轮先预热；避免误触发登录冷却。
+                        cal_fail = ("soft_reject" if _hs == 444 else "error",
                                     f"国际日历 HTTP {_hs}")
                         self.logger.warning(
                             "[tongcheng][intl] %s 日历 HTTP %s（疑会话层拒绝）",
@@ -524,7 +526,7 @@ class TongchengCrawler(BaseCrawler):
                             body = ar.text() or ""
                         else:
                             cal_fail = (
-                                "login" if ar.status == 444 else "error",
+                                "soft_reject" if ar.status == 444 else "error",
                                 f"国际日历 ctx.request HTTP {ar.status}")
                     except Exception as e:
                         cal_fail = (self._exc_status(e),
@@ -545,10 +547,10 @@ class TongchengCrawler(BaseCrawler):
                     _msg = (str((_o or {}).get("message") or "")
                             if _parsed else "")
                     if _code == "444" or "非法链接" in (body or ""):
-                        # 会话层门拒（不是无航班）：给健康页/用户可执行的
-                        # 重登提示，禁止混同为「日历无价」。
-                        type(self).login_suspect = True
-                        self.path_note("日历", "login", date=date,
+                        # 会话层门拒（不是无航班、也不是账号未登录）：
+                        # 归 soft_reject，下一轮强制预热；不置 login_suspect，
+                        # 避免把"会话没养熟"显示成"请重登"。
+                        self.path_note("日历", "soft_reject", date=date,
                                        detail="国际日历会话门拒 code=%s" % _code)
                         self.logger.warning(
                             "[tongcheng][intl] %s 会话门拒（code=%s %s，"
@@ -572,9 +574,8 @@ class TongchengCrawler(BaseCrawler):
                             "[tongcheng][intl] %s 日历响应非 JSON（body %dB）",
                             date, len(body))
                     elif _code and _code not in ("0", "200"):
-                        status = "login" if _code == "444" else "error"
-                        if status == "login":
-                            type(self).login_suspect = True
+                        _soft = _code == "444"
+                        status = "soft_reject" if _soft else "error"
                         self.path_note("日历", status, date=date,
                                        detail="国际日历异常响应 code=%s %s"
                                               % (_code, _msg))

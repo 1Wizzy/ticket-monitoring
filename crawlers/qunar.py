@@ -576,8 +576,13 @@ class QunarCrawler(BaseCrawler):
         self._last_challenge = None
         got = self._fetch_via_browser(from_city, to_city, date)
         _sig = getattr(self, "_last_challenge", None)
+        # 原站"无符合条件的航班"是明确业务空，不是会话失效：即使本轮
+        # 另有 login_suspect（可能来自上一轮/另一域），也不得覆盖成 login，
+        # 否则会误触发登录冷却与重登提示。
+        _nores = bool(getattr(self, "_last_no_result", False))
         _h5_status = ("ok" if got else (_sig.status if _sig else
-                       ("login" if QunarCrawler.login_suspect else "empty")))
+                       ("empty" if _nores else
+                        ("login" if QunarCrawler.login_suspect else "empty"))))
         self.path_note(
             "H5", _h5_status,
             rows=len(got[1]) if got else 0, date=date,
@@ -610,8 +615,10 @@ class QunarCrawler(BaseCrawler):
         self._last_challenge = None
         got = self._fetch_via_httpx(from_city, to_city, date)
         _sig = getattr(self, "_last_challenge", None)
+        _nores = bool(getattr(self, "_last_no_result", False))
         _api_status = ("ok" if got else (_sig.status if _sig else
-                        ("login" if QunarCrawler.login_suspect else "empty")))
+                        ("empty" if _nores else
+                         ("login" if QunarCrawler.login_suspect else "empty"))))
         self.path_note(
             "API", _api_status,
             rows=len(got[1]) if got else 0, date=date,

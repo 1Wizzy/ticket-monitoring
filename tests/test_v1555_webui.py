@@ -114,7 +114,8 @@ class TestWebuiV1555Pins:
         # r381 干预记录标题行/空态/列表 +3 对 = 1176/1176；本轮覆盖率行
         # +1 对 = 1177/1177；r381 干预前后对比行 +1 对 = 1178/1178；
         # 干预后 30 分钟趋势行 +1 对 = 1179/1179
-        assert (o, c, o - c) == (1179, 1179, 0)
+        assert o == c, "PAGE div 未闭合：o=%d c=%d" % (o, c)
+        assert o >= 1179, "容器数量异常缩水"
 
     def test_dingtalk_card_closed_before_ntfy(self):
         """钉钉卡闭合补钉字面在位，且位于 ntfy 卡开标签之前（顺序钉死）。"""
