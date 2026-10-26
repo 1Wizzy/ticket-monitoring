@@ -180,9 +180,8 @@ def test_build_view_url_intl_same_source():
     # qunar 国际（R48c G1 同源收口）：touch interlist 同参+城市名链
     # （CITY_NAME→city_short_of）；国内 PC 壳零变化锚
     uq = Alerter._build_view_url(None, r, "2026-10-20", "qunar")
-    assert "touch.qunar.com/ncs/page/interlist" in uq, uq
-    assert "depCity=%E4%B8%8A%E6%B5%B7" in uq and "arrCity=%E4%B8%9C%E4%BA%AC" in uq, uq
-    assert "goDate=2026-10-20" in uq, uq
+    # r390：去哪儿/途牛/同程国际深链在匿名与登录下都出不了价 → 宁缺
+    assert uq == "", uq
     # ctrip 国内：from=inner 零变化锚
     r_dom = Route(from_code="SHA", from_name="上海", to_code="URC",
                   to_name="乌鲁木齐", dates=["2026-10-20"])
@@ -190,8 +189,7 @@ def test_build_view_url_intl_same_source():
     assert "from=inner" in u2, u2
     # tuniu 国际：m2015 带参落地页（与 INTL_LIST_PG 同参）；国内不受影响
     ut_intl = Alerter._build_view_url(None, r, "2026-10-20", "tuniu")
-    assert "m.tuniu.com/m2015/intlFlight/flight/list" in ut_intl, ut_intl
-    assert "route=SHA-NRT" in ut_intl and "date=2026-10-20" in ut_intl, ut_intl
+    assert ut_intl == "", ut_intl
     u3 = Alerter._build_view_url(None, r_dom, "2026-10-20", "tuniu")
     assert "m.tuniu.com/flight/domestic" in u3, u3
     uq2 = Alerter._build_view_url(None, r_dom, "2026-10-20", "qunar")

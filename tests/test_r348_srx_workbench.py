@@ -99,12 +99,14 @@ def test_srx_links_five_and_intl_supported():
     assert all(x["ok"] for x in dom["links"]), dom
     intl = webui._srx_links("SHA", "BKK", "2026-11-20")
     by = {x["key"]: x for x in intl["links"]}
-    assert by["tuniu"]["ok"] is True
-    assert "m.tuniu.com/m2015/intlFlight/flight/list" in by["tuniu"]["url"]
+    # r390：途牛国际深链在任何会话下都停在「正在加载中」→ 宁缺
+    assert by["tuniu"]["ok"] is False and by["tuniu"]["url"] == ""
     # r390 反证：同程国际深链在无痕会话 302 到登录页 → 维持"宁缺"
     assert by["tongcheng"]["ok"] is False, by["tongcheng"]
     assert by["tongcheng"]["url"] == ""
-    assert by["qunar"]["ok"] and by["ctrip"]["ok"] and by["fliggy"]["ok"]
+    # r390：去哪儿国际深链匿名超时/登录弹层 → 不出链
+    assert by["qunar"]["ok"] is False
+    assert by["ctrip"]["ok"] and by["fliggy"]["ok"]
 
 
 def test_srx_health_raw_key_rates(tmp_path):
