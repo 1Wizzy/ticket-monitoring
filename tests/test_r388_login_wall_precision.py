@@ -66,3 +66,65 @@ def test_three_crawlers_use_classify_text_for_login():
 def test_tongcheng_imports_classify_text():
     from crawlers import tongcheng as tc
     assert hasattr(tc, "classify_text"), "同程必须导入 classify_text"
+
+
+# ---- r388b：fliggy H5 回退曾因未导入 os 而静默崩溃 ----
+
+def test_fliggy_h5_fallback_has_os_import():
+    """`_h5_fallback` 用 os.path.isfile 做会话存在性判断；缺 os 导入时
+    每次回退都 NameError（日志只有一行 warning），整条兜底静默失效。"""
+    from crawlers import fliggy
+    assert hasattr(fliggy, "os"), "fliggy 必须导入 os"
+    src = _src("fliggy.py")
+    assert "\nimport os\n" in src
+    # 使用点仍在（防止日后被删而测试失去意义）
+    assert "os.path.isfile(h5.session_state_path)" in src
+
+
+def test_no_missing_stdlib_names_in_crawlers_and_core():
+    """静态扫描：crawlers/core/main/webui 不得出现「用到但未导入」的
+    常见 stdlib 名（同一类静默崩溃的通用守卫）。"""
+    import ast
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    check = {"os", "re", "time", "json", "math", "random", "shutil",
+             "tempfile", "threading", "subprocess", "hashlib", "uuid",
+             "base64", "urllib", "datetime", "pathlib", "sqlite3", "csv"}
+
+    def bound_names(tree):
+        b = set()
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Import):
+                for a in n.names:
+                    b.add(a.asname or a.name.split(".")[0])
+            elif isinstance(n, ast.ImportFrom):
+                for a in n.names:
+                    b.add(a.asname or a.name)
+            elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                ast.ClassDef)):
+                b.add(n.name)
+            elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store):
+                b.add(n.id)
+            elif isinstance(n, ast.arg):
+                b.add(n.arg)
+            elif isinstance(n, ast.ExceptHandler) and n.name:
+                b.add(n.name)
+            elif isinstance(n, (ast.Global, ast.Nonlocal)):
+                b.update(n.names)
+        return b
+
+    bad = []
+    files = [os.path.join(here, "main.py"), os.path.join(here, "webui.py")]
+    for d in ("crawlers", "core"):
+        p = os.path.join(here, d)
+        files += [os.path.join(p, f) for f in sorted(os.listdir(p))
+                  if f.endswith(".py")]
+    for path in files:
+        if not os.path.isfile(path):
+            continue
+        tree = ast.parse(open(path, encoding="utf-8").read())
+        used = {n.id for n in ast.walk(tree)
+                if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+        missing = sorted((used & check) - bound_names(tree))
+        if missing:
+            bad.append((os.path.basename(path), missing))
+    assert not bad, bad

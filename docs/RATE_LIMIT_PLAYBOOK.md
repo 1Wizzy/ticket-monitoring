@@ -1181,3 +1181,32 @@ hit context: … / 扫码下载飞猪 App / 微信小程序 / 微信公众号 / 
 
 回归验证：携程国内 39 行、同程国内 53 行照常出数（新判据不误伤真出数）；
 真登录墙（`请先登录`/`扫码登录`/`passport.` URL）仍正确判 login。
+
+### 15.13 静默崩溃：飞猪 H5 回退缺 `os` 导入（r388b）
+
+验证"空结果不再误记登录"时，用非法航线（SHA→ZZZ）打了一次真实抓取，
+日志暴露出一个从未被测试覆盖的必崩点：
+
+```
+[fliggy][intl] 2026-11-16 列表空/未登录（SHA→ZZZ）
+[fliggy] H5 回退异常: name 'os' is not defined
+```
+
+`_h5_fallback` 用 `os.path.isfile(h5.session_state_path)` 判断 H5 会话是否
+存在，但 `crawlers/fliggy.py` 从未 `import os`。所以**只要 PC 面空/被拦、
+走到 H5 兜底，这条路径必然 NameError**——外层 except 只记一行 warning，
+整条兜底静默失效，账上只留 `H5 error`。国际航线正是靠这条兜底补数据的。
+
+修复：补 `import os`。真实回归（SHA→ZZZ）：
+
+```
+PATH PC   empty | sjipiao.fliggy.com 国际列表
+PATH 日历  empty | 日历窗无该日报价
+PATH H5:H5 empty | H5 日期选择未匹配     ← 不再 NameError
+```
+
+同时加了两条常驻守卫（`tests/test_r388_login_wall_precision.py`）：
+1. `fliggy` 必须有 `os` 导入且使用点仍在；
+2. **全仓静态扫描**：`crawlers/ core/ main.py webui.py` 不得出现
+   「用到但未导入」的 18 个常见 stdlib 名（os/re/time/json/math/…），
+   一次覆盖同类静默崩溃。当前扫描 0 命中。
