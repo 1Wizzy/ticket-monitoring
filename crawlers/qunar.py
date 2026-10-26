@@ -2310,23 +2310,44 @@ class QunarCrawler(BaseCrawler):
                     # r387：等**流式分页收尾**再走（asyncComplete=True），
                     # 不能"拿到首包就 break"——首包固定 60 条，尾包才齐
                     # tcount（实测 8 包 / 133 条）。无首包时也最多等 24s。
-                    _idle = 0
-                    for _ in range(16):
+                    # 收尾判据用「唯一行数稳定」而不是只看末包：
+                    # 渠道会先给 60 行、过一会儿再补若干新行，末包的
+                    # asyncComplete 有时先到（实测同一航线 60/71 两种），
+                    # 只看 done 会早退。行数连续 3 拍不变才走。
+                    def _uniq_n():
+                        seen, n = set(), 0
+                        for _b in bodies:
+                            fl, _rk = self._parse_intl_response(_b)
+                            for _f in fl:
+                                _k = (_f.get("code"), _f.get("depTime"),
+                                      _f.get("arrTime"),
+                                      _f.get("transCity"))
+                                if _k not in seen:
+                                    seen.add(_k)
+                                    n += 1
+                        return n
+                    _last, _stable, _done_at = -1, 0, None
+                    for _ in range(18):
                         page.wait_for_timeout(1500)
                         try:
-                            page.mouse.wheel(0, 2000)
+                            page.mouse.wheel(0, 2600)
                         except Exception:
                             pass
                         _st = (self._intl_async_state(bodies[-1])
                                if bodies else None)
-                        if _st and _st["done"]:
-                            break
-                        if _st and _st["n"]:
-                            _idle = 0
+                        if _st and _st["done"] and _done_at is None:
+                            _done_at = len(bodies)
+                        _now = _uniq_n()
+                        if _now == _last:
+                            _stable += 1
                         else:
-                            _idle += 1
-                            if not bodies and _idle >= 6:
-                                break          # 12s 无任何包：别干等
+                            _last, _stable = _now, 0
+                        # 已收尾且行数连续 2 拍不变 → 真的齐了
+                        if _done_at is not None and _stable >= 2:
+                            break
+                        # 从未出包：9s 后放弃，别干等
+                        if not bodies and _stable >= 6:
+                            break
                 except Exception as e:
                     self.logger.warning("[qunar][intl] 页面异常: %s", e)
 
@@ -2400,7 +2421,8 @@ class QunarCrawler(BaseCrawler):
             flights, risk, _pm = self._parse_intl_packs(bodies)
             if _pm["tcount"] and _pm["raw"]:
                 self.logger.info(
-                    "[qunar][intl] %s 流式分页 %d 包 / %d 行（渠道 tcount=%s%s）",
+                    "[qunar][intl] %s 流式分页 %d 包 / 去重后 %d 行"
+                    "（渠道 tcount=%s%s；后续包常为同批重复流，行数不=包数×60）",
                     date, _pm["packs"], _pm["raw"], _pm["tcount"],
                     "" if _pm["done"] else "，未收尾")
             self._dump_raw_text(bodies[0] if bodies else "",
