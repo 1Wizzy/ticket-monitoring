@@ -521,13 +521,13 @@ def shadow_path_preference(paths, min_samples=5, low=0.3):
     返回 {"prefer": [(path, rate, attempts)...], "avoid": [...]}。
     - 仅比较同平台内各入口（PC/H5/API/日历）的路径成功率；
     - 样本 < min_samples 不参与（防首轮波动误判）；
-    - 日历路径不参与（它本来就不是明细路径）。
+    - 日历路径不参与（它本来就不是明细路径；窗历同属日历族）。
     """
     ranked = []
     for name, v in (paths or {}).items():
         v = v or {}
         n = int(v.get("attempts") or 0)
-        if n < min_samples or str(name).startswith("日历"):
+        if n < min_samples or str(name).startswith(("日历", "窗历")):
             continue
         ranked.append((str(name), float(v.get("rate") or 0.0), n))
     ranked.sort(key=lambda x: (-x[1], -x[2]))

@@ -105,6 +105,15 @@ class TongchengCrawler(BaseCrawler):
     # airport_city_code 归并（PEK→BJS/PVG→SHA/NRT→TYO）
     INTL_HOME = "https://www.ly.com/iflight/"
     INTL_CALENDAR_API = "https://www.ly.com/miflightapi/ts/calendar"
+    # 窗历缓存：主链路按「日期」拆成多次 fetch，而窗历一次返回 90 天。
+    # 30 分钟内复用（监控周期常见 5–30 分钟；价格日级变动，30 分钟
+    # 足够新鲜，且与 fast_ttl 同量级）。
+    INTL_WIN_CACHE_S = 1800
+
+    def __init__(self, config, logger):
+        super().__init__(config, logger)
+        # {航线: (取到时刻, {date: 含税总价}, 窗口跨度)}
+        self._intl_win_cache = {}
 
     @staticmethod
     def _calendar_url(fc: str, tc: str, date: str,
@@ -116,6 +125,129 @@ class TongchengCrawler(BaseCrawler):
         tt = "RT" if ret_date else "OW"
         return (f"{TongchengCrawler.INTL_CALENDAR_API}?D={fc}&A={tc}"
                 f"&DD={date}&AD={ad}&TT={tt}&ST=1")
+
+    def _intl_window_prices(self, fc: str, tc: str, dates: List[str]):
+        """窗历（低价日历 queryCalendarLowestPrice）覆盖请求日期的
+        {date: 含税总价} + 对账摘要。
+
+        r384 实证：该接口无登录无签名、一次返回 90 天窗口，价格与
+        页内签名日历的 TP 逐日同值（11-08 640/640、11-24 643/643、
+        11-10 643/643）；而 ts/calendar 需页内 as-sdk 会话签名，裸
+        请求恒 444「非法链接」。故定时采集走窗历=每航线 1 次 HTTP，
+        替代逐日启浏览器（限流主因）。
+
+        窗口形态 [max(今天, 锚-30), +89]。返回空表=渠道无数据
+        （code 5：非法航线/超窗），None 已在内部按失败处理为空表；
+        个别日期窗口内无价不臆造——交给调用方按原路兜底。
+        """
+        from datetime import date as _date, timedelta
+
+        from crawlers.special import fetch_tongcheng_calendar
+
+        want = sorted({str(d) for d in dates if d})
+        out = {}
+        info = {"calls": 0, "dates": len(want), "covered": 0,
+                "unsupported": False, "failed": False,
+                "expired": 0, "span": "", "cached": 0}
+        if not want:
+            return out, info
+        # 同一轮里每个日期是一次独立 fetch 调用（主链路按 date 拆分），
+        # 而窗历一次就返回 90 天——不缓存会把"每航线 1 次"放大成
+        # "每日期 1 次"，14 日窗就是 14 次。缓存按航线+小时，且只
+        # 缓存成功结果（失败/无数据不缓存，下一日期仍可重试）。
+        ck = "%s-%s" % (fc, tc)
+        now = time.time()
+        hit = self._intl_win_cache.get(ck)
+        if hit and now - hit[0] < self.INTL_WIN_CACHE_S:
+            info["cached"] = 1
+            info["span"] = hit[2]
+            for d in want:
+                if d in hit[1]:
+                    out[d] = hit[1][d]
+            info["covered"] = len(out)
+            return out, info
+        fn = self.CITY_NAME.get(fc) or city_short_of(fc)
+        tn = self.CITY_NAME.get(tc) or city_short_of(tc)
+        try:
+            today = _date.today().isoformat()
+        except Exception:
+            today = ""
+        # 今天/过去日：窗历锚点只能从明天起，这些日期真源已无法取价
+        expired = [d for d in want if today and d <= today]
+        info["expired"] = len(expired)
+        pending = [d for d in want if d not in expired]
+        # 整窗价（不止本轮请求的日期）：主链路逐日拆调用，缓存必须
+        # 覆盖整窗，后面的日期才能直接命中
+        allw = {}
+        # 90 天窗口最多 3 窗即可覆盖一年；上限防锚点推进死循环
+        while pending and info["calls"] < 3:
+            anchor = pending[0]
+            # 渠道 code 5 含「锚点=今天/过去」；统一推到明天
+            if today and anchor <= today:
+                anchor = (_date.fromisoformat(today)
+                          + timedelta(days=1)).isoformat()
+            rows = fetch_tongcheng_calendar(fc, fn, tc, tn, anchor,
+                                            self.logger)
+            info["calls"] += 1
+            if rows is None:
+                info["failed"] = True
+                break
+            if not rows:
+                info["unsupported"] = True
+                break
+            got = {}
+            for r in rows:
+                if not isinstance(r, dict):
+                    continue
+                ds = str(r.get("date") or "")
+                try:
+                    price = float(r.get("price"))
+                except (TypeError, ValueError):
+                    continue
+                if ds and price > 0:
+                    got[ds] = price
+            allw.update(got)
+            for d in pending:
+                if d in got:
+                    out[d] = got[d]
+            last = max(got) if got else ""
+            if got:
+                info["span"] = "%s~%s" % (min(got), last)
+            # 只对「落在窗口末端之后」的日期换锚；窗口内无价=真源
+            # 无报价，不再追加请求（宁缺勿错）
+            pending = [d for d in pending
+                       if d not in out and last and d > last]
+        info["covered"] = len(out)
+        # 只缓存真有价格的整窗：无数据/失败下一日期仍可重试
+        if allw:
+            self._intl_win_cache[ck] = (now, dict(allw), info["span"])
+        return out, info
+
+    def _intl_window_row(self, from_city: str, to_city: str, fc: str,
+                         tc: str, date: str, price: float) -> FlightPrice:
+        """窗历行：元素形态与 ts_calendar 行同构，唯一差别是
+        source=tc_window_calendar（可溯源到具体通路）+ 无 tax 拆分
+        （窗历只给含税总价，不臆造票面/税额）。"""
+        element = {
+            "price": price,
+            "name": "日历最低价",
+            "code": "",
+            "depDate": date,
+            "depTime": "",
+            "arrTime": "",
+            "intl": 1,
+            "currency": "CNY",
+            "source": "tc_window_calendar",
+            "cityCodes": f"{fc}-{tc}",
+        }
+        return FlightPrice(
+            platform=self.name,
+            from_city=from_city, to_city=to_city,
+            depart_date=date, price=float(price),
+            airline="", flight_no="",
+            depart_time="", arrive_time="",
+            extra=json.dumps([element], ensure_ascii=False),
+        )
 
     @staticmethod
     def _parse_intl_calendar(body: str, date: str,
@@ -378,6 +510,80 @@ class TongchengCrawler(BaseCrawler):
         results: List[FlightPrice] = []
         fc, tc = (airport_city_code(from_city.upper()),
                   airport_city_code(to_city.upper()))
+        # r384：定时面先走窗历（单 HTTP/航线、90 天窗口、价格与页内
+        # 签名日历逐日同值）——逐日启浏览器的 ts/calendar 需页会话
+        # 签名，裸请求恒 444「非法链接」，这是同程国际长期零数据的
+        # 真因。探针面仍优先真实明细（人要的是航班号/时刻），窗历只
+        # 兜住没有明细的日期。
+        if not ret_date:
+            covered, win = self._intl_window_prices(fc, tc, dates)
+            try:
+                from datetime import date as _d
+                today = _d.today().isoformat()
+            except Exception:
+                today = ""
+            if covered:
+                self.logger.info(
+                    "[tongcheng][intl] 窗历命中 %d/%d 日（%d 次请求%s）",
+                    win["covered"], win["dates"], win["calls"],
+                    "，同轮复用窗口 %s" % win["span"] if win["cached"]
+                    else "")
+                for d in sorted(covered):
+                    self.path_note("窗历", "calendar", rows=1, date=d,
+                                   detail="同程低价日历 90 天窗口"
+                                          "（含税总价）", http_status=200)
+                results.extend(
+                    self._intl_window_row(from_city, to_city, fc, tc, d,
+                                          covered[d])
+                    for d in sorted(covered))
+                rest = [d for d in dates
+                        if d not in covered
+                        and (not today or d > today)]
+                if self.probe_mode and rest:
+                    # 探针要明细：窗口外/未覆盖日期仍走页内真实列表
+                    results.extend(self._intl_browser_fallback(
+                        from_city, to_city, rest, fc, tc))
+                return results
+            if win["unsupported"]:
+                self.path_note("窗历", "unsupported",
+                               detail="同程低价日历无数据（非法航线或超窗）")
+                self.logger.warning(
+                    "[tongcheng][intl] 窗历无数据（非法航线/超窗），"
+                    "改走页内日历")
+            elif win["failed"]:
+                self.path_note("窗历", "error", detail="同程低价日历请求失败")
+                self.logger.warning(
+                    "[tongcheng][intl] 窗历请求失败，改走页内日历")
+            elif win["expired"]:
+                # 全是今天/过去日：真源窗口从明天起，页内日历同样
+                # 取不到——不去启浏览器白撞一次风控
+                self.logger.info(
+                    "[tongcheng][intl] %d 个日期已过期（窗历自明天起），"
+                    "本轮跳过", win["expired"])
+                return []
+        # 往返（ret_date 在场）：窗历是单程价，页内 ts/calendar 的
+        # AD/TT 只对站点自身请求生效——先试一次，仍无数据就如实记
+        # 边界，绝不拿单程价冒充往返。
+        out = self._intl_browser_fallback(from_city, to_city, dates, fc, tc,
+                                          ret_date=ret_date)
+        if ret_date and not out:
+            self._intl_rt_note(dates)
+        return out
+
+    def _intl_rt_note(self, dates: List[str]):
+        """往返能力边界：站点 H5 在 tt=1 时发的仍是单程窗历（rt 参数
+        只改页面）、ts/calendar 的 AD/TT 只对站点自身请求生效。因此
+        同程国际往返没有可用数据源——如实记一次边界，不拿单程价
+        冒充往返价（宁缺勿错）。"""
+        self.path_note("往返", "unsupported",
+                       detail="同程国际无往返日历源（站点自身也只发单程）")
+        self.logger.warning(
+            "[tongcheng][intl] %s 往返无可用源：站点自身也只发单程窗历，"
+            "不拿单程价冒充往返", ",".join(str(d) for d in dates))
+
+    def _intl_browser_fallback(self, from_city: str, to_city: str,
+                               dates: List[str], fc: str, tc: str,
+                               ret_date: str = "") -> List[FlightPrice]:
         # 桌面上下文（校准 R6 实证：国际入口是 PC 页 www.ly.com/iflight/
         # ——手机 UA 开 PC 页 as-sdk 初始化错位，页内 fetch 444「非法
         # 链接」；调研探针 p7 成功样本=桌面 UA+桌面视口）。同
@@ -547,15 +753,20 @@ class TongchengCrawler(BaseCrawler):
                     _msg = (str((_o or {}).get("message") or "")
                             if _parsed else "")
                     if _code == "444" or "非法链接" in (body or ""):
-                        # 会话层门拒（不是无航班、也不是账号未登录）：
-                        # 归 soft_reject，下一轮强制预热；不置 login_suspect，
-                        # 避免把"会话没养熟"显示成"请重登"。
+                        # 请求形态门拒（不是无航班、也不是账号未登录）：
+                        # r384 实证 calendar 不在站点 as-sdk 的 hook 白名单
+                        # （只有 search/list/submitOrder），手工打的同形
+                        # URL 一样回 444——所以这不是"重登能好"的登录
+                        # 问题。归 soft_reject（下一轮强制预热），并如实
+                        # 写明该通路仅站点自己发的请求可用。
                         self.path_note("日历", "soft_reject", date=date,
-                                       detail="国际日历会话门拒 code=%s" % _code)
+                                       detail="国际日历请求形态门拒 code=%s"
+                                              % _code)
                         self.logger.warning(
-                            "[tongcheng][intl] %s 会话门拒（code=%s %s，"
-                            "body %dB）——请在配置页「渠道登录」重登 tongcheng",
-                            date, _code, _msg, len(body))
+                            "[tongcheng][intl] %s 日历门拒（code=%s %s，"
+                            "body %dB）：ts/calendar 只接受站点自身发出的"
+                            "请求（as-sdk 白名单不含 calendar），重登无效；"
+                            "单程已走窗历兜底", date, _code, _msg, len(body))
                     elif not body:
                         status, detail = cal_fail or (
                             "parse_error", "国际日历空响应体")
