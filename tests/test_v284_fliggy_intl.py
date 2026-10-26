@@ -163,3 +163,31 @@ def test_direct_card_unchanged():
     rows = FliggyCrawler._parse_intl_items([_item()], "2026-11-16")
     assert len(rows) == 1 and rows[0]["code"] == "9C7293"
     assert rows[0]["transfer"] is False
+
+
+# ---- r386：无航班号的中转行不得被下游当成"日历行/非真实班次"
+
+def test_ui_and_backend_treat_timed_row_as_real_flight():
+    """前端 srxIsCal 与后端 _real_offer 都只认时刻。
+
+    曾额外要求 code：飞猪国际中转卡片不给航班号，会被标成日历行 /
+    非真实班次，于是"页面有中转"变成"页面没中转"。
+    """
+    import inspect
+    import webui
+    src = inspect.getsource(webui)
+    assert ("function srxIsCal(f){return !!f.isCal||!(f.depTime&&f.arrTime)}"
+            in src), "前端日历判据必须只看时刻"
+    assert "!(f.code&&f.depTime&&f.arrTime)" not in src, \
+        "不得再以 code 缺失判为日历行"
+
+
+def test_calendar_row_still_detected_by_missing_times():
+    from core import alerter as A
+    cal = {"price": 719, "name": "日历最低价", "depTime": "", "arrTime": ""}
+    assert A._is_calendar_row(cal) is True
+    transfer = {"price": 1992, "name": "海湾航空", "code": "",
+                "depTime": "16:30", "arrTime": "06:35",
+                "transCity": "巴林", "transfer": True}
+    assert A._is_calendar_row(transfer) is False, \
+        "有时刻的中转行是真实班次，不是日历行"
