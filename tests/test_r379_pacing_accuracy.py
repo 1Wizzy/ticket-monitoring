@@ -247,9 +247,10 @@ def test_post_json_guard_rejects_unsafe_requests():
 
 
 def test_intervention_endpoints_are_guarded_and_whitelisted():
-    import inspect
-    import webui
-    src = inspect.getsource(webui._Handler._do_POST)
+    # 直接读文件而不是 inspect.getsource(模块)：
+    # 全套运行时其它测试可能替换 webui._Handler，导致取到替换对象的源码。
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(here, "webui.py"), encoding="utf-8").read()
     for path, label in (("/api/pacing/reset", "解除"),
                         ("/api/channel/probe", "自检"),
                         ("/api/channel/verify", "验证"),
