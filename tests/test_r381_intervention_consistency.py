@@ -224,3 +224,15 @@ def test_degradation_needs_valid_samples():
                      "rate": 0.0, "rate_excl_empty": 0.0}}
     b = advise("qunar", {"state": "ok"}, paths2)
     assert b["state"] == "path_degraded"
+
+
+def test_manual_reset_verifies_and_reports_truth():
+    """解除熔断不能直接记成功：必须带真实单查结果。"""
+    import inspect
+    import webui
+    src = inspect.getsource(webui._Handler._do_POST)
+    block = src.split('self.path == "/api/pacing/reset"', 1)[1][:3000]
+    assert "probe_cb" in block, "解除后必须触发单查"
+    assert 'save_intervention(' in block
+    assert '"reset", ok=_ok' in block, "干预账的 ok 必须来自探测结果"
+    assert '"probe": _probe' in block, "响应里要带回探测结果"

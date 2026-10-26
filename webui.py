@@ -27319,23 +27319,46 @@ class _Handler(BaseHTTPRequestHandler):
                     before.get("reason") or "-")
                 after = ((pac.snapshot().get("channels") or {})
                          .get(plat) or {})
+                # 解除只是"允许再试"，不等于"已经恢复"。立刻单查一次，
+                # 用真实结果落账；未通就重新熔断，避免把"解除了"显示成
+                # "好了"（这是干预后一致性最容易被破坏的一处）。
+                _probe = None
+                _cb = getattr(_State, "probe_cb", None)
+                if _cb is not None:
+                    try:
+                        _probe = _cb(plat, scope="")
+                    except Exception as _pe:
+                        _probe = {"ok": False, "err": str(_pe)[:120]}
+                _ok = bool((_probe or {}).get("rows"))
+                _rows = int((_probe or {}).get("rows") or 0)
+                if _probe is not None and not _ok:
+                    try:
+                        pac.observe(plat, ["blocked"], "手动解除后探测未出数")
+                    except Exception:
+                        pass
+                after2 = ((pac.snapshot().get("channels") or {})
+                          .get(plat) or {})
                 try:
                     from core.storage import PriceStorage as _PS
                     _dbp = _anchored(
                         ((_State.cfg or {}).get("output") or {}).get(
                             "db_path"), "data/prices.db")
                     _PS(_dbp).save_intervention(
-                        plat, "reset", ok=True,
+                        plat, "reset", ok=_ok,
+                        rows=_rows,
                         before="%s/%s" % (before.get("state"),
                                           before.get("reason")),
-                        after="%s/%s" % (after.get("state"),
-                                         after.get("reason")),
-                        note="手动解除熔断（原剩余 %ss）"
-                             % before.get("remain_s", 0))
+                        after="%s/%s" % (after2.get("state"),
+                                         after2.get("reason")),
+                        note=("手动解除后单查：%s" % (
+                            ("出数 %d 条" % _rows) if _ok
+                            else ((_probe or {}).get("err") or "未出数"))),
+                        ms=int((_probe or {}).get("ms") or 0))
                 except Exception:
                     pass
                 self._json({"ok": True, "platform": plat,
-                            "before": before, "after": after})
+                            "before": before, "after": after2,
+                            "probe": _probe})
             except Exception as e:
                 self._json({"ok": False, "err": str(e)}, 500)
         elif self.path == "/api/channel/probe":
