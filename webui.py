@@ -15061,14 +15061,14 @@ async function showTrace(p){
   const rows=(j.rows||[]).map(r=>{
    const t=String(r.fetched_at||'').slice(5,16),st=String(r.path_status||'');
    const col=(st==='ok'||st==='calendar')?'#1a9e75':(st==='empty'?'var(--mut)':'var(--red)');
-   return '<div style="white-space:nowrap">'+esc(t)+' · <b>'+esc(r.entry_path||'?')+'</b> · <span style="color:'+col+'">'+esc(st)+'</span> · '+esc(String(r.note||'').slice(0,60))+'</div>';
+   return '<div style="white-space:normal;overflow-wrap:anywhere">'+esc(t)+' · <b>'+esc(r.entry_path||'?')+'</b> · <span style="color:'+col+'">'+esc(st)+'</span> · '+esc(String(r.note||'').slice(0,60))+'</div>';
   }).join('');
   // 干预账：每次 解除/预热/自检/验证 的结果与耗时。回答"干预后到底
   // 有没有恢复"，而不是只看当前状态（那可能是干预前的旧结论）。
   const ivs=(j.interventions||[]).map(x=>{
    const t=String(x.at||'').slice(5,16),act=String(x.action||'');
    const col=x.ok?'#1a9e75':'var(--red)';
-   return '<div style="white-space:nowrap">'+esc(t)+' · <b>'+esc(act)+'</b>'
+   return '<div style="white-space:normal;overflow-wrap:anywhere">'+esc(t)+' · <b>'+esc(act)+'</b>'
      +' · <span style="color:'+col+'">'+(x.ok?'成功':'失败')+'</span>'
      +(x.rows?(' · '+esc(String(x.rows))+' 行'):'')
      +(x.ms?(' · '+esc((x.ms/1000).toFixed(1))+'s'):'')
