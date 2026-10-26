@@ -27,6 +27,7 @@ import yaml
 from core.logger import setup_logger
 from core.models import Route, price_band_ok
 from core.intl import is_intl_route
+from core.pacing import Pacing, stagger_offset, parse_local_ts
 from core.storage import PriceStorage
 from core.alerter import Alerter, sanitize_desp
 from core.scheduler import run_scheduler
@@ -1536,6 +1537,33 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
     # 进程级互斥：启动首轮 / 定时调度 / 网页手动触发统一防并发
     # （曾因"启动即扫 + /api/run"双跑导致每渠道抓两次、每消息推两条）
     _sweep_lock = threading.Lock()
+    # 节流/熔断上下文（1–5 区）：与进程同寿命——熔断状态跨轮保留，
+    # 热重载只换阈值不丢"这家现在不能碰"的既成事实
+    rt["pacing"] = Pacing(cfg)
+    # 重启续 TTL：库里有真实明细就当作刚采过，避免每次重启/调试都把
+    # 全部查询重新打一遍（这是"反复跑数据"最常见的限流来源）。
+    try:
+        _seeded = 0
+        for _r in (storage.latest_prices(24 * 7) or []):
+            if rt["pacing"].seed_fetch(
+                    _r.get("platform"),
+                    (_r.get("from_city"), _r.get("to_city"),
+                     _r.get("depart_date")),
+                    _r.get("price"), parse_local_ts(_r.get("fetched_at"))):
+                _seeded += 1
+        if _seeded:
+            logger.info("[节流] 从库续上 %d 条明细 TTL 基线（重启不重打全量）",
+                        _seeded)
+    except Exception as _se:
+        logger.warning("[节流] TTL 基线续读失败（按无历史启动）: %s", _se)
+    # 案发现场（每渠道最近一次被拦的时间/URL/证据 + 验证后探测结果）
+    rt["scene"] = {}
+    # 每轮只给每个渠道做一次起跑错峰（并发同渠道不重复睡）
+    _stagger_todo = set()
+    _stagger_lock = threading.Lock()
+    # 每轮每个渠道只预热一次（首页 cookie 拿到即可，多发无益）
+    _warm_todo = set()
+    _warm_lock = threading.Lock()
     # 特价监控轮次计数（r319）：每 N 轮跑一次发现，节流语义见 special_due
     _special_round_no = [0]
 
@@ -1761,16 +1789,318 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                 crawler_cache[key] = insts
             return crawler_cache[key]
 
-    def sweep():
+    def warm_channel(platform):
+        """手动预热（可干预入口）：拿实例 → 持 channel_slot → 打一次首页。
+
+        与自动预热共用同一把渠道锁，人工干预不会与采集抢同一会话。
+        """
+        try:
+            insts = get_crawlers([platform])
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:120]}
+        if not insts:
+            return {"ok": False, "err": "未知渠道: %s" % platform}
+        c = insts[0]
+        url = str(getattr(c, "warmup_url", "") or "").strip()
+        if not url:
+            return {"ok": False,
+                    "err": "%s 无独立预热入口（内部自带或不需要）" % platform}
+        try:
+            with channel_slot(c.name):
+                ok = c.warmup()
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:120]}
+        try:
+            if rt.get("pacing") is not None:
+                rt["pacing"].record(platform)
+        except Exception:
+            pass
+        return {"ok": bool(ok), "platform": platform, "url": url}
+
+    rt["warm_channel"] = warm_channel
+
+    def _probe_channel(c, scene):
+        """验证后单查探测：只打一条已知查询，验证「真的通了」。"""
+        q = (scene or {}).get("query") or list(
+            getattr(c, "last_query", ()) or ())
+        if not q:
+            # 没有查询记录也要持渠道锁：预热同样会开浏览器，不能和采集
+            # 抢同一 profile。
+            with channel_slot(c.name):
+                ok = c.warmup()
+                if rt.get("pacing") is not None:
+                    rt["pacing"].record(c.name)
+            return bool(ok), 0, "无查询记录，仅预热"
+        try:
+            fc, tc, d = q[0], q[1], q[2]
+        except (IndexError, TypeError):
+            return False, 0, "查询记录不完整"
+        try:
+            with channel_slot(c.name):
+                prices = c.safe_fetch(fc, tc, [d])
+                if rt.get("pacing") is not None:
+                    rt["pacing"].record(c.name)
+        except Exception as e:
+            return False, 0, str(e)[:120]
+        return bool(prices), len(prices), ""
+
+    def _refetch_failed(platform, limit=8):
+        """验证通过后补采本轮失败的查询（最多 8 条，避免变成第二轮全量）。
+
+        只负责「把缺的数据补回来并落库」；告警仍走下一轮聚合，
+        避免同一条降价因为补采被推两遍。
+        """
+        qs = sorted((rt.get("failed") or {}).get(platform) or [])[:limit]
+        if not qs:
+            return {"n": 0, "rows": 0}
+        try:
+            insts = get_crawlers([platform])
+        except Exception as e:
+            return {"n": 0, "rows": 0, "err": str(e)[:80]}
+        if not insts:
+            return {"n": 0, "rows": 0, "err": "未知渠道"}
+        c = insts[0]
+        got = []
+        for _i, (fc, tc, d) in enumerate(qs):
+            _attempt = "refill-%s-%d-%d" % (platform, int(time.time() * 1000),
+                                            _i)
+            try:
+                with channel_slot(c.name):
+                    got.extend(c.safe_fetch(fc, tc, [d]) or [])
+                    if rt.get("pacing") is not None:
+                        rt["pacing"].record(platform)
+                # 补采也是真实采集：路径账要记，否则「验证后恢复了」
+                # 在统计里看不到，下一轮还会拿旧失败率继续罚该渠道。
+                for _rec in (getattr(c, "paths", None) or []):
+                    try:
+                        storage.save_fetch_path(
+                            platform, fc, tc, d, _rec.get("path", ""),
+                            _rec.get("status", ""),
+                            rows=_rec.get("rows", 0),
+                            note=_rec.get("detail", ""),
+                            evidence_level="refill",
+                            attempt_id=_attempt)
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.warning("[补采] %s %s→%s %s 未完成: %s",
+                               platform, fc, tc, d, e)
+        if got:
+            try:
+                storage.save_many(got)
+                for _k in {(p.from_city, p.to_city, p.depart_date)
+                           for p in got}:
+                    try:
+                        storage.refresh_daily(*_k)
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.warning("[补采] 落库失败: %s", e)
+        logger.info("[补采] %s 补采 %d 条查询，落库 %d 条",
+                    platform, len(qs), len(got))
+        return {"n": len(qs), "rows": len(got)}
+
+    def verify_channel(platform):
+        """现场 + 弹出验证窗口（可干预）：用**采集同一份 profile** 打开
+        被拒地址，人工过验证后 cookie 直接落进采集档案，下一轮生效。
+
+        关窗即视为「人认为搞定了」：自动解除冷却 + 单查探测，把
+        「验证有没有用」当场告诉人，而不是等下轮再猜。
+        """
+        try:
+            insts = get_crawlers([platform])
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:120]}
+        if not insts:
+            return {"ok": False, "err": "未知渠道: %s" % platform}
+        c = insts[0]
+        scene = (rt.get("scene") or {}).get(platform) or {}
+        url = (scene.get("url") or getattr(c, "last_block_url", "")
+               or getattr(c, "warmup_url", "") or c.login_url() or "")
+        if not url:
+            return {"ok": False, "err": "无法确定要打开的地址"}
+        done = threading.Event()
+
+        def _run():
+            bak = c.use_mobile
+            try:
+                # 与采集共用渠道锁：验证窗口开的是采集同一份 profile，
+                # 不持锁会和正在跑的采集抢浏览器（SessionBusy）或让
+                # 两份不同指纹的上下文同时指向同一个档案。
+                if isinstance(scene.get("mobile"), bool):
+                    c.use_mobile = scene["mobile"]
+                with channel_slot(c.name):
+                    c.open_challenge_window(url, done, timeout_s=900)
+            except Exception as e:
+                logger.warning("[验证] %s 窗口异常: %s", platform, e)
+                return
+            finally:
+                c.use_mobile = bak
+            # 关窗 = 人完成了验证：立刻解除冷却并探测一次
+            try:
+                if rt.get("pacing") is not None:
+                    rt["pacing"].reset(platform)
+            except Exception:
+                pass
+            try:
+                if isinstance(scene.get("mobile"), bool):
+                    c.use_mobile = scene["mobile"]
+                ok, rows, note = _probe_channel(c, scene)
+            finally:
+                c.use_mobile = bak
+            # 验证没通过就重新竖起熔断：先 reset 是为了让探测能打出去；
+            # 探测仍被拦时若保持 reset，渠道会显示"已恢复"并在下一轮
+            # 立刻再撞一次——这是把"验证失败"伪装成"已修复"。
+            if not ok and rt.get("pacing") is not None:
+                try:
+                    _st = [x.get("status") for x in
+                           (getattr(c, "paths", None) or [])]
+                    _note = " ".join(
+                        str(x.get("detail") or "") for x in
+                        (getattr(c, "paths", None) or [])
+                        if x.get("status") not in ("ok", "calendar", "empty"))
+                    _kind, _cd = rt["pacing"].observe(
+                        platform, _st, _note,
+                        retry_after=int(
+                            getattr(c, "retry_after_s", 0) or 0))
+                    if _kind:
+                        rt["scene"].setdefault(platform, {})["retripped"] = {
+                            "kind": _kind, "cooldown_s": int(_cd)}
+                        logger.warning(
+                            "[验证] %s 未通过，重新熔断 %ds（%s）",
+                            platform, _cd, _kind)
+                except Exception as _re:
+                    logger.warning("[验证] %s 重新熔断失败: %s",
+                                   platform, _re)
+            refill = _refetch_failed(platform) if ok else {"n": 0, "rows": 0}
+            rt["scene"].setdefault(platform, {})["verify"] = {
+                "at": time.strftime("%H:%M:%S"), "ok": ok,
+                "rows": rows, "note": note, "refill": refill}
+            logger.info("[验证] %s 回归探测：%s（%d 条）%s", platform,
+                        "通过" if ok else "未通过", rows, note)
+
+        try:
+            threading.Thread(target=_run, daemon=True,
+                             name="verify-%s" % platform).start()
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:120]}
+        logger.info("[干预] 打开 %s 验证窗口：%s（关窗即保存会话并自动探测）",
+                    platform, url)
+        return {"ok": True, "platform": platform, "url": url,
+                "scene": scene,
+                "hint": "窗口已打开：完成验证后直接关闭窗口——会话自动保存、"
+                        "冷却自动解除、并立刻单查探测一次"}
+
+    rt["verify_channel"] = verify_channel
+
+    _probe_lock = threading.Lock()
+    _probing = set()
+
+    def probe_channel(platform, timeout_s=90, scope=""):
+        """渠道自检（可干预）：跑完整链路（预热 + 一条真实查询），
+        回报「到底能不能出数」以及出在哪条路上。
+
+        与定时采集共用同一把渠道锁，所以自检不会和正在跑的轮次抢会话；
+        同一渠道同时只允许一次自检。scope=dom/intl 可选：国内与国际
+        走的是不同入口/登录墙，混在一起自检会把"国际被拦"误读成"整家挂"。
+        查询取该 scope 第一条航线的第一个日期——自检验的是链路，不是价格。
+        """
+        _want = str(scope or "").strip().lower()
+        if _want not in ("", "dom", "intl"):
+            return {"ok": False, "err": "scope 必须是 dom/intl/空"}
+        try:
+            insts = get_crawlers([platform])
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:120]}
+        if not insts:
+            return {"ok": False, "err": "未知渠道: %s" % platform}
+        c = insts[0]
+        with _probe_lock:
+            if platform in _probing:
+                return {"ok": False, "err": "该渠道正在自检中，稍后再试"}
+            _probing.add(platform)
+        t0 = time.time()
+        try:
+            q = None
+            for _u in (rt.get("users") or []):
+                for _r in (_u.get("routes") or []):
+                    # 航线可能是 dict（原始配置）也可能是 Route 对象
+                    # （build_users 之后），两种都要能读
+                    def _f(_r, *_ns, _d=""):
+                        for _n in _ns:
+                            _v = (_r.get(_n) if isinstance(_r, dict)
+                                  else getattr(_r, _n, None))
+                            if _v:
+                                return _v
+                        return _d
+                    _ds = _f(_r, "dates") or []
+                    if _ds:
+                        _fc = _f(_r, "from_code", "from", "from_city",
+                                 _d="SHA")
+                        _tc = _f(_r, "to_code", "to", "to_city", _d="NRT")
+                        _is_intl = bool(is_intl_route(_fc, _tc))
+                        if _want == "dom" and _is_intl:
+                            continue
+                        if _want == "intl" and not _is_intl:
+                            continue
+                        q = (_fc, _tc, _ds[0])
+                        break
+                if q:
+                    break
+            if not q and _want:
+                return {"ok": False,
+                        "err": "当前配置没有%s航线，无法按该范围自检"
+                               % ("国际" if _want == "intl" else "国内")}
+            if not q:
+                q = ("SHA", "NRT", _dtm.now().strftime("%Y-%m-%d"))
+            warm = None
+            if str(getattr(c, "warmup_url", "") or "").strip():
+                with channel_slot(c.name):
+                    warm = c.warmup()
+                if rt.get("pacing") is not None:
+                    rt["pacing"].record(platform)
+            with channel_slot(c.name):
+                prices = c.safe_fetch(q[0], q[1], [q[2]])
+                if rt.get("pacing") is not None:
+                    rt["pacing"].record(platform)
+            paths = [{"path": p.get("path"), "status": p.get("status"),
+                      "rows": p.get("rows"),
+                      "detail": str(p.get("detail") or "")[:80]}
+                     for p in (getattr(c, "paths", None) or [])]
+            out = {"ok": True, "platform": platform, "query": list(q),
+                   "scope": (_want or ("intl" if is_intl_route(q[0], q[1])
+                                       else "dom")),
+                   "rows": len(prices), "paths": paths,
+                   "warmup": (bool(warm) if warm is not None else None),
+                   "cookies": list(getattr(c, "warmup_cookies", []) or []),
+                   "blocked_url": (c.last_block_url or "")[:120],
+                   "api": (getattr(c, "last_block_api", "") or "")[:120],
+                   "scene": dict(getattr(c, "last_scene", {}) or {}),
+                   "retry_after": int(getattr(c, "retry_after_s", 0) or 0),
+                   "ms": int((time.time() - t0) * 1000)}
+            logger.info("[自检] %s/%s → %d 条（%s，%.1fs）", platform,
+                        out["scope"], out["rows"],
+                        "/".join(str(p["status"]) for p in paths) or "无路径",
+                        out["ms"] / 1000.0)
+            return out
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:160]}
+        finally:
+            with _probe_lock:
+                _probing.discard(platform)
+
+    rt["probe_channel"] = probe_channel
+
+    def sweep(force=False):
         if not _sweep_lock.acquire(blocking=False):
             logger.warning("[扫描] 上一轮仍在进行，跳过本次触发")
             return
         try:
-            _sweep_inner()
+            _sweep_inner(force=force)
         finally:
             _sweep_lock.release()
 
-    def _sweep_inner():
+    def _sweep_inner(force=False):
         from core.pulse import PULSE
         from datetime import datetime as _dtm
         # 轮次标记（单源）：同一轮多航线按顺序完成可跨 8-10 分钟，
@@ -1790,6 +2120,43 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
             except OSError as _e:
                 logger.warning("[扫描] 轮次标记写入失败: %s", _e)
 
+        # 1 区 · 夜间静默窗：凌晨价格几乎不动，停扫对监控价值无损、
+        # 对站点负荷收益最大。手动「立即扫描」传 force 绕过（人要马上看）。
+        # 位置刻意在 _mark_scan 之前——静默轮不落轮次标记，否则控制台
+        # 会把「本轮」当成一次全渠道空轮，反而像集体故障。
+        pac = rt.get("pacing")
+        if pac is not None:
+            try:
+                if not force and pac.quiet_now():
+                    logger.info(
+                        "[节流] 夜间静默窗 %s–%s 内，本轮跳过采集"
+                        "（手动「立即扫描」可强制）",
+                        pac.cfg.get("scan_quiet_start") or "-",
+                        pac.cfg.get("scan_quiet_end") or "-")
+                    return
+            except Exception as _pe:
+                logger.warning("[节流] 静默窗判定失败，本轮照常扫描: %s", _pe)
+            pac.begin_round(_dtm.now().strftime("%H:%M:%S"))
+            # 轮次代际：超时泊车的 worker 可能晚于本轮结束才拿到渠道锁，
+            # 它不能再发请求、也不能把现场/失败写进下一轮的账。
+            rt["_round_gen"] = int(rt.get("_round_gen") or 0) + 1
+            _stagger_todo.clear()
+            _warm_todo.clear()
+            rt["failed"] = {}          # 本轮失败的渠道查询（验证后补采用）
+            # 成功率保护（自动）：近 24h 账本差的渠道自动拉长 TTL，
+            # 不等它撞出 429 才熔断。读一次聚合，失败不影响本轮。
+            try:
+                for _p, _node in (storage.path_stats(24) or {}).items():
+                    _qn = int(_node.get("query_attempts") or 0)
+                    if _qn >= 5:
+                        # 查询口径：H5 被拦但 PC 兜底成功 = 渠道仍健康；
+                        # 用路径口径会把"换路成功"误罚成整家降频。
+                        pac.set_health(_p, _node.get("query_rate") or 0, _qn)
+                    else:
+                        pac.set_health(_p, _node.get("rate") or 0,
+                                       _node.get("attempts") or 0)
+            except Exception as _he:
+                logger.warning("[节流] 成功率账本读取失败: %s", _he)
         _mark_scan()
         users, alerters = rt["users"], rt["alerters"]
         if disk_low(_REPO_ROOT):
@@ -1818,22 +2185,235 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                         ", ".join(f"{fc}→{tc} {d}" for fc, tc, d in _expired_q))
         PULSE.begin()
         ch_rows = {}   # 渠道 → 本轮合计行数（整轮零记录哨输入）
+        _paced_n = [0]  # 本轮被节流主动跳过的渠道查询数（可观测）
+        _ran_plats = set()  # 本轮真正发过请求的渠道（告警只对它们计数）
         qry_sup = {}   # 渠道 → {dom/intl: [有记录查询数, 采集查询数]}
         # （部分断供哨输入，c330 F1 起按域分流：intl 结构性零供给面
         # 不与 dom 合并成假比率，哨内逐域独立评估）
 
-        def _timed_fetch(c, fc_, tc_, d_):
+        def _stagger_wait(name):
+            """5 区 · 起跑错峰：同轮每家只偏移一次，且不持任何锁。"""
+            if pac is None or not pac.cfg.get("stagger_seconds"):
+                return
+            with _stagger_lock:
+                if name in _stagger_todo:
+                    return
+                _stagger_todo.add(name)
+            d = stagger_offset(name, pac.cfg["stagger_seconds"])
+            if d > 0:
+                logger.info("[节流] %s 起跑偏移 %.1fs（同轮渠道不挤同一秒）",
+                            name, d)
+                time.sleep(d)
+
+        def _warm_once(c):
+            """L1/L3 · 本轮首次用到该渠道时先打首页（持 channel_slot）。
+
+            深链直入是最强的机器指纹（无 referer、无风控 cookie）；先访问
+            首页能把这一条抹掉。每轮每渠道只做一次，失败不阻断采集。
+            """
+            if pac is None or not pac.cfg.get("warmup_enabled"):
+                return
+            in_list = c.name in (pac.cfg.get("warmup_platforms") or ())
+            # 会话老化看门狗：profile 太久没更新会被站点当"新设备"，
+            # 超过 session_max_days 时即便不在预热名单也强制续一次
+            try:
+                aged = bool(getattr(c, "session_max_days", 0)) and (
+                    c.session_age_days > c.session_max_days)
+            except Exception:
+                aged = False
+            if not in_list and not aged:
+                return
+            if not str(getattr(c, "warmup_url", "") or "").strip():
+                return
+            if aged and not in_list:
+                logger.warning("[会话] %s 已 %.0f 天未更新，强制预热续期",
+                               c.name, c.session_age_days)
+            with _warm_lock:
+                if c.name in _warm_todo:
+                    return
+                _warm_todo.add(c.name)
+            with channel_slot(c.name):
+                ok = c.warmup()
+                # 预热也是一次真实请求：计入令牌桶，避免紧接着的深链
+                # 请求把"首页+列表"挤在同一秒（等于没降频）。
+                if pac is not None:
+                    pac.record(c.name)
+                return ok
+
+        def _timed_fetch(c, fc_, tc_, d_, th_min=None, gen=None):
             # 单渠道计时入脉冲（成败=是否有数据），控制台可观察性数据源
             t0 = time.time()
             prices = []
-            # 返程日多选（AiLao）：逐返程日采集（行级 ret_date 列天然
-            # 承载，crawler/storage 零改动）；单值/无返程退化为单次
-            # fetch（rds=[""] 与旧行为逐字节等价）
-            for _rd in (ret_dates.get((fc_, tc_, d_)) or [""]):
-                with channel_slot(c.name):
-                    prices.extend(c.safe_fetch(fc_, tc_, [d_],
-                                               ret_date=_rd))
-            paths = list(getattr(c, "paths", []) or [])
+            key = (fc_, tc_, d_)
+            # 提交时由主线程传入轮次代际；worker 晚启动/晚拿锁时用它
+            # 判断"这已经是上一轮的活了"。
+            _gen = gen
+            if _gen is not None and rt.get("_round_gen") != _gen:
+                return [], "paced"
+            # 同一轮同一渠道的一次采集（含多返程日）共用一个 attempt_id，
+            # 路径账据此按「查询」而不是按「路径行」算成功率。
+            _attempt = "%s-%d-%d" % (c.name, int(time.time() * 1000),
+                                     threading.get_ident())
+            _prices = []
+            _paths = []
+            # 证据必须在渠道锁内取走：超时泊车的 worker 之后仍会继续写
+            # c.paths / last_scene，锁外读可能读到"下一个查询"的证据，
+            # 把 A 查询的拦截算到 B 查询头上。这里一次快照，后续只用副本。
+            # 3/5 区闸门一律在「渠道锁外」判定与等待——持锁睡眠会把
+            # 5 家渠道串成一条队，慢渠道拖死整轮（旧 310s 预防等待的教训）
+            if pac is not None:
+                try:
+                    tier, why = pac.plan_query(c.name, key, th_min)
+                    pac.note_plan(c.name, key, tier, why)
+                    if tier == "skip":
+                        return [], "paced"
+                    ok, remain = pac.allow(c.name)
+                    if not ok:
+                        _ch = (pac.snapshot()["channels"].get(c.name) or {})
+                        logger.info(
+                            "[节流] %s 熔断中（剩余 %ds · %s），本轮跳过"
+                            " %s→%s %s", c.name, remain,
+                            _ch.get("reason") or "?", fc_, tc_, d_)
+                        return [], "paced"
+                    _stagger_wait(c.name)
+                    _warm_once(c)
+                    if _gen is not None and rt.get("_round_gen") != _gen:
+                        return [], "paced"
+                    # 令牌桶等待必须有预算上限：wait_hint 只算不睡，
+                    # 这里睡到窗口重新可用为止；若超过本轮 30s 预算，
+                    # 宁可跳过这条查询，也不提前打出去把限额坐实。
+                    _deadline = time.time() + 30.0
+                    while True:
+                        _w = pac.wait_hint(c.name)
+                        if _w <= 0:
+                            break
+                        if _w > max(0.0, _deadline - time.time()):
+                            logger.info(
+                                "[节流] %s 令牌桶还需 %.1fs，超过本轮预算，"
+                                "跳过 %s→%s %s", c.name, _w, fc_, tc_, d_)
+                            return [], "paced"
+                        logger.info("[节流] %s 令牌桶等待 %.1fs", c.name, _w)
+                        time.sleep(_w + 0.05)
+                except Exception as _pe:
+                    logger.warning("[节流] 前置闸门异常（放行本轮）: %s", _pe)
+            with channel_slot(c.name):
+                if _gen is not None and rt.get("_round_gen") != _gen:
+                    logger.info("[节流] %s 上一轮超时 worker 让位，不再发请求",
+                                c.name)
+                    return [], "paced"
+                # 2 区 · 整批持锁：同渠道多返程日一次做完，避免释放锁后
+                # 被别的查询插进来——插队会打断入口页预热链（444 之源）
+                for _rd in (ret_dates.get(key) or [""]):
+                    if _gen is not None and rt.get("_round_gen") != _gen:
+                        # 轮次已翻页：这条旧查询不再发新请求，避免"上一轮
+                        # 的活"在下一轮继续占额度/打断预热链
+                        logger.info("[节流] %s 旧轮查询在返程循环中让位",
+                                    c.name)
+                        return [], "paced"
+                    if pac is not None:
+                        pac.record(c.name)
+                    c.last_query = key
+                    _prices.extend(c.safe_fetch(fc_, tc_, [d_],
+                                                ret_date=_rd))
+                    if getattr(c, "last_busy", False):
+                        # 4 区 · 会话卫生：自家 profile 互斥没抢到只让位，
+                        # 不重试——重试会跳过入口预热，把自家冲突变成对方
+                        # 眼里的「新会话直捣深链」（444 主因）
+                        if pac is not None:
+                            pac.note_busy(c.name)
+                        logger.warning(
+                            "[会话] %s profile 正被占用，本轮让位该渠道"
+                            "（不重试：裸 cookie 连打会把冲突升级成 444）",
+                            c.name)
+                        break
+                _paths = [dict(x) for x in (getattr(c, "paths", []) or [])]
+            prices = _prices
+            paths = _paths
+            if pac is not None and not prices:
+                try:
+                    if _gen is None or rt.get("_round_gen") == _gen:
+                        rt.setdefault("failed", {}).setdefault(
+                            c.name, set()).add(key)
+                except Exception:
+                    pass
+            # 服务端让我们等多久（429/503 的 Retry-After）：有就优先于
+            # 自算的 2^n 阶梯——这是唯一「对方明说」的配额信号
+            _ra = 0
+            _gen_ok = (_gen is None or rt.get("_round_gen") == _gen)
+            if pac is not None:
+                try:
+                    _ra = int(getattr(c, "retry_after_s", 0) or 0)
+                    c.retry_after_s = 0
+                except (TypeError, ValueError, AttributeError):
+                    _ra = 0
+                if prices:
+                    # 出数即健康：哪怕某条 fallback 路径被拒（H5 blocked →
+                    # PC ok），也不能据失败路径把整渠道熔断——那会把
+                    # "换路径成功"误判成"被封"，是本末倒置。
+                    # 但旧轮 worker 的结果不能改新轮的熔断/TTL 状态。
+                    if _gen_ok:
+                        pac.reset(c.name)
+                        try:
+                            pac.note_fetch(c.name, key,
+                                           min(p.price for p in prices), True)
+                        except (AttributeError, TypeError, ValueError):
+                            pass
+                else:
+                    # 2 区 · 落地归因：只拿「失败路径」的证据判定——成功
+                    # 路径的文案（接口字段里带「验证」字样）不能触发熔断
+                    _bad = [x for x in paths
+                            if x.get("status") not in ("ok", "calendar",
+                                                       "empty")]
+                    _note = " ".join(str(x.get("detail") or "")
+                                     for x in _bad)
+                    if _gen_ok:
+                        _kind, _cd = pac.observe(
+                            c.name, [x.get("status") for x in _bad], _note,
+                            retry_after=_ra)
+                    else:
+                        _kind, _cd = "", 0
+                    if _kind:
+                        # 案发现场：时间/类型/查询/被拒 URL/证据摘要，
+                        # 「去验证」直接拿它开窗口，不用人工再找一遍
+                        # 轮末之后才落地的证据不写：它属于上一轮，写进来
+                        # 会让下一轮的「去验证」打开上一轮的现场。
+                        if _gen is not None and rt.get("_round_gen") != _gen:
+                            _kind = ""
+                            _cd = 0
+                    if _kind:
+                        _bad0 = next(
+                            (x for x in _bad
+                             if x.get("status") in ("blocked", "login")),
+                            _bad[0] if _bad else {})
+                        rt["scene"][c.name] = {
+                            "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                            "kind": _kind, "query": list(key),
+                            "url": str(getattr(c, "last_block_url", "") or ""),
+                            "api": str(getattr(c, "last_block_api", "") or ""),
+                            "note": _note[:200],
+                            # 被拦时用的 PC/H5 身份：验证窗口必须复用，
+                            # 不能拿另一个视口去过验证
+                            "mobile": (bool(_bad0.get("mobile"))
+                                       if "mobile" in _bad0 else None),
+                            "files": dict(getattr(c, "last_scene", {}) or {})}
+                        _ch = (pac.snapshot()["channels"].get(c.name) or {})
+                        logger.warning(
+                            "[节流] %s 命中%s，熔断 %ds（第 %d 次）",
+                            c.name, _kind, _cd, _ch.get("strikes", 0))
+                        # 自动开窗（可配置）：命中人机验证时直接把窗口端到
+                        # 人面前，不用等人发现状态条变红。同渠道 10 分钟内
+                        # 只开一次，防连点。
+                        _auto = bool(((rt.get("cfg") or cfg).get("crawler")
+                                      or {}).get("auto_verify", False))
+                        if _auto and _kind == "captcha":
+                            _av = rt.setdefault("_auto_verify_at", {})
+                            if time.time() - _av.get(c.name, 0) > 600:
+                                _av[c.name] = time.time()
+                                logger.info("[干预] %s 命中验证，自动打开"
+                                            "验证窗口（auto_verify）", c.name)
+                                threading.Thread(
+                                    target=verify_channel, args=(c.name,),
+                                    daemon=True).start()
             ok_paths = [x for x in paths
                         if x.get("status") in ("ok", "calendar")]
             selected = ok_paths[-1] if ok_paths else None
@@ -1842,7 +2422,8 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                 rid = storage.save_fetch_path(
                     c.name, fc_, tc_, d_, rec.get("path", ""),
                     rec.get("status", ""), rows=rec.get("rows", 0),
-                    note=rec.get("detail", ""), evidence_level="path")
+                    note=rec.get("detail", ""), evidence_level="path",
+                    attempt_id=_attempt)
                 if rec is selected:
                     pid = rid
             prov = json.dumps({
@@ -1862,7 +2443,7 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                 PULSE.channel(c.name, len(prices), time.time() - t0)
             except Exception:
                 pass
-            return prices
+            return prices, "ok"
 
         # 往返回程日旁挂（R15，INTL_DESIGN §2.6；r339 多返程扩展）：
         # 查询键 (fc,tc,d) → 返程日列表——同键多用户取并集（去重保
@@ -1910,11 +2491,23 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
             ex = concurrent.futures.ThreadPoolExecutor(
                 max_workers=max(1, len(plats) or 1))
             try:
-                futs = {ex.submit(_timed_fetch, c, fc, tc, d): c.name
+                futs = {ex.submit(_timed_fetch, c, fc, tc, d, th_min,
+                                  rt.get("_round_gen")): c.name
                         for c in get_crawlers(plats)}
                 results, timed_out = _collect_route_futures(
                     futs, timeout_s=_ROUTE_FUT_TIMEOUT, logger=logger)
-                for _nm, prices in results:
+                for _nm, _res in results:
+                    # 节流跳过（TTL 内 / 熔断中 / 会话让位）不进健康分母：
+                    # 主动不发请求不是"断供"，否则健康度被自己的克制染红，
+                    # 反而诱导人去"多点几次"把限流坐实
+                    if isinstance(_res, tuple) and len(_res) == 2:
+                        prices, _meta = _res
+                    else:
+                        prices, _meta = (_res or []), "ok"
+                    if _meta == "paced":
+                        _paced_n[0] += 1
+                        continue
+                    _ran_plats.add(_nm)
                     all_prices.extend(prices)
                     ch_rows[_nm] = ch_rows.get(_nm, 0) + len(prices)
                     # 分母按域分流（c330 F1）：渠道×域结构性零供给面
@@ -1977,6 +2570,73 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                                and p.depart_date == d]
                         user_pairs.setdefault(ui, []).append((r, sub))
             logger.info("[扫描] %s→%s %s 完成（%d/%d）", fc, tc, d, qi + 1, len(queries))
+        # 节流账本（可观测）：「少发了多少」比「抓到了多少」更能说明风险
+        # 姿态——只跳不报等于黑箱，用户会误以为是渠道挂了
+        if pac is not None:
+            try:
+                _lr = pac.snapshot()["last_round"]
+                _fast = int(_lr.get("fast") or 0)
+                _slow = int(_lr.get("slow") or 0)
+                _ttl = int(_lr.get("skip") or 0)
+                logger.info(
+                    "[节流] 计划 %d 次渠道查询（快层 %d / 慢层 %d / TTL 内 %d）"
+                    "；实际未发 %d 次 · 熔断触发 %d · 会话让位 %s",
+                    _fast + _slow + _ttl, _fast, _slow, _ttl, _paced_n[0],
+                    len(_lr.get("trips") or []),
+                    ",".join(_lr.get("busy") or []) or "无")
+            except Exception as _pe:
+                logger.warning("[节流] 账本汇总失败: %s", _pe)
+        # 渠道级告警：连续 N 轮零数据主动推一条（不替代面板，只是别让人
+        # 一直盯着）。只在"真的发过请求"的渠道上计数——被节流跳过的轮次
+        # 不算断供，否则静默窗会误报。
+        try:
+            # 配置就近用户（所有 notifier 设置都在 users[].notifier 里），
+            # 顶层 notifier 只作兼容兜底。多用户时取第一个真正配了推送
+            # 的用户，不能因为 0 号用户没配就整条告警静默。
+            _u0 = next(
+                (u for u in (rt.get("users") or [])
+                 if (u.get("notifier") or {})), {})
+            _cn = ((_u0.get("notifier") or {}).get("channel_alert")
+                   or ((rt.get("cfg") or cfg).get("notifier") or {})
+                   .get("channel_alert") or {})
+            if _cn.get("enabled", True):
+                import time as _t
+                from core.channel_alert import alert_text, should_alert
+                _rounds = int(_cn.get("rounds", 3) or 3)
+                _cool = float(_cn.get("cooldown_h", 6) or 6) * 3600
+                _now = _t.time()
+                for _p in _ran_plats:
+                    _st = rt.setdefault("zero_streak", {}).setdefault(
+                        _p, {"n": 0, "last_alert": 0.0, "last_ok": 0.0})
+                    if ch_rows.get(_p, 0) > 0:
+                        _st["n"] = 0
+                        _st["last_ok"] = _now
+                        continue
+                    _st["n"] = int(_st.get("n") or 0) + 1
+                    if not should_alert(_st["n"], _rounds, _st["last_alert"],
+                                        _now, _cool):
+                        continue
+                    _a0 = next((a for a in alerters
+                                if getattr(a, "notifier", None) is not None),
+                               None)
+                    if _a0 is None:
+                        continue
+                    try:
+                        if _a0._in_quiet():
+                            continue
+                    except Exception:
+                        pass
+                    _scene = (rt.get("scene") or {}).get(_p) or {}
+                    _title, _desp = alert_text(
+                        _p, _st["n"], _st.get("last_ok"), _now,
+                        _scene.get("note") or "")
+                    _a0.notifier.send(sanitize_desp(_title),
+                                      sanitize_desp(_desp))
+                    _st["last_alert"] = _now
+                    logger.warning("[渠道告警] %s 连续 %d 轮零数据，已推送",
+                                   _p, _st["n"])
+        except Exception as _ce:
+            logger.warning("[渠道告警] 判定失败: %s", _ce)
         # 轮末统一分发（全部航线采集完成后聚合推送）
         for ui, pairs in user_pairs.items():
             try:
@@ -2284,6 +2944,29 @@ def main():
             _State.users, _State.cfg = rt["users"], cfg
         except Exception:
             pass
+        # 节流参数热更新（1–5 区）：只换阈值，保留熔断/令牌桶的既成状态
+        # （热改参数不该顺带"赦免"一个刚被限流的渠道）
+        try:
+            _pac = rt.get("pacing")
+            if _pac is not None:
+                _pac.refresh(cfg)
+                try:
+                    from webui import _State as _WS
+                    _WS.pacing = _pac
+                except Exception:
+                    pass
+                _pc = _pac.cfg
+                logger.info(
+                    "[热重载] 节流已更新：快 %.0f/慢 %.0f 分钟 · 静默 %s–%s"
+                    " · 错峰 %ds · 熔断 %s（base %ds/cap %ds）",
+                    _pc["fast_ttl_min"], _pc["slow_ttl_min"],
+                    _pc["scan_quiet_start"] or "关",
+                    _pc["scan_quiet_end"] or "关",
+                    _pc["stagger_seconds"],
+                    "开" if _pc["breaker_enabled"] else "关",
+                    _pc["breaker_base_s"], _pc["breaker_cap_s"])
+        except Exception as e:
+            logger.warning("[热重载] 节流参数更新失败: %s", e)
         # 调度周期热更新：interval 变化时重排调度器（无需重启）
         try:
             sc = (cfg.get("schedule") or {})
@@ -2407,10 +3090,21 @@ def main():
                     ok = build_and_push(cfg, logger, a.notifier, user=u["name"]) and ok
                 return ok
 
-            start_web(cfg, sweep, _report_push, logger, users=rt["users"],
+            # 控制台「立即扫描」传 force：人工要马上看结果，静默窗不该挡
+            start_web(cfg, lambda: sweep(force=True), _report_push, logger,
+                      users=rt["users"],
                       alerters=rt["alerters"],
                       reload_cb=reload_config, config_path=str(cfg_path),
                       version=__version__, login_saved_cb=rt["clear_crawlers"])
+            try:
+                from webui import _State as _WS
+                _WS.pacing = rt.get("pacing")
+                _WS.warm_cb = rt.get("warm_channel")
+                _WS.verify_cb = rt.get("verify_channel")
+                _WS.probe_cb = rt.get("probe_channel")
+                _WS.scene = rt.get("scene")
+            except Exception:
+                pass
             rt["web_port"] = int((cfg.get("web") or {}).get("port", 8765))
             rt["headless"] = bool((cfg.get("crawler") or {}).get(
                 "headless", True))

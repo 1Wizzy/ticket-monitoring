@@ -17,6 +17,7 @@ import logging
 from typing import Optional
 
 import httpx
+from core import net as _net
 
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
        "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -63,7 +64,7 @@ def fetch_tuniu_calendar(from_code: str, to_code: str, departure_date: str,
         "type": "1", "serverMonth": 12,
     }
     try:
-        with httpx.Client(
+        with _net.new_client(
                 headers={"User-Agent": _UA,
                          "Accept": "application/json, text/javascript, */*; q=0.01",
                          "Referer": "https://m.tuniu.com/"},
@@ -116,7 +117,7 @@ def fetch_tuniu_board(logger: logging.Logger, timeout: float = 15.0,
     proxy：可选本地代理（如 http://127.0.0.1:7897，Clash 出口 IP
     即榜单城市——想换城市看榜换出口即可；空=直连）。"""
     try:
-        with httpx.Client(
+        with _net.new_client(
                 headers={"User-Agent": _UA,
                          "Referer": "http://flight.tuniu.com/"},
                 timeout=timeout,
@@ -158,7 +159,7 @@ def fetch_ctrip_calendar(from_code: str, to_code: str, start_date: str,
         "lowPriceExtendInfo": [],
     }
     try:
-        with httpx.Client(
+        with _net.new_client(
                 headers={"User-Agent": _UA,
                          "Content-Type": "application/json",
                          "Referer": "https://m.ctrip.com/"},
@@ -208,7 +209,7 @@ def fetch_ctrip_board(from_code: str, from_name: str, start_date: str,
                                       "end": end_date}],
                              "ddate": None}]}
     try:
-        with httpx.Client(
+        with _net.new_client(
                 headers={"User-Agent": _UA,
                          "Content-Type": "application/json",
                          "Referer": "https://m.ctrip.com/"},
@@ -233,7 +234,7 @@ def fetch_fliggy_calendar(from_code: str, to_code: str, leave_date: str,
     fc = airport_city_code(from_code)
     tc = airport_city_code(to_code)
     try:
-        with httpx.Client(
+        with _net.new_client(
                 headers={"User-Agent": _UA,
                          "Referer": "https://sijipiao.fliggy.com/ie/"
                                     "flight_search_result.htm"},
@@ -277,7 +278,7 @@ def fetch_tongcheng_calendar(from_code: str, from_name: str, to_code: str,
         "channel": 4,
     }
     try:
-        with httpx.Client(
+        with _net.new_client(
                 headers={"User-Agent": ("Mozilla/5.0 (iPhone; CPU iPhone OS "
                                         "17_0 like Mac OS X) AppleWebKit/605.1.15"
                                         " (KHTML, like Gecko) Version/17.0 "
@@ -324,7 +325,7 @@ def fetch_fliggy_board(from_code: str, start_date: str, end_date: str,
     0 条实测）；startDate/endDate 窗实证 3/7 天形态。trust_env 恒
     False，proxy 语义同 fetch_tuniu_board。"""
     try:
-        with httpx.Client(
+        with _net.new_client(
                 headers={"User-Agent": _UA,
                          "Referer": "https://www.fliggy.com/jipiao/"},
                 timeout=timeout, trust_env=False,

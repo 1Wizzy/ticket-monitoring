@@ -48,6 +48,11 @@ users:
   notifier:
     digest: true             # 每轮行情心跳推送（关闭后日报也不发）
     storm_repeat: 3          # 新达标风暴连推条数（1=关闭）
+    # 渠道级告警：连续 N 轮零数据主动推一条（被节流跳过的轮次不计）
+    channel_alert:
+      enabled: true
+      rounds: 3          # 连续几轮零数据算故障
+      cooldown_h: 6      # 同一渠道两次告警的最小间隔（小时）
     report_hour: 9           # 每日该时刻图文日报（需 digest: true）
     quiet_start: '23:00'     # 免打扰开始（可选；时段内静默心跳/电话/风暴）
     quiet_end: '07:00'       # 免打扰结束（支持跨零点）
@@ -109,11 +114,62 @@ schedule:
   interval_minutes: 30
   jitter_minutes: 5
   run_on_start: true
+  # ── 节流四件（1/3/5 区，保存即热生效）──────────────────────────
+  # 夜间静默窗：只管「抓取」，不影响推送（推送免打扰在 notifier.quiet_*）。
+  # 留空=关闭；跨零点自动识别（如 23:00 → 07:00）。
+  scan_quiet_start: '01:00'
+  scan_quiet_end: '07:00'
+  # 两级 TTL：现价贴近心理价位→快层；远离→降频到慢层（省下的是大头）。
+  # fast_ttl 建议 < interval−jitter，否则早到的轮次会被 TTL 挡掉。
+  fast_ttl_min: 15
+  slow_ttl_min: 120
+  near_ratio: 0.15          # |现价−阈值|÷阈值 ≤ 此值算「贴近」
+  stagger_seconds: 25       # 同轮各渠道起跑错开（5 家均分），防同秒齐发
 crawler:
   headless: true
   timeout_seconds: 45
   delay_min: 5
   delay_max: 15
+  # ── 请求预算（5 区）：同一渠道的节流，0=不限 ──────────────────
+  rate:
+    min_gap_s: 3            # 两次请求最小间隔（秒）；qunar 内部另有 8s
+    per_minute: 0           # 每分钟上限（滑动窗口）；0=不限
+  # ── 熔断（2 区）：命中 429/风控/验证后「停手」，不是换姿势重试 ──
+  breaker:
+    enabled: true
+    base_s: 300             # 首次冷却；连续命中按 2 倍阶梯递增
+    cap_s: 3600             # 单次冷却上限
+    login_cooldown_s: 900   # 登录墙冷却（固定，不随命中次数增长）
+  # ── 首页预热（L1/L3）：每轮每渠道先打一次首页再查深链 ──────────
+  # 深链直入是最强的机器指纹（无 referer、无风控下发的 cookie）。
+  # 只对声明了 warmup_url 的渠道生效；ctrip 与同程在 fetch 内部自带预热。
+  warmup:
+    enabled: true
+    platforms: [qunar, fliggy, tuniu]
+  # 指纹一致性（L3）：抹掉 navigator.webdriver 等「自动化浏览器」标记。
+  # 只让页面看到一个普通 Chrome——不伪造账号、不破解验证、不改 IP。
+  stealth: true
+  # 登录/验证窗口默认沿用该 profile 的 PC/H5 身份（指纹幂等）。
+  # 仅当手机 profile 的滑块无法用鼠标完成时，才开启强制桌面登录；
+  # 代价是登录指纹与采集指纹不一致。
+  login_desktop: false
+  # ── 按渠道绑出口（可选）：不同渠道走不同端口/节点，一家被限不牵连另一家 ──
+  # 例：proxy_map: {qunar: 'http://127.0.0.1:7897', ctrip: 'http://127.0.0.1:7891'}
+  # 空=跟随 crawler.proxy。国内站建议国内节点（境外出口=风控升档）。
+  proxy_map: {}
+  # ── 每渠道最小采集间隔（分钟；0=跟随全局 TTL）──────────────────
+  # 慢渠道不要被全局 30 分钟的节奏催；qunar 这类高风控可给 45–60。
+  cadence:
+    qunar: 0
+    fliggy: 0
+    ctrip: 0
+    tongcheng: 0
+    tuniu: 0
+  # 会话年龄看门狗：profile 超过 N 天没更新就强制预热续期（0=关）
+  session_max_days: 14
+  # 命中人机验证时自动弹出验证窗口（同一采集会话；不代答验证）。
+  # 同渠道 10 分钟只开一次，默认关——上班时间被弹窗打断的人可以关掉。
+  auto_verify: false
   # 浏览器内核目录（可选，留空=默认装系统盘用户目录约 500MB）：配置后
   # chromium 缓存安装与查找全部指向该目录（如 D:/pw-cache），重启生效。
   # browser_dir: ''

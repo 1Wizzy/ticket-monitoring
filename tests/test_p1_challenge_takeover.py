@@ -201,6 +201,7 @@ def test_visible_window_detects_close(monkeypatch):
     monkeypatch.setattr(
         base.time, "sleep",
         lambda s: (_ for _ in ()).throw(AssertionError("should not sleep")))
-    with pytest.raises(RuntimeError, match="关闭"):
-        c.open_challenge_window("https://example.invalid/", threading.Event(),
-                                timeout_s=10)
+    # r379: closing the window is the intended "done" signal; it must
+    # snapshot and return instead of raising (raising lost the session).
+    assert c.open_challenge_window("https://example.invalid/",
+                                   threading.Event(), timeout_s=10) is True

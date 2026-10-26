@@ -93,8 +93,9 @@ def test_p2e_tile_radius_token():
     # + 渠道台 chband 1 处 + 检索浮层 r10 1 处 = 22
     # + 登录双端弹窗 lgmodal 1 处 = 23
     # + v294 扁平化监控卡/雷达监控/健康诊断/关注航班统一卡 6 处 = 29
-    # - v297 登录内层 lgslot 并入外层表面（去掉 1 处内圆角）= 28
-    assert s.count("border-radius:var(--r10)") == 28
+    # v1.5.303 基线 28 处（v297 登录内层 lgslot 并入外层表面 -1）
+    # + r369 节流状态条 paceBox 1 处 = 29
+    assert s.count("border-radius:var(--r10)") == 29
     assert "border-radius:0 var(--r10) var(--r10) var(--r10)" in s
     # --r3=9px 值不动（uitest 在案钉：notify logo 9px）
     assert "--r3:9px" in s

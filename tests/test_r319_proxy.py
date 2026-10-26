@@ -35,7 +35,7 @@ class TestProxyPlumbing(unittest.TestCase):
 
     def test_browser_launch_passes_proxy(self):
         src = _src("crawlers/base.py")
-        self.assertIn('proxy=({"server": self.proxy} if self.proxy else None)',
+        self.assertIn('proxy=({"server": fp["proxy"]} if fp["proxy"] else None)',
                       src)
 
     def test_special_fetchers_accept_proxy(self):

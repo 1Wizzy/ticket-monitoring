@@ -19,6 +19,7 @@ import time
 from typing import List
 
 import httpx
+from core import net as _net
 
 from .base import BaseCrawler, iata2
 from .challenge import classify_text
@@ -43,6 +44,9 @@ class FliggyH5Login(BaseCrawler):
 class FliggyCrawler(BaseCrawler):
     name = "fliggy"
     use_mobile = False  # 桌面 UA（PC SSR 页面）
+    # 预热入口（L3）：PC 首页让 baxia 风控下发 cookie；H5 通道走自己的槽位
+    warmup_url = "https://www.fliggy.com/"
+    RISK_COOKIES = ("cna", "_m_h5_tk", "cookie2")
 
     URL_TPL = ("https://sjipiao.fliggy.com/flight_search_result.htm"
                "?tripType=0&depCity={fc}&arrCity={tc}&depDate={d}"
@@ -295,7 +299,9 @@ class FliggyCrawler(BaseCrawler):
         报错，须调用方过滤），失败返回 None。ret_date（R15）：往返参
         经 _calendar_params 单源（tripType=1+backDate）。"""
         try:
-            with httpx.Client(timeout=25, follow_redirects=True,
+            with _net.new_client(
+                    self.config.get("tls_impersonate", "chrome"),
+                    timeout=25, follow_redirects=True,
                               proxy=(self.proxy or None),
                               headers={
                                   # 校准 R1 实证：无 Referer 被 WAF 拒
@@ -633,7 +639,8 @@ class FliggyCrawler(BaseCrawler):
         with self.browser() as ctx:
             page = self.new_page(ctx)
             try:
-                page.goto(url, wait_until="load", timeout=40000)
+                page.goto(url, wait_until="load", timeout=40000,
+                          referer="https://www.fliggy.com/")
                 last_len, stale = 0, 0
                 for _ in range(8):   # 虚拟列表逐屏收集，收敛即提前退出
                     page.wait_for_timeout(3000)

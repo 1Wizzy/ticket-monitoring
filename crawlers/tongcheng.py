@@ -670,7 +670,8 @@ class TongchengCrawler(BaseCrawler):
                 self.logger.info("[tongcheng] GET %s", url)
                 captured = self.attach_xhr_collector(page, self.XHR_KEYS)
                 try:
-                    page.goto(url, wait_until="domcontentloaded")
+                    page.goto(url, wait_until="domcontentloaded",
+                              referer="https://www.ly.com/")
                     page.wait_for_timeout(8000)
                     for _ in range(4):
                         try:

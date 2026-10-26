@@ -208,7 +208,7 @@ class _FakeClient:
 def _tuniu_crawler(monkeypatch, body):
     import crawlers.tuniu as tn
     from crawlers.tuniu import TuniuCrawler
-    monkeypatch.setattr(tn.httpx, "Client", lambda *a, **k: _FakeClient(body))
+    monkeypatch.setattr(tn._net, "new_client", lambda *a, **k: _FakeClient(body))
     monkeypatch.setattr(tn.time, "sleep", lambda s: None)
     return TuniuCrawler({"rate_limit": False, "max_attempts": 1,
                          "tuniu_max_poll": 1, "delay_min": 0,

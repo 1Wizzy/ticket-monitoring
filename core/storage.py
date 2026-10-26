@@ -209,7 +209,13 @@ class PriceStorage:
                 "depart_date TEXT NOT NULL, entry_path TEXT,"
                 "path_status TEXT, request_url TEXT,"
                 "http_status INTEGER DEFAULT 0, rows INTEGER DEFAULT 0,"
-                "note TEXT, evidence_level TEXT)")
+                "note TEXT, evidence_level TEXT,"
+                "attempt_id TEXT NOT NULL DEFAULT '')")
+            pcols = {r[1] for r in c.execute(
+                "PRAGMA table_info(fetch_paths)")}
+            if "attempt_id" not in pcols:
+                c.execute("ALTER TABLE fetch_paths ADD COLUMN "
+                          "attempt_id TEXT NOT NULL DEFAULT ''")
 
     @staticmethod
     def radar_query_key(query):
@@ -254,21 +260,21 @@ class PriceStorage:
     def save_fetch_path(self, platform, from_city, to_city, depart_date,
                         entry_path, path_status, request_url="",
                         http_status=0, rows=0, note="",
-                        evidence_level="path"):
+                        evidence_level="path", attempt_id=""):
         from datetime import datetime
         with self._conn() as c:
             cur = c.execute(
                 "INSERT INTO fetch_paths (fetched_at,platform,from_city,"
                 "to_city,depart_date,entry_path,path_status,request_url,"
-                "http_status,rows,note,evidence_level) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                "http_status,rows,note,evidence_level,attempt_id) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                  str(platform or ""), str(from_city or ""),
                  str(to_city or ""), str(depart_date or ""),
                  str(entry_path or ""), str(path_status or ""),
                  str(request_url or ""), int(http_status or 0),
                  int(rows or 0), str(note or ""),
-                 str(evidence_level or "path")))
+                 str(evidence_level or "path"), str(attempt_id or "")))
             c.execute("DELETE FROM fetch_paths WHERE fetched_at < "
                       "datetime('now','localtime','-90 days')")
             return int(cur.lastrowid)
@@ -280,6 +286,156 @@ class PriceStorage:
                 "AND depart_date=? ORDER BY id DESC LIMIT ?",
                 (str(from_city or ""), str(to_city or ""),
                  str(depart_date or ""), int(limit))).fetchall()
+        return [dict(r) for r in rows]
+
+    def recent_paths(self, platform="", limit=10):
+        """溯源：某渠道最近 N 条采集尝试（时间/入口/状态/证据）。"""
+        limit = max(1, min(100, int(limit or 10)))
+        plat = str(platform or "").strip()
+        with self._conn() as c:
+            if plat:
+                rows = c.execute(
+                    "SELECT * FROM fetch_paths WHERE platform=? "
+                    "ORDER BY id DESC LIMIT ?", (plat, limit)).fetchall()
+            else:
+                rows = c.execute(
+                    "SELECT * FROM fetch_paths ORDER BY id DESC LIMIT ?",
+                    (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def path_stats(self, hours=24):
+        """路径账聚合：platform × 入口 × 域（国内/国际）→ 尝试/成功。
+
+        - `rate` 是路径尝试口径（含日历）；`detail_rate` 只算真实明细；
+        - `query_rate` 是「一次查询只要有一条路径出数就算成功」的查询口径，
+          用于渠道级健康惩罚——H5 被拦、PC 兜底成功时不能把整家渠道判死；
+        - `last_at` 是最近一次尝试，`last_ok_at` 才是数据新鲜度。
+        """
+        hours = max(1, min(24 * 90, int(hours or 24)))
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT platform, entry_path, path_status, from_city, "
+                "to_city, depart_date, attempt_id, fetched_at "
+                "FROM fetch_paths "
+                "WHERE fetched_at >= datetime('now','localtime', ?) "
+                "ORDER BY id", ("-%d hours" % hours,)).fetchall()
+        try:
+            from core.intl import is_intl_route
+        except Exception:
+            is_intl_route = lambda _a, _b: False
+
+        def new_node():
+            return {"paths": {}, "attempts": 0, "ok": 0, "detail_ok": 0,
+                    "calendar_ok": 0, "blocked": 0, "empty": 0, "error": 0,
+                    "rate": 0.0, "detail_rate": 0.0,
+                    "query_attempts": 0, "query_ok": 0,
+                    "query_detail_ok": 0, "query_calendar_only": 0,
+                    "query_rate": 0.0, "last_at": "", "last_ok_at": ""}
+
+        def new_path():
+            return {"attempts": 0, "ok": 0, "detail_ok": 0, "calendar_ok": 0,
+                    "blocked": 0, "empty": 0, "error": 0, "rate": 0.0,
+                    "detail_rate": 0.0, "last_at": "", "last_ok_at": ""}
+
+        def bump(node, status, last):
+            node["attempts"] += 1
+            if status in ("ok", "calendar"):
+                node["ok"] += 1
+                if status == "ok":
+                    node["detail_ok"] += 1
+                else:
+                    node["calendar_ok"] += 1
+                if last > node["last_ok_at"]:
+                    node["last_ok_at"] = last
+            elif status == "blocked":
+                node["blocked"] += 1
+            elif status == "empty":
+                node["empty"] += 1
+            else:
+                node["error"] += 1
+            if last > node["last_at"]:
+                node["last_at"] = last
+
+        def finish(node):
+            node["rate"] = (round(node["ok"] / node["attempts"], 4)
+                            if node["attempts"] else 0.0)
+            node["detail_rate"] = (round(node["detail_ok"] / node["attempts"], 4)
+                                   if node["attempts"] else 0.0)
+            node["query_rate"] = (
+                round(node["query_ok"] / node["query_attempts"], 4)
+                if node["query_attempts"] else 0.0)
+            for p in node["paths"].values():
+                p["rate"] = (round(p["ok"] / p["attempts"], 4)
+                             if p["attempts"] else 0.0)
+                p["detail_rate"] = (
+                    round(p["detail_ok"] / p["attempts"], 4)
+                    if p["attempts"] else 0.0)
+
+        out = {}
+        queries = {}
+        for r in rows:
+            plat = str(r["platform"] or "")
+            path = str(r["entry_path"] or "?")
+            st = str(r["path_status"] or "")
+            last = str(r["fetched_at"] or "")
+            scope = ("intl" if is_intl_route(r["from_city"], r["to_city"])
+                     else "dom")
+            node = out.setdefault(plat, new_node())
+            node.setdefault("scopes", {"dom": new_node(), "intl": new_node()})
+            node["paths"].setdefault(path, new_path())
+            node["scopes"][scope]["paths"].setdefault(path, new_path())
+            bump(node, st, last)
+            bump(node["paths"][path], st, last)
+            bump(node["scopes"][scope], st, last)
+            bump(node["scopes"][scope]["paths"][path], st, last)
+            aid = str(r["attempt_id"] or "")
+            if aid:
+                q = queries.setdefault((plat, aid), {
+                    "scope": scope, "ok": False, "detail": False,
+                    "calendar": False})
+                q["ok"] = q["ok"] or st in ("ok", "calendar")
+                q["detail"] = q["detail"] or st == "ok"
+                q["calendar"] = q["calendar"] or st == "calendar"
+
+        for (plat, _aid), q in queries.items():
+            node = out.get(plat) or {}
+            scope = (node.get("scopes") or {}).get(q["scope"])
+            for target in (node, scope):
+                if not target:
+                    continue
+                target["query_attempts"] += 1
+                if q["ok"]:
+                    target["query_ok"] += 1
+                if q["detail"]:
+                    target["query_detail_ok"] += 1
+                elif q["calendar"]:
+                    target["query_calendar_only"] += 1
+
+        for node in out.values():
+            finish(node)
+            for sc in (node.get("scopes") or {}).values():
+                finish(sc)
+        return out
+
+    def latest_prices(self, hours=24 * 7):
+        """每个 platform×航线×日期 最近一条「真实明细」价，用于重启续 TTL。
+
+        只取有起飞/到达时刻的行：日历价不是航班明细，拿它当基线会让
+        重启后的首轮误以为"明细已经采过"。
+        """
+        hours = max(1, min(24 * 90, int(hours or 24 * 7)))
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT p.platform, p.from_city, p.to_city, p.depart_date, "
+                "p.price, p.fetched_at FROM flight_prices p "
+                "JOIN (SELECT platform, from_city, to_city, depart_date, "
+                "MAX(id) AS mid FROM flight_prices "
+                "WHERE fetched_at >= datetime('now','localtime', ?) "
+                "AND price > 0 AND COALESCE(depart_time,'') <> '' "
+                "AND COALESCE(arrive_time,'') <> '' "
+                "GROUP BY platform, from_city, to_city, depart_date) x "
+                "ON p.id = x.mid ORDER BY p.id DESC",
+                ("-%d hours" % hours,)).fetchall()
         return [dict(r) for r in rows]
 
     def purge(self, days: int = 14) -> int:

@@ -258,6 +258,10 @@ class QunarCrawler(BaseCrawler):
     LOGIN_URL = "https://user.qunar.com/passport/login.jsp"
     # H5 机票首页：停服后的用户入口（自动取数仍走 URL_TPL 列表页）。
     H5_HOME = "https://touch.qunar.com/h5/flight/"
+    # 预热入口（L1/L3）：先打 H5 首页让风控 JS 下发 cookie，再直捣深链
+    warmup_url = H5_HOME
+    # 预热成效判据：这几个风控 cookie 落下来才算"真的被当成正常会话"
+    RISK_COOKIES = ("QN1", "QunarGlobal", "QN205", "QN277")
 
     def login_url(self) -> str:
         return self.LOGIN_URL
@@ -1494,18 +1498,34 @@ class QunarCrawler(BaseCrawler):
         cookies = dict(token["cookies"])
 
         try:
-            r = httpx.post(
+            # 直连接口走 curl_cffi（Chrome TLS/JA3 指纹）；没装依赖自动退 httpx
+            from core.net import post as _net_post
+            r = _net_post(
                 self.API_URL,
                 headers=headers,
-                content=json.dumps(body, ensure_ascii=False, separators=(",", ":")),
+                payload=json.dumps(body, ensure_ascii=False,
+                                   separators=(",", ":")).encode("utf-8"),
                 cookies=cookies,
                 timeout=25,
+                impersonate=self.config.get("tls_impersonate", "chrome"),
             )
         except Exception as e:
             self.logger.warning("[qunar] httpx 请求异常: %s", e)
             return None
 
         if r.status_code != 200:
+            # 直连路径也要听服务端的 Retry-After（浏览器路径由 base 的
+            # 响应监听负责；httpx 不走 page，得自己读头）
+            try:
+                from core.pacing import parse_retry_after as _pra
+                _ra = _pra((r.headers or {}).get("retry-after"))
+                if _ra:
+                    self.retry_after_s = _ra
+                    self.logger.warning(
+                        "[qunar] 服务端 Retry-After=%ds（HTTP %d）",
+                        _ra, r.status_code)
+            except Exception:
+                pass
             self.logger.warning("[qunar] httpx status=%d", r.status_code)
             return None
 
@@ -1662,7 +1682,7 @@ class QunarCrawler(BaseCrawler):
             page.on("response", on_response)
 
             try:
-                page.goto(url, wait_until="load")
+                page.goto(url, wait_until="load", referer=self.H5_HOME)
                 # 轮询等待请求+响应都拿到
                 for _ in range(12):
                     page.wait_for_timeout(2000)

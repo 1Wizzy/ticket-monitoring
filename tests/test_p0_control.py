@@ -201,5 +201,6 @@ def test_login_window_detects_closed(monkeypatch):
     monkeypatch.setattr(
         base.time, "sleep",
         lambda s: (_ for _ in ()).throw(AssertionError("should not sleep")))
+    # r379: 关窗先落 cookie 快照，再抛错（未确认），调用方不得宣称成功
     with pytest.raises(RuntimeError, match="关闭"):
         c._login_window(threading.Event(), timeout_s=10)

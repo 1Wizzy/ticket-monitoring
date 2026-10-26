@@ -7,6 +7,7 @@ import time
 import logging
 import tempfile
 import threading
+import zlib
 from contextlib import contextmanager
 from typing import List, Optional, Callable
 
@@ -14,6 +15,7 @@ from playwright.sync_api import sync_playwright, BrowserContext, Page, Response
 
 from core.models import PRICE_MAX, PRICE_MIN, FlightPrice
 from core.intl import tz_offset_min
+from core.pacing import parse_retry_after, should_watch_response
 
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -39,9 +41,12 @@ def platform_lock(platform: str) -> threading.Lock:
 
 @contextmanager
 def channel_slot(platform: str):
-    # 统一 global→platform 顺序，避免与探针的嵌套锁顺序相反造成死锁。
-    with CHANNEL_GATE:
-        with platform_lock(platform):
+    # 先拿渠道锁，再拿全局浏览器配额。反过来的话，一个渠道在等自家
+    # 锁时会一直占着全局配额，两个这样的等待者就能把其余渠道全堵死
+    # （头阻塞）；先渠道后全局不会成环，因为没有任何线程跨渠道持锁。
+    lock = platform_lock(platform)
+    with lock:
+        with CHANNEL_GATE:
             yield
 
 
@@ -53,9 +58,130 @@ class SessionBusyError(RuntimeError):
 DESKTOP_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
               "AppleWebKit/537.36 (KHTML, like Gecko) "
               "Chrome/126.0.0.0 Safari/537.36")
+_KERNEL_MAJOR = [0]
+_KERNEL_LOCK = threading.Lock()
+
+
+def kernel_major() -> int:
+    """本机 Playwright Chromium 的真实主版本（带磁盘缓存）。
+
+    用途只有一个：让 UA 里的 Chrome/xx 与真实内核一致。首次调用会起一次
+    无头浏览器读 version（约 1 秒），之后读 data/.kernel_major。
+    失败返回 0（调用方退回原 UA，不阻塞采集）。
+    """
+    if _KERNEL_MAJOR[0]:
+        return _KERNEL_MAJOR[0]
+    with _KERNEL_LOCK:
+        if _KERNEL_MAJOR[0]:
+            return _KERNEL_MAJOR[0]
+        cache = os.path.join("data", ".kernel_major")
+        try:
+            with open(cache, encoding="utf-8") as f:
+                v = int((f.read() or "0").strip() or 0)
+            if v > 0:
+                _KERNEL_MAJOR[0] = v
+                return v
+        except (OSError, ValueError):
+            pass
+        v = 0
+        try:
+            from playwright.sync_api import sync_playwright
+            with sync_playwright() as pw:
+                b = pw.chromium.launch(headless=True)
+                v = int(str(b.version or "0").split(".")[0] or 0)
+                b.close()
+        except Exception:
+            v = 0
+        if v > 0:
+            _KERNEL_MAJOR[0] = v
+            try:
+                os.makedirs("data", exist_ok=True)
+                with open(cache, "w", encoding="utf-8") as f:
+                    f.write(str(v))
+            except OSError:
+                pass
+        return v
+
+
 MOBILE_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
              "AppleWebKit/605.1.15 (KHTML, like Gecko) "
              "Version/16.6 Mobile/15E148 Safari/604.1")
+
+# 本地指纹一致性（crawler.stealth，默认开）：
+# 只抹掉「这是自动化浏览器」的显式标记，让页面看到一个普通 Chrome；
+# 不伪造账号、不破解验证、不改 IP。缺了它，同一份 UA/视口也会因为
+# navigator.webdriver=true 被直接降档——这是误判，不是我们在伪装身份。
+STEALTH_JS = r"""
+(() => {
+  try { Object.defineProperty(Navigator.prototype, 'webdriver',
+        {get: () => undefined, configurable: true}); } catch (e) {}
+  try { if (__ADDCHROME__ && !window.chrome) { window.chrome = {runtime: {}}; } } catch (e) {}
+  try { Object.defineProperty(navigator, 'languages',
+        {get: () => ['zh-CN', 'zh'], configurable: true}); } catch (e) {}
+  try {
+    const q = navigator.permissions && navigator.permissions.query;
+    if (q) {
+      navigator.permissions.query = (p) =>
+        (p && p.name === 'notifications')
+          ? Promise.resolve({state: Notification.permission})
+          : q.call(navigator.permissions, p);
+    }
+  } catch (e) {}
+  try { Object.defineProperty(navigator, 'hardwareConcurrency',
+        {get: () => __CORES__, configurable: true}); } catch (e) {}
+  try { Object.defineProperty(navigator, 'deviceMemory',
+        {get: () => __MEM__, configurable: true}); } catch (e) {}
+  try { Object.defineProperty(navigator, 'platform',
+        {get: () => '__PLAT__', configurable: true}); } catch (e) {}
+
+  // WebGL：把调试扩展里"真实显卡"换成一台普通办公机（UNMASKED_* 是
+  // 最常被拿去做指纹的两个参数，headless 默认值（SwiftShader）几乎是
+  // 自报家门）。
+  const VENDOR = '__GLV__';
+  const RENDERER = '__GLR__';
+  const patchGL = (proto) => {
+    if (!proto) return;
+    const orig = proto.getParameter;
+    if (!orig) return;
+    proto.getParameter = function (p) {
+      if (p === 37445) return VENDOR;    // UNMASKED_VENDOR_WEBGL
+      if (p === 37446) return RENDERER;  // UNMASKED_RENDERER_WEBGL
+      return orig.apply(this, arguments);
+    };
+    const origExt = proto.getSupportedExtensions;
+    if (origExt) {
+      proto.getSupportedExtensions = function () {
+        const list = origExt.apply(this, arguments) || [];
+        if (list.indexOf('WEBGL_debug_renderer_info') < 0) {
+          list.push('WEBGL_debug_renderer_info');
+        }
+        return list;
+      };
+    }
+  };
+  try { patchGL(window.WebGLRenderingContext && WebGLRenderingContext.prototype); } catch (e) {}
+  try { patchGL(window.WebGL2RenderingContext && WebGL2RenderingContext.prototype); } catch (e) {}
+
+  // Canvas：确定性微扰（同一 profile 每次一致、不同 profile 不同）。
+  // 只动 getImageData 的抽样像素（±1），肉眼不可见、不影响渲染，但让
+  // "canvas 哈希"不再是跨会话稳定的唯一标识。用随机数反而更可疑：
+  // 同一会话两次读数不一致，本身就是机器特征。
+  try {
+    const SEED = __SEED__;
+    const origGet = CanvasRenderingContext2D.prototype.getImageData;
+    CanvasRenderingContext2D.prototype.getImageData = function () {
+      const d = origGet.apply(this, arguments);
+      try {
+        const a = d.data;
+        for (let i = 0; i < a.length; i += 997) {
+          a[i] = (a[i] + ((SEED + i) % 3) - 1) & 255;
+        }
+      } catch (e) {}
+      return d;
+    };
+  } catch (e) {}
+})();
+"""
 
 
 def iata3(v) -> str:
@@ -106,12 +232,29 @@ class BaseCrawler:
             status = "error"
         rec = {"path": str(path), "status": status,
                "rows": int(rows or 0), "date": str(date or ""),
-               "detail": str(detail or "")[:160], "ms": int(ms or 0)}
+               "detail": str(detail or "")[:160], "ms": int(ms or 0),
+               # 记录当时是 PC 还是 H5 身份：验证窗口必须复用同一条
+               # 路径的 UA/视口，否则"换个身份去过验证"会制造新指纹。
+               "mobile": bool(getattr(self, "use_mobile", False))}
         if not hasattr(self, "paths"):
             self.path_reset()
         self.paths.append(rec)
         self.last_path = rec["path"]
         self.last_status = rec["status"]
+        # 被拦/登录墙往往返回 200 页面而不是 403：只在响应监听里记现场
+        # 会漏掉最常见的人机验证。path_note 是各渠道确认"这条路过不去"
+        # 的统一落点，在这里补页面 URL，截图仍由上下文收尾统一落盘。
+        if rec["status"] in ("blocked", "login"):
+            try:
+                page = getattr(self, "_last_page", None)
+                url = str(getattr(page, "url", "") or "") if page else ""
+                if url and url != "about:blank":
+                    if not self.last_block_url:
+                        self.last_block_url = url[:500]
+                    if not self._scene_pending:
+                        self._scene_pending = url[:500]
+            except Exception:
+                pass
         cb = getattr(self, "on_path", None)
         if cb:
             try:
@@ -137,6 +280,25 @@ class BaseCrawler:
         # httpx 采集面统一走它，让出口 IP 可变（IP 级限流绕行）。注意
         # 国内站+境外出口=风控风险升档，建议国内直落节点或负载均衡组
         self.proxy: str = str(config.get("proxy", "") or "").strip()
+        # 按渠道绑出口（6 区）：proxy_map 优先于全局 proxy。
+        # 多网卡/Clash 多监听端口/策略组时，让不同渠道走不同出口，
+        # 一家被限流不牵连另一家。空=回全局 proxy（空=直连）。
+        _pmap = config.get("proxy_map") or {}
+        if isinstance(_pmap, dict) and str(_pmap.get(self.name) or "").strip():
+            self.proxy = str(_pmap[self.name]).strip()
+        # 会话年龄看门狗：profile 太久没更新会被站点当"新设备"，超过
+        # N 天时强制预热一次（0=关闭）
+        try:
+            self.session_max_days = max(0, int(
+                config.get("session_max_days", 0) or 0))
+        except (TypeError, ValueError):
+            self.session_max_days = 0
+        # 指纹一致性（默认开）：关掉它 = 保留 navigator.webdriver 等自动化标记
+        self.stealth: bool = bool(config.get("stealth", True))
+        # 登录窗口默认沿用该 profile 自己的 PC/H5 身份；只有显式开启
+        # login_desktop 才强制桌面（手机 profile 上滑块更难拖时的退路，
+        # 代价是登录与采集指纹不一致）。
+        self.login_desktop: bool = bool(config.get("login_desktop", False))
 
     # ---------- 浏览器 ----------
     @property
@@ -163,6 +325,18 @@ class BaseCrawler:
         except (OSError, ValueError):
             self.logger.warning("[%s] 无法读取会话快照", self.name)
             return {}
+
+    @property
+    def session_age_days(self) -> float:
+        """会话距上次保存的天数（无快照=0，视作待建立不算老化）。"""
+        ts = 0.0
+        try:
+            ts = float(self.session_saved_at or 0)
+        except (TypeError, ValueError):
+            ts = 0.0
+        if ts <= 0:
+            return 0.0
+        return max(0.0, (time.time() - ts) / 86400.0)
 
     @property
     def session_saved_at(self) -> float:
@@ -218,14 +392,47 @@ class BaseCrawler:
         return cookies
 
     def _ua(self) -> str:
-        if self.use_mobile:
-            return self.config.get("mobile_user_agent") or MOBILE_UA
-        return self.config.get("user_agent") or DESKTOP_UA
+        ua = ((self.config.get("mobile_user_agent") or MOBILE_UA)
+              if self.use_mobile
+              else (self.config.get("user_agent") or DESKTOP_UA))
+        if not self.stealth:
+            return ua
+        maj = kernel_major()
+        if not maj:
+            return ua
+        # UA 里的 Chrome/126 与真实内核 151 不一致，本身就是一条高熵
+        # 矛盾特征（UA-CH / 特性检测任一条都能看出来）。统一成真实主版本。
+        if "Chrome/" in ua:
+            import re as _re
+            return _re.sub(r"Chrome/\d+(?:\.\d+)*",
+                           "Chrome/%d.0.0.0" % maj, ua)
+        return ua
 
     def _viewport(self) -> dict:
         if self.use_mobile:
             return {"width": 390, "height": 844}
         return {"width": 1366, "height": 900}
+
+    def fingerprint(self) -> dict:
+        """采集/预热/自检/验证窗口共用的浏览器身份参数（单一来源）。
+
+        headless 与窗口位置属于"怎么显示"，不进入身份；UA、视口、移动
+        标记、locale/timezone、出口代理与 canvas 种子必须一致——同一
+        profile 在采集和人工验证里呈现两套身份，本身就会被风控当成
+        会话被接管。
+        """
+        return {
+            "ua": self._ua(),
+            "viewport": self._viewport(),
+            "locale": "zh-CN",
+            "timezone": "Asia/Shanghai",
+            "is_mobile": bool(self.use_mobile),
+            "has_touch": bool(self.use_mobile),
+            "proxy": self.proxy,
+            "stealth": bool(self.stealth),
+            "seed": zlib.crc32(
+                (self.profile_name or self.name).encode("utf-8")) % 997,
+        }
 
     @contextmanager
     def browser(self, headless: Optional[bool] = None,
@@ -248,6 +455,7 @@ class BaseCrawler:
     @contextmanager
     def _browser_context(self, headless, window_front, window_idx, save_session):
         hl = self.headless if headless is None else headless
+        fp = self.fingerprint()
         with sync_playwright() as p:
             x, y = 40 + window_idx * 170, 24 + window_idx * 150
             launch_args = [f"--window-position={x},{y}"]
@@ -257,19 +465,45 @@ class BaseCrawler:
             ctx = p.chromium.launch_persistent_context(
                 user_data_dir=self.user_data_dir,
                 headless=hl,
-                user_agent=self._ua(),
-                viewport=self._viewport(),
-                locale="zh-CN",
-                timezone_id="Asia/Shanghai",
-                is_mobile=self.use_mobile,
-                has_touch=self.use_mobile,
+                user_agent=fp["ua"],
+                viewport=fp["viewport"],
+                locale=fp["locale"],
+                timezone_id=fp["timezone"],
+                is_mobile=fp["is_mobile"],
+                has_touch=fp["has_touch"],
                 # 可选本地代理（r319）：全部渠道采集出口统一走它
-                proxy=({"server": self.proxy} if self.proxy else None),
+                proxy=({"server": fp["proxy"]} if fp["proxy"] else None),
                 args=launch_args + [
                     "--no-sandbox",
                     "--disable-dev-shm-usage",
-                ],
+                ] + (["--disable-blink-features=AutomationControlled"]
+                     if fp["stealth"] else []),
             )
+            if fp["stealth"]:
+                try:
+                    # 种子按 profile 固定：同一档案跨重启指纹一致（像真人），
+                    # 不同档案互不相同（不把多个身份缝成同一个）
+                    if fp["is_mobile"]:
+                        # iPhone + Safari UA 上不该存在 window.chrome，
+                        # 加了反而是矛盾特征（Chromium 专属对象出现在 WebKit UA 里）
+                        _rep = {"__PLAT__": "iPhone", "__CORES__": "6",
+                                "__MEM__": "4", "__GLV__": "Apple Inc.",
+                                "__GLR__": "Apple GPU", "__ADDCHROME__": "false"}
+                    else:
+                        _rep = {"__PLAT__": "Win32", "__CORES__": "8",
+                                "__MEM__": "8", "__GLV__": "Intel Inc.",
+                                "__ADDCHROME__": "true",
+                                "__GLR__": ("ANGLE (Intel, Intel(R) UHD "
+                                            "Graphics 630 Direct3D11 vs_5_0 "
+                                            "ps_5_0, D3D11)")}
+                    _rep["__SEED__"] = str(fp["seed"])
+                    _js = STEALTH_JS
+                    for _k, _v in _rep.items():
+                        _js = _js.replace(_k, _v)
+                    ctx.add_init_script(_js)
+                except Exception:
+                    pass
+            state = None
             try:
                 # Chromium 重开可能丢弃 expires=-1 的会话 Cookie；只补
                 # profile 缺少的键，避免旧快照覆盖站点已更新的持久 Cookie。
@@ -282,8 +516,26 @@ class BaseCrawler:
                         if missing:
                             ctx.add_cookies(missing)
                 yield ctx
-                state = ctx.storage_state() if save_session else None
+                try:
+                    state = ctx.storage_state() if save_session else None
+                except Exception as e:
+                    # 验证窗口关得太快时上下文可能已经关闭；若周期快照
+                    # 已成功，可以安全忽略收尾失败。登录窗口没有任何快照
+                    # 成功过时必须抛出——否则会把"没保存"报成"已保存"。
+                    if save_session == "login" and not self._session_snap_ok:
+                        raise
+                    state = None
+                    if save_session:
+                        self.logger.warning("[%s] 会话收尾快照失败: %s",
+                                            self.name, e)
             finally:
+                # 被拒页面在关上下文前落盘：同一个采集线程、同一个 page，
+                # 是 Playwright sync 唯一安全的截图时机
+                try:
+                    if self._scene_pending:
+                        self.capture_scene(self._last_page, tag="block")
+                except Exception:
+                    pass
                 ctx.close()
             # 保存、关闭、发布必须全部成功，调用方才能报告登录已保存。
             if state is not None:
@@ -294,7 +546,164 @@ class BaseCrawler:
         page = ctx.new_page()
         page.set_default_timeout(self.timeout_ms)
         page.set_default_navigation_timeout(self.timeout_ms)
+        self._last_page = page
+        self._watch_retry_after(page)
         return page
+
+    # ---------- 风控信号：服务端让我们等多久（2 区）----------
+    # 最近一次 429/503 响应里的 Retry-After 秒数；main 采集落地后读它，
+    # 交给熔断器优先采用——比自算的 2^n 阶梯更接近对方真实配额。
+    retry_after_s: int = 0
+    # 最近一次被拒的现场 URL（403/429/503 时由响应监听记住）：
+    # 「去验证」直接打开它，而不是让用户从首页重新找一遍
+    last_block_url: str = ""
+    # 若是 XHR/fetch 被拒，另外记住接口 URL；网页窗口打开的是页面地址，
+    # 不是 JSON 接口（把接口地址端到人面前没法过验证）
+    last_block_api: str = ""
+    # 最近一次查询（main 写入）：重建入口 URL / 现场说明用
+    last_query: tuple = ()
+    # 现场归档（5 区 2.0）：被拒页面的截图/URL/标题留档
+    _scene_pending: str = ""
+    _last_page = None
+    last_scene: dict = {}
+    # 预热入口（子类覆盖）：空=该渠道在 fetch 内部自带预热（ctrip/同程）
+    warmup_url: str = ""
+    warmup_done_at: float = 0.0
+    # 预热成功的判据（子类声明风控 cookie 名；空=不判，避免误报）
+    RISK_COOKIES: tuple = ()
+    warmup_cookie_ok: bool = True
+    warmup_cookies: list = []
+    # 本次登录/验证窗口是否已成功落过一次周期快照。有它时，关窗后
+    # 收尾 storage_state 失败可以安全忽略；没有它就必须把错误抛给
+    # 调用方——不能把"没保存"报成"已保存"。
+    _session_snap_ok: bool = False
+
+    def _watch_retry_after(self, page: Page):
+        def _on_resp(resp):
+            try:
+                req = getattr(resp, "request", None)
+                rtype = str(getattr(req, "resource_type", "") or "")
+                url = str(resp.url or "")
+                # 广告/统计/埋点的 403/429 不是渠道健康信号；只看文档
+                # 与业务 XHR/fetch，避免第三方脚本把渠道误熔断。
+                if not should_watch_response(rtype, url):
+                    return
+                if resp.status in (403, 429, 503):
+                    if rtype == "document":
+                        target = url
+                    else:
+                        target = str(getattr(page, "url", "") or "")
+                        if not target or target == "about:blank":
+                            target = url
+                        self.last_block_api = url[:500]
+                    self.last_block_url = target[:500]
+                    # 留现场：截图必须在本线程（Playwright sync 不跨线程），
+                    # 这里只打标记，真正的落盘在 _browser_context 收尾处
+                    self._scene_pending = target[:500]
+                if resp.status not in (429, 503):
+                    return
+                hdr = resp.headers or {}
+                raw = hdr.get("retry-after") or hdr.get("Retry-After") or ""
+                sec = parse_retry_after(raw)
+                if sec > 0:
+                    self.retry_after_s = sec
+                    self.logger.warning(
+                        "[%s] 服务端 Retry-After=%ds（HTTP %d）"
+                        "——本轮冷却按它来", self.name, sec, resp.status)
+            except Exception:
+                pass
+        try:
+            page.on("response", _on_resp)
+        except Exception:
+            pass
+
+    def capture_scene(self, page=None, tag=""):
+        """案发现场落盘：截图 + URL/标题 + 时间（人可看、可事后比对）。
+
+        只能在采集线程里调用（Playwright sync API 跨线程会炸）；
+        失败只记日志，绝不影响采集主流程。
+        """
+        page = page or self._last_page
+        if page is None:
+            return ""
+        base = os.path.join("debug", "scene")
+        try:
+            os.makedirs(base, exist_ok=True)
+        except OSError:
+            return ""
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        name = "%s_%s%s" % (self.name, stamp, ("_" + tag) if tag else "")
+        png = os.path.join(base, name + ".png")
+        meta = os.path.join(base, name + ".txt")
+        try:
+            page.screenshot(path=png, full_page=False)
+        except Exception as e:
+            self.logger.warning("[%s] 现场截图失败: %s", self.name, e)
+        try:
+            with open(meta, "w", encoding="utf-8") as f:
+                f.write("url: %s\n" % getattr(page, "url", ""))
+                try:
+                    f.write("title: %s\n" % page.title())
+                except Exception:
+                    pass
+                f.write("at: %s\nblock: %s\napi: %s\n" % (
+                    time.strftime("%Y-%m-%d %H:%M:%S"),
+                    self.last_block_url, self.last_block_api))
+        except OSError:
+            pass
+        self.last_scene = {"png": png, "meta": meta,
+                           "url": getattr(page, "url", "")}
+        self._scene_pending = ""
+        try:                       # 只留 7 天，防 debug/scene 无限膨胀
+            cutoff = time.time() - 7 * 86400
+            for fn in os.listdir(base):
+                fp = os.path.join(base, fn)
+                if os.path.getmtime(fp) < cutoff:
+                    os.remove(fp)
+        except OSError:
+            pass
+        return png
+
+    def warmup(self, headless: bool = True) -> bool:
+        """打一次首页让风控 JS 下发 cookie（调用方须已持 channel_slot）。
+
+        已出数就预热等于白发请求，所以只由 main 在「本轮首次用到该渠道」
+        时调一次；失败不抛，交给后续请求如实上报。
+        """
+        url = str(self.warmup_url or "").strip()
+        if not url:
+            return False
+        t0 = time.time()
+        try:
+            with self.browser(headless=headless) as ctx:
+                page = self.new_page(ctx)
+                page.goto(url, wait_until="domcontentloaded")
+                page.wait_for_timeout(1200)
+                # 预热是否真的生效：看风控 cookie 有没有落下来。
+                # 只看"访问过首页"等于没验证——深链仍会被当新会话。
+                want = tuple(getattr(self, "RISK_COOKIES", ()) or ())
+                if want:
+                    try:
+                        names = {c.get("name") for c in ctx.cookies()}
+                        hit = [n for n in want if n in names]
+                        self.warmup_cookies = hit
+                        self.warmup_cookie_ok = bool(hit)
+                        if not hit:
+                            self.logger.warning(
+                                "[%s] 预热未拿到风控 cookie（%s 均无），"
+                                "深链大概率仍被拦", self.name, "/".join(want))
+                    except Exception:
+                        pass
+            self.warmup_done_at = time.time()
+            self.logger.info("[%s] 预热完成 %s（%.1fs）",
+                             self.name, url, time.time() - t0)
+            return True
+        except SessionBusyError:
+            self.logger.warning("[%s] 预热跳过：会话正被占用", self.name)
+            return False
+        except Exception as e:
+            self.logger.warning("[%s] 预热失败: %s", self.name, e)
+            return False
 
     # ---------- 工具 ----------
     def _sleep(self):
@@ -427,8 +836,26 @@ class BaseCrawler:
                 _f["tz_arr"] = _tz_arr
 
     # ---------- 公共调用入口 ----------
+    # 最近一次采集是否因「同 profile 互斥」而让位（4 区会话卫生）：
+    # 这是自家锁冲突，不是对方拒绝——main 据此跳过重试，避免裸 cookie
+    # 连打把内部冲突升级成对方眼里的「新会话直捣深链」（444 之源）
+    last_busy: bool = False
+
     def safe_fetch(self, from_city: str, to_city: str, dates: List[str],
                    ret_date: str = "") -> List[FlightPrice]:
+        self.last_busy = False
+        # 每次采集从零开始留证：上一轮的 blocked 路径、Retry-After、
+        # 现场 URL 与截图都不能跨查询复用，否则一次早退/异常会把旧证据
+        # 当成这一轮的拒绝原因，误熔断一个已经恢复的渠道。
+        self.path_reset()
+        self.retry_after_s = 0
+        self.last_block_url = ""
+        self.last_block_api = ""
+        self._scene_pending = ""
+        self.last_scene = {}
+        # 上一条查询的 page 不能留给本次截图/URL 兜底：httpx 直连路径
+        # 不会 new_page，若不清空会把上一页截进本轮现场。
+        self._last_page = None
         try:
             self.logger.info("[%s] 开始抓取 %s->%s 日期=%s",
                              self.name, from_city, to_city, dates)
@@ -436,6 +863,11 @@ class BaseCrawler:
                                  ret_date=ret_date) or []
             self.logger.info("[%s] 抓取完成，得到 %d 条记录", self.name, len(results))
             return results
+        except SessionBusyError as e:
+            # 让位：不记异常栈（这是预期内的排队，不是故障），也不重试
+            self.last_busy = True
+            self.logger.warning("[%s] %s", self.name, e)
+            return []
         except Exception as e:
             self.logger.exception("[%s] 抓取失败: %s", self.name, e)
             return []
@@ -444,13 +876,17 @@ class BaseCrawler:
     def interactive_login(self):
         """打开可见浏览器引导用户登录，按回车后保存会话退出。
 
-        登录一律用桌面视口：手机模拟（is_mobile/touch）下鼠标拖滑块
-        验证码经常失灵（页面监听 touch 事件）——cookie 同域通用，
-        采集时仍用各自视口不受影响。"""
+        默认沿用 profile 自己的 PC/H5 身份（与采集一致）。若某些手机
+        profile 的滑块无法用鼠标完成，可配置 crawler.login_desktop: true
+        强制桌面视口；代价是登录指纹与采集指纹不同。"""
         url = self.login_url()
-        self.logger.info("[%s] 启动登录浏览器（桌面视口）：%s", self.name, url)
+        self.logger.info("[%s] 启动登录浏览器（%s视口）：%s",
+                         self.name,
+                         "桌面" if not self.use_mobile else "移动",
+                         url)
         bak = self.use_mobile
-        self.use_mobile = False
+        if self.login_desktop and not self.login_mobile:
+            self.use_mobile = False
         try:
             self._interactive_login_inner(url)
         finally:
@@ -458,12 +894,16 @@ class BaseCrawler:
 
     def _login_window(self, done_evt, idx: int = 0, timeout_s: float = 0):
         """并行登录窗口：开登录页保持打开，done_evt 置位后关闭。
+
+        返回 True=用户点击了「我已登录完成」；False=窗口被直接关闭
+        （cookie 已周期快照，但未确认完成，调用方不得宣称登录成功）。
         idx 用于阶梯排布窗口位置避免叠死；timeout_s=0 表示不超时
         （命令行 --login 由用户决定），Web 登录传 600 秒。"""
         url = self.login_url()
         self.logger.info("[%s] 登录窗口已打开：%s", self.name, url)
+        self._session_snap_ok = False
         bak = self.use_mobile
-        if not self.login_mobile:
+        if self.login_desktop and not self.login_mobile:
             self.use_mobile = False
         try:
             with self.browser(headless=False, window_front=True,
@@ -471,7 +911,10 @@ class BaseCrawler:
                 page = self.new_page(ctx)
                 page.goto(url, wait_until="domcontentloaded", timeout=40000)
                 import time as _t
-                deadline = (_t.time() + timeout_s) if timeout_s else 0.0
+                started_at = _t.time()
+                deadline = (started_at + timeout_s) if timeout_s else 0.0
+                keep_saved_at = self.session_saved_at or 0.0
+                last_snap = 0.0
                 while not done_evt.is_set():
                     if deadline and _t.time() >= deadline:
                         raise RuntimeError("登录窗口超时，请重新打开")
@@ -480,9 +923,33 @@ class BaseCrawler:
                     except Exception:
                         closed = True
                     if closed:
-                        raise RuntimeError("登录窗口已关闭，未保存会话")
+                        # 关窗只落 cookie 快照，沿用旧 saved_at；随后抛错
+                        # 让调用方明确「未确认」。不能在这里写 now——那会
+                        # 把"关窗"伪装成"刚保存登录"，登录态卡片会说谎。
+                        try:
+                            state = ctx.storage_state()
+                            if state:
+                                self._write_session_state(state, keep_saved_at)
+                                self._session_snap_ok = True
+                        except Exception:
+                            pass
+                        self.logger.info("[%s] 登录窗口已关闭，cookie 快照已落盘"
+                                         "（未确认，不判定登录成功）",
+                                         self.name)
+                        raise RuntimeError("登录窗口已关闭，尚未确认完成")
+                    now = _t.time()
+                    if now - last_snap >= 5:
+                        try:
+                            state = ctx.storage_state()
+                            if state:
+                                self._write_session_state(state, keep_saved_at)
+                                self._session_snap_ok = True
+                        except Exception:
+                            pass
+                        last_snap = now
                     _t.sleep(0.5)
             self.logger.info("[%s] 会话已保存到 %s", self.name, self.user_data_dir)
+            return True
         finally:
             self.use_mobile = bak
 
@@ -493,32 +960,60 @@ class BaseCrawler:
         The operator solves the challenge; this method only waits for the
         close/verify signal and persists the resulting session. It never
         drives the challenge. idx staggers multiple windows.
+
+        Fingerprint idempotence: the window keeps the same mobile/desktop
+        UA, viewport, locale, timezone, proxy and stealth seed as collection.
+        Forcing a desktop UA on a mobile profile is a contradictory
+        fingerprint and can itself trigger the challenge.
         """
         self.logger.info("[%s] 验证窗口已打开：%s", self.name, url)
-        bak = self.use_mobile
-        if not self.login_mobile:
-            self.use_mobile = False
-        try:
-            with self.browser(headless=False, window_front=True,
-                              window_idx=idx, save_session="login") as ctx:
-                page = self.new_page(ctx)
-                page.goto(url, wait_until="domcontentloaded", timeout=40000)
-                import time as _t
-                deadline = (_t.time() + timeout_s) if timeout_s else 0.0
-                while not done_evt.is_set():
-                    if deadline and _t.time() >= deadline:
-                        raise RuntimeError("验证窗口超时，请重新打开")
+        self._session_snap_ok = False
+        with self.browser(headless=False, window_front=True,
+                          window_idx=idx, save_session="login") as ctx:
+            page = self.new_page(ctx)
+            page.goto(url, wait_until="domcontentloaded", timeout=40000)
+            import time as _t
+            started_at = _t.time()
+            deadline = (started_at + timeout_s) if timeout_s else 0.0
+            # 周期快照沿用原 saved_at：只是防止关窗丢 cookie，不代表
+            # "人已完成验证"；只有关窗正常返回时才把 saved_at 推到现在。
+            keep_saved_at = self.session_saved_at or 0.0
+            last_snap = 0.0
+            while not done_evt.is_set():
+                if deadline and _t.time() >= deadline:
+                    raise RuntimeError("验证窗口超时，请重新打开")
+                try:
+                    closed = bool(page.is_closed())
+                except Exception:
+                    closed = True
+                if closed:
+                    # 关窗=人认为验证完成。上下文可能随窗口一起关闭，
+                    # 所以先尝试最后一次快照；失败则用 5s 内的周期快照。
                     try:
-                        closed = bool(page.is_closed())
+                        state = ctx.storage_state()
+                        if state:
+                            self._write_session_state(state, _t.time())
+                            self._session_snap_ok = True
                     except Exception:
-                        closed = True
-                    if closed:
-                        raise RuntimeError("验证窗口已关闭，未保存会话")
-                    _t.sleep(0.5)
-            self.logger.info("[%s] 验证会话已保存到 %s",
-                             self.name, self.user_data_dir)
-        finally:
-            self.use_mobile = bak
+                        pass
+                    self.logger.info("[%s] 验证窗口已关闭，会话已保存到 %s",
+                                     self.name, self.user_data_dir)
+                    return True
+                now = _t.time()
+                if now - last_snap >= 5:
+                    # 周期快照：避免"刚过完验证就关窗"丢掉最后一组成熟 cookie
+                    try:
+                        state = ctx.storage_state()
+                        if state:
+                            self._write_session_state(state, keep_saved_at)
+                            self._session_snap_ok = True
+                    except Exception:
+                        pass
+                    last_snap = now
+                _t.sleep(0.5)
+        self.logger.info("[%s] 验证会话已保存到 %s",
+                         self.name, self.user_data_dir)
+        return True
 
     def _interactive_login_inner(self, url: str):
         with self.browser(headless=False, window_front=True,

@@ -94,7 +94,7 @@ def _run(monkeypatch, bodies):
         calls["fake"] = fake
         return fake
 
-    monkeypatch.setattr(tn.httpx, "Client", _factory)
+    monkeypatch.setattr(tn._net, "new_client", _factory)
     monkeypatch.setattr(tn.time, "sleep", lambda s: None)
     crawler = TuniuCrawler({"rate_limit": False, "tuniu_max_poll": 10},
                            logging.getLogger("t107"))
@@ -127,7 +127,7 @@ def test_all_thin_bounded_best_so_far(monkeypatch):
     def _crawler(monkeypatch, bodies):
         def _factory(*a, **kw):
             return _FakeClient(bodies)
-        monkeypatch.setattr(tn.httpx, "Client", _factory)
+        monkeypatch.setattr(tn._net, "new_client", _factory)
         monkeypatch.setattr(tn.time, "sleep", lambda s: None)
         lg = logging.getLogger("t107thin")
         monkeypatch.setattr(lg, "warning",
@@ -153,7 +153,7 @@ def test_thin_bound_caps_polling(monkeypatch):
         box["fake"] = fake
         return fake
 
-    monkeypatch.setattr(tn.httpx, "Client", _factory)
+    monkeypatch.setattr(tn._net, "new_client", _factory)
     monkeypatch.setattr(tn.time, "sleep", lambda s: None)
     crawler = TuniuCrawler({"rate_limit": False, "tuniu_max_poll": 10},
                            logging.getLogger("t107cap"))
@@ -184,7 +184,7 @@ def test_gap_band_goes_thin_continuation(monkeypatch):
         box["fake"] = fake
         return fake
 
-    monkeypatch.setattr(tn.httpx, "Client", _factory)
+    monkeypatch.setattr(tn._net, "new_client", _factory)
     monkeypatch.setattr(tn.time, "sleep", lambda s: None)
     lg = logging.getLogger("t108gap")
     warns = []

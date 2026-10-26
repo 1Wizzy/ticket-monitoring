@@ -21,8 +21,9 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from core.storage import PriceStorage
+from core.pacing import PLATFORMS
 from core.login_slots import LOGIN_SLOTS, LOGIN_SLOT_ORDER, slot_crawler
-from crawlers.base import CHANNEL_GATE, platform_lock
+from crawlers.base import CHANNEL_GATE, platform_lock, channel_slot
 from core.alerter import (Alerter, _qual_price, FLIGGY_TAX_PAD,
                           xchan_phantom_idx, NEAR_RATIO, _append_before_at)
 from report import _rounds, recent_platform_flights, _daily_minima
@@ -324,6 +325,111 @@ def _demo_config_payload() -> dict:
         "restart": {"required": False, "changed": [], "labels": {},
                     "running": {}, "saved": {}},
         "runtime": _demo_runtime_view()}
+
+
+_EXIT_PROBES = ("https://myip.ipip.net", "https://api.ipify.org?format=json")
+
+
+def _exit_hist_path():
+    return os.path.join("data", "exit_history.json")
+
+
+def _exit_history():
+    try:
+        with open(_exit_hist_path(), encoding="utf-8") as f:
+            h = json.load(f)
+        return [str(x) for x in (h or []) if x][-10:]
+    except (OSError, ValueError):
+        return []
+
+
+def _exit_history_push(ip):
+    h = _exit_history() + [str(ip)]
+    try:
+        os.makedirs("data", exist_ok=True)
+        with open(_exit_hist_path(), "w", encoding="utf-8") as f:
+            json.dump(h[-10:], f)
+    except OSError:
+        pass
+
+
+def _paths_payload(hours=24, demo=False):
+    """PC/H5 路径账（可观测）：近 N 小时 渠道×入口 的尝试/成功/拦截。
+
+    「哪条路还能出数」只在账本里有答案——同渠道 PC 92% 而 H5 41% 时，
+    要收的是 H5，不是把整家渠道降频。
+    """
+    hours = max(1, min(24 * 90, int(hours or 24)))
+    if demo:
+        return {"ok": True, "hours": hours, "platforms": {}, "demo": True}
+    try:
+        db = _anchored(((_State.cfg or {}).get("output") or {}).get(
+            "db_path"), "data/prices.db")
+        if not os.path.isfile(db):
+            return {"ok": True, "hours": hours, "platforms": {},
+                    "note": "库尚未创建"}
+        return {"ok": True, "hours": hours,
+                "platforms": PriceStorage(db).path_stats(hours)}
+    except Exception as e:
+        return {"ok": False, "err": str(e)[:160]}
+
+
+def _exit_check(timeout=8.0):
+    """出口自检（6 区）：按当前代理取一次公网 IP。
+
+    换热点/重播宽带之后点一下就知道"IP 到底变没变"，不用开浏览器
+    对照。只发一次请求，失败如实报错（不重试，避免自检本身变成负担）。
+    """
+    if DEMO["on"]:
+        return {"ok": False, "err": "演示模式不发起外网请求", "proxy": ""}
+    proxy = str(((_State.cfg or {}).get("crawler") or {})
+                .get("proxy", "") or "").strip()
+    last = ""
+    for url in _EXIT_PROBES:
+        t0 = time.time()
+        try:
+            import httpx
+            r = httpx.get(url, proxy=(proxy or None), timeout=timeout,
+                          follow_redirects=True,
+                          headers={"User-Agent": "Mozilla/5.0"})
+            m = re.search(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b", r.text or "")
+            if m:
+                ip = m.group(1)
+                prev = (_exit_history() or [""])[-1]
+                same24 = bool(prev and prev.rsplit(".", 1)[0]
+                              == ip.rsplit(".", 1)[0])
+                _exit_history_push(ip)
+                # 「重播有没有换到新 IP」是本地唯一能自证的换出口手段：
+                # 没有第二条宽带时，重播 PPPoE 是唯一可重复的动作
+                return {"ok": True, "ip": ip, "via": url,
+                        "proxy": proxy, "prev_ip": prev,
+                        "changed": bool(prev and prev != ip),
+                        "same_subnet": same24,
+                        "elapsed_ms": int((time.time() - t0) * 1000)}
+            last = "响应里没有可识别的 IP"
+        except Exception as e:
+            last = str(e)[:140]
+    return {"ok": False, "err": last or "检测失败", "proxy": proxy}
+
+
+def _demo_pacing_payload():
+    """演示站只读快照：不接真 Pacing（demo 不起扫描），但要让配置页
+    的状态条有东西可渲染，避免"发布出去的演示站写着读取失败"。"""
+    from core.pacing import parse_pacing
+    pac = parse_pacing(_State.boot_cfg or _State.cfg or {})
+    chans = {p: {"state": "ok", "remain_s": 0, "strikes": 0,
+                 "reason": "", "needs_login": False,
+                 "advice": {"state": "ok", "action": "none",
+                            "severity": "ok", "eta_s": 0,
+                            "hint": "演示数据，无需操作"}}
+             for p in ("qunar", "fliggy", "ctrip", "tongcheng", "tuniu")}
+    return {"ok": True, "cfg": pac,
+            "quiet": {"start": pac["scan_quiet_start"],
+                      "end": pac["scan_quiet_end"], "active": False},
+            "channels": chans, "bucket": {},
+            "last_round": {"at": "", "fast": 6, "slow": 2, "skip": 3,
+                           "trips": [], "busy": []},
+            "plan": []}
 
 
 def _startup_vals(cfg: dict) -> dict:
@@ -12297,7 +12403,7 @@ function srxRadarSyncForm(){
 const SPMON_RUN_LABEL={ok:'成功',cache_hit:'缓存',fallback:'回退',partial:'部分',empty:'空结果',error:'失败',demo:'演示'};
 let SPMON={data:null,user:'',date:'',busy:false,alertCfg:null,lastAlert:null,chart:null,rt:0,range:30,mode:'line'};
 async function spAlertLoad(){
- const u=(S&&S.users||[])[U];if(!u||!$('spRadarAlertOn'))return;
+ const u=(S&&S.users||[])[U];if(!u||!u.name||!$('spRadarAlertOn'))return;
  try{
   const [rc,ra]=await Promise.all([
    fetch('/api/radar/alert-config?user='+encodeURIComponent(u.name),{cache:'no-store'}),
@@ -14739,6 +14845,167 @@ async function pathPreview(kind,inp,verbose){
   }
   if(verbose)toast(j.valid?'✅ 目标路径可用':'⚠ '+((j.warning)||'目标路径不可用'),j.valid?'ok':'err');
  }catch(e){if(pv)pv.innerHTML='<span class="warn">校验请求失败（服务不可达）</span>';}}
+function _paceLeft(s){s=Math.max(0,parseInt(s)||0);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
+function _pacePct(v){return Math.round((parseFloat(v)||0)*100);}
+function _paceColor(p){return p>=70?'#1a9e75':(p>0?'#b07700':'var(--red)');}
+async function paceReset(p){
+ try{
+  const j=await (await fetch('/api/pacing/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p})})).json();
+  toast(j.ok?('已解除 '+p+' 熔断'):('解除失败：'+(j.err||'')));
+ }catch(e){toast('解除失败：'+e);}
+ loadPacing();
+}
+let _probeScope='';
+function setProbeScope(v){_probeScope=v||'';}
+async function probeNow(p){
+ const out=$('probeOut');if(!out)return;
+ out.textContent='正在自检 '+p+(_probeScope?('（'+_probeScope+'）'):'')+'（约 10–60 秒）…';
+ try{
+  const j=await (await fetch('/api/channel/probe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p,scope:_probeScope})})).json();
+  if(!j.ok){out.innerHTML='<span style="color:var(--red)">'+esc(j.err||'自检失败')+'</span>';toast(p+' 自检失败');return;}
+  const ps=(j.paths||[]).map(x=>esc(x.path||'?')+' '+((x.status==='ok'||x.status==='calendar')?'<span style="color:#1a9e75">ok</span>':'<span style="color:var(--red)">'+esc(x.status||'?')+'</span>')+'×'+(x.rows||0)).join(' · ')||'无路径记录';
+  out.innerHTML=(j.rows>0?('<span style="color:#1a9e75">'+esc(p)+'/'+esc(j.scope||'auto')+' 出数 '+j.rows+' 条</span>'):('<span style="color:var(--red)">'+esc(p)+'/'+esc(j.scope||'auto')+' 未出数</span>'))
+   +'（'+ps+'，'+(j.ms/1000).toFixed(1)+'s）'
+   +((j.cookies&&j.cookies.length)?(' · cookie '+esc(j.cookies.join('/'))):'')
+   +((j.query&&j.query.length)?(' · '+esc(j.query.join('→'))):'')
+   +((j.blocked_url)?(' · <span style="color:var(--red)">被拒 '+esc(j.blocked_url.slice(0,60))+'</span>'):'')
+   +((j.api&&j.api!==j.blocked_url)?(' · <span style="color:var(--mut)">接口 '+esc(j.api.slice(0,50))+'</span>'):'')
+   +((j.retry_after)?(' · 服务端要求等 '+j.retry_after+'s'):'');
+  toast(p+' 自检完成：'+j.rows+' 条');
+ }catch(e){out.innerHTML='<span style="color:var(--red)">'+esc(String(e))+'</span>';}
+}
+async function verifyNow(p){
+ try{
+  const j=await (await fetch('/api/channel/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p})})).json();
+  toast(j.ok?('已打开 '+p+' 验证窗口：过完验证直接关窗'):('打开失败：'+(j.err||'')));
+  if(j.ok&&j.scene&&j.scene.note)toast('现场：'+String(j.scene.note).slice(0,80));
+  if(j.ok){
+   // 验证是异步的：关窗后才落 verify 结果。有限次自动刷新，让
+   // 「验证后 ✓N条 / ✗未通过 / 补采+N」不用人再找刷新链接。
+   let n=0;const t=setInterval(()=>{n++;loadPacing();if(n>=6)clearInterval(t);},10000);
+  }
+ }catch(e){toast('打开失败：'+e);}
+}
+async function warmNow(p){
+ const out=$('warmOut');if(out)out.textContent='预热 '+p+' 中…（约 3–8 秒）';
+ try{
+  const j=await (await fetch('/api/channel/warmup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p})})).json();
+  const msg=j.ok?('预热 '+p+' 完成'):('预热失败：'+(j.err||''));
+  if(out)out.innerHTML=j.ok?('<span style="color:#1a9e75">'+esc(msg)+'</span>'):('<span style="color:var(--red)">'+esc(msg)+'</span>');
+  toast(msg);
+ }catch(e){if(out)out.textContent='预热失败：'+e;}
+}
+async function loadPacing(){
+ const box=$('paceBox');if(!box)return;
+ try{
+  const j=await (await fetch('/api/pacing',{cache:'no-store'})).json();
+  if(!j.ok){box.innerHTML='<span style="color:var(--red)">'+esc(j.err||'读取失败')+'</span>';return;}
+  const CN={qunar:'去哪儿',fliggy:'飞猪',ctrip:'携程',tongcheng:'同程',tuniu:'途牛'};
+  const q=j.quiet||{},lr=j.last_round||{},ch=j.channels||{};
+  const chips=Object.keys(ch).map(k=>{
+   const v=ch[k]||{},nm=CN[k]||k,adv=v.advice||{};let t='';
+   if(v.state==='cooldown')t='<span style="color:var(--red)">冷却 '+_paceLeft(v.remain_s)+(v.reason?' · '+esc(v.reason):'')+'</span>';
+   else if(v.needs_login)t='<span style="color:#b07700">需登录</span>';
+   else if(adv.state==='path_degraded')t='<span style="color:#b07700">路径劣化</span>';
+   else if(adv.state==='calendar_only')t='<span style="color:#b07700">仅有日历</span>';
+   else if(adv.state==='stale')t='<span style="color:#b07700">数据陈旧</span>';
+   else if(adv.state==='degraded')t='<span style="color:#b07700">成功率低</span>';
+   else t='<span style="color:#1a9e75">正常</span>';
+   let acts=' <a href="javascript:void(0)" onclick="showTrace(\''+k+'\')" style="color:var(--blue);font-size:11px">溯源</a>';
+   const vf=(v.scene&&v.scene.verify)||null;
+   if(vf)t+=' <span style="color:'+(vf.ok?'#1a9e75':'var(--red)')+';font-size:11px">验证后'+(vf.ok?('✓'+vf.rows+'条'):'✗未通过')+((vf.refill&&vf.refill.rows)?(' · 补采+'+vf.refill.rows):'')+'</span>';
+   if(v.scene&&v.scene.retripped)t+=' <span style="color:var(--red);font-size:11px">验证未通过，已重新熔断 '+_paceLeft(v.scene.retripped.cooldown_s)+'</span>';
+   if(v.state==='cooldown')acts=' <a href="javascript:void(0)" onclick="paceReset(\''+k+'\')" style="color:var(--blue);font-size:11px">解除</a>'+acts;
+   if(v.needs_login||(v.state==='cooldown'&&(v.reason==='ip'||v.reason==='captcha')))
+     acts=' <a href="javascript:void(0)" onclick="verifyNow(\''+k+'\')" style="color:#b07700;font-size:11px">去验证</a>'+acts;
+   return '<span style="white-space:nowrap" title="'+esc(adv.hint||'')+'">'+nm+' '+t+acts+'</span>';
+  }).join('');
+  const urg=Object.keys(ch).map(k=>{
+   const a=(ch[k]||{}).advice||{};
+   if(a.severity!=='act'&&a.severity!=='wait')return '';
+   return '<span style="white-space:nowrap">'+(CN[k]||k)+'：'+esc(a.hint)+(a.eta_s?('（'+_paceLeft(a.eta_s)+'）'):'')+'</span>';
+  }).filter(Boolean);
+  const adviceRow=urg.length
+   ?'<div style="margin:2px 0;color:#b07700">现在要做什么：'+urg.join(' · ')+'</div>'
+   :'<div style="margin:2px 0;color:#1a9e75">现在无需操作：各渠道近 24h 正常</div>';
+  const qs=(q.start&&q.end)?(esc(q.start)+'–'+esc(q.end)+' · 当前'+(q.active?'<b style="color:#b07700">窗内（不扫）</b>':'窗外')):'已关闭';
+  const plan=(parseInt(lr.fast)||0)+(parseInt(lr.slow)||0)+(parseInt(lr.skip)||0);
+  let pathRow='';
+  try{
+   const pj=await (await fetch('/api/paths?hours=24',{cache:'no-store'})).json();
+   const bits=Object.keys(pj.platforms||{}).map(k=>{
+    const node=pj.platforms[k]||{},ps=node.paths||{},sc=node.scopes||{};
+    const cell=(pp,v)=>{
+     v=v||{};const n=parseInt(v.attempts)||0;if(!n)return '';
+     const det=parseInt(v.detail_ok)||0,cal=parseInt(v.calendar_ok)||0;
+     const pct=_pacePct(v.rate),onlyCal=(det===0&&cal>0);
+     const val=onlyCal?('日历'+cal):(pct+'%');
+     const col=onlyCal?'#b07700':_paceColor(pct);
+     const tip=pp+'：尝试'+n+' · 明细'+det+' · 日历'+cal+' · 拦截'+(parseInt(v.blocked)||0)+' · 空'+(parseInt(v.empty)||0)+' · 错误'+(parseInt(v.error)||0)+' · 最近成功'+(v.last_ok_at||'—');
+     return '<span style="white-space:nowrap" title="'+esc(tip)+'">'+esc(pp)+' <b style="color:'+col+'">'+val+'</b><span style="color:var(--mut)">('+n+')</span></span>';
+    };
+    const scoped=(name,label)=>{
+     const s=sc[name]||{},sp=s.paths||{};
+     const one=Object.keys(sp).map(pp=>cell(pp,sp[pp])).filter(Boolean).join(' ');
+     return one?(label+' '+one):'';
+    };
+    let one=[scoped('dom','国内'),scoped('intl','国际')].filter(Boolean).join(' · ');
+    if(!one)one=Object.keys(ps).map(pp=>cell(pp,ps[pp])).filter(Boolean).join(' ');
+    if(!one)return '';
+    const qn=parseInt(node.query_attempts)||0;
+    const q=qn?('查询'+_pacePct(node.query_rate)+'% · 明细'+(parseInt(node.query_detail_ok)||0)+'/日历'+(parseInt(node.query_calendar_only)||0)+' · '):'';
+    return '<span style="white-space:normal">'+esc(CN[k]||k)+' <span style="color:var(--mut)">'+q+'</span>'+one+'</span>';
+   }).filter(Boolean);
+   if(bits.length)pathRow='<div style="margin-top:2px">近 24h 路径 '+bits.join(' · ')+'</div>';
+  }catch(e){}
+  const WARM=['qunar','fliggy','tuniu'];
+  const PROBE=['qunar','fliggy','ctrip','tongcheng','tuniu'];
+  const warmRow='<div style="margin-top:2px">手动预热 '+WARM.map(p=>'<a href="javascript:void(0)" style="color:var(--blue);margin-right:8px" onclick="warmNow(\''+p+'\')">'+p+'</a>').join('')+'<span id="warmOut" style="margin-left:4px"></span></div>';
+  const probeRow='<div style="margin-top:2px">渠道自检 '
+   +'<select id="probeScopeSel" onchange="setProbeScope(this.value)" style="margin-right:6px;font-size:12px;padding:1px 4px">'
+   +'<option value=""'+(_probeScope===''?' selected':'')+'>自动</option>'
+   +'<option value="dom"'+(_probeScope==='dom'?' selected':'')+'>国内</option>'
+   +'<option value="intl"'+(_probeScope==='intl'?' selected':'')+'>国际</option>'
+   +'</select>'
+   +PROBE.map(p=>'<a href="javascript:void(0)" style="color:var(--blue);margin-right:8px" onclick="probeNow(\''+p+'\')">'+p+'</a>').join('')+'<span id="probeOut" style="margin-left:4px"></span></div>';
+  box.innerHTML='<div style="margin-bottom:4px"><b>节流状态</b> · 静默窗 '+qs
+   +' <a href="javascript:void(0)" onclick="loadPacing()" style="color:var(--blue);margin-left:6px">刷新</a></div>'
+   +adviceRow
+   +'<div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:4px">'+chips+'</div>'
+   +'<div>本轮计划 '+plan+' 次（快 '+lr.fast+' / 慢 '+lr.slow+' / TTL 内 '+lr.skip+'） · 熔断 '+(lr.trips||[]).length+' 次 · 会话让位 '+esc((lr.busy||[]).join('、')||'无')+'</div>'
+   +pathRow+warmRow+probeRow+'<div id="traceOut"></div>';
+ }catch(e){box.innerHTML='<span style="color:var(--red)">'+esc(String(e))+'</span>';}
+}
+async function showTrace(p){
+ const out=$('traceOut');if(!out)return;
+ out.textContent='读取 '+p+' 最近尝试…';
+ try{
+  const j=await (await fetch('/api/trace?platform='+encodeURIComponent(p)+'&limit=8',{cache:'no-store'})).json();
+  if(!j.ok){out.textContent='溯源失败：'+(j.err||'');return;}
+  const rows=(j.rows||[]).map(r=>{
+   const t=String(r.fetched_at||'').slice(5,16),st=String(r.path_status||'');
+   const col=(st==='ok'||st==='calendar')?'#1a9e75':(st==='empty'?'var(--mut)':'var(--red)');
+   return '<div style="white-space:nowrap">'+esc(t)+' · <b>'+esc(r.entry_path||'?')+'</b> · <span style="color:'+col+'">'+esc(st)+'</span> · '+esc(String(r.note||'').slice(0,60))+'</div>';
+  }).join('');
+  out.innerHTML='<div style="margin-top:6px;font-size:11px;color:var(--mut)">'+esc(p)+' 最近尝试（时间 · 入口 · 状态 · 证据）</div>'+(rows||'<div style="color:var(--mut)">无记录</div>');
+ }catch(e){out.textContent='溯源失败：'+e;}
+}
+async function exitCheck(b){
+ const out=$('exitOut');if(!out)return;
+ out.textContent='检测中…';if(b)b.disabled=true;
+ try{
+  const j=await (await fetch('/api/exit-check',{cache:'no-store'})).json();
+  let tail='';
+  if(j.ok&&j.prev_ip){
+   if(j.changed)tail=' · <span style="color:#1a9e75">IP 已变（'+esc(j.prev_ip)+' → '+esc(j.ip)+'）</span>'
+     +(j.same_subnet?' <span style="color:#b07700">同 /24，运营商可能仍视为同一来源</span>':'');
+   else tail=' · <span style="color:var(--mut)">IP 未变（重播后仍是同一出口，可再重播一次）</span>';
+  }
+  out.innerHTML=j.ok?('出口 IP <b>'+esc(j.ip)+'</b> · '+(j.proxy?'经代理':'直连')+' · '+j.elapsed_ms+'ms'+tail)
+   :('<span style="color:var(--red)">'+esc(j.err||'检测失败')+'</span>');
+ }catch(e){out.innerHTML='<span style="color:var(--red)">'+esc(String(e))+'</span>';}
+ finally{if(b)b.disabled=false;}
+}
 function buildForm(){if(!CFG)return;let h='',gh='';
  if(OPEN_USER>=CFG.length)OPEN_USER=CFG.length-1;   /* 槽值恢复越界钳回有效域（删用户/换配置后） */
  try{document.querySelectorAll('#cfgform input[type=date]').forEach(el=>{
@@ -14782,10 +15049,32 @@ function buildForm(){if(!CFG)return;let h='',gh='';
   +glcell('无头浏览器','glbHl','glbHlChk(this)',GLB.headless!==false,GLB.headless!==false?'后台静默采集':'弹窗可见调试','check')
   +glcell('采集超时','glbTo','GLB.timeout_seconds=Math.min(600,Math.max(10,parseInt(this.value)||45))',esc(GLB.timeout_seconds||45),'10–600 · 单渠道上限',null,'秒')
   +glcell('调试日志','glbDbg','GLB.debug=this.checked',!!GLB.debug,'接口现场存 debug/','check')
+  +glcell('指纹一致性','glbStl','GLB.stealth=this.checked',GLB.stealth!==false,'抹掉 navigator.webdriver 等「自动化浏览器」标记；只让页面看到普通 Chrome，不伪造账号、不破解验证','check')
+  +glcell('命中验证自动开窗','glbAV','GLB.auto_verify=this.checked',!!GLB.auto_verify,'命中人机验证时自动弹出验证窗口（同一会话），同渠道 10 分钟只开一次；不代答验证','check')
   +glcell('错峰延迟 · 自','glbDn','GLB.delay_min=Math.max(0,parseInt(this.value)||0)',esc(GLB.delay_min==null?5:GLB.delay_min),'页面动作间随机延迟',null,'秒')
   +glcell('错峰延迟 · 至','glbDx','GLB.delay_max=Math.max(0,parseInt(this.value)||0)',esc(GLB.delay_max==null?15:GLB.delay_max),'与「自」组成随机区间',null,'秒')
   +glcell('采集代理（空=直连）','glbProxy','GLB.proxy=this.value',esc(GLB.proxy||''),'如 http://127.0.0.1:7897（本机 Clash）：浏览器与特价发现出口统一走它，出口 IP 可变（IP 级限流绕行）；国内站建议国内直落节点，境外出口=风控风险升档','text',null,'http://127.0.0.1:7897')
   +'</div>'
+  +'<div style="display:flex;align-items:center;gap:10px;margin:2px 0 4px;flex-wrap:wrap">'
+  +'<button class="btn2" onclick="exitCheck(this)">出口自检 · 取公网 IP</button>'
+  +'<span id="exitOut" style="font-size:12px;color:var(--mut)">换手机热点 / 重播宽带后点一下，确认出口 IP 真的变了（只发一次请求）</span></div>'
+  +glsec('🧯 节流 · 熔断（1–5 区 · 保存即热生效）')
+  +'<div class="glgrid">'
+  +glcell('静默起','glbQs','GLB.scan_quiet_start=(this.value||"").trim()',esc(GLB.scan_quiet_start||''),'凌晨停扫起点（HH:MM，留空=关闭）。只管抓取，不影响推送','text',null,'01:00')
+  +glcell('静默止','glbQe','GLB.scan_quiet_end=(this.value||"").trim()',esc(GLB.scan_quiet_end||''),'与「静默起」成对；跨零点自动识别（如 23:00–07:00）','text',null,'07:00')
+  +glcell('快层 TTL','glbFast','GLB.fast_ttl_min=Math.max(5,Math.min(1440,parseInt(this.value)||15))',esc(GLB.fast_ttl_min==null?15:GLB.fast_ttl_min),'贴近心理价位的查询多久抓一次；越短越灵敏、请求越多',null,'分钟')
+  +glcell('慢层 TTL','glbSlow','GLB.slow_ttl_min=Math.max(5,Math.min(1440,parseInt(this.value)||120))',esc(GLB.slow_ttl_min==null?120:GLB.slow_ttl_min),'远离阈值的查询降频到此间隔（自动钳到 ≥ 快层）',null,'分钟')
+  +glcell('邻近比','glbNear','GLB.near_ratio=Math.max(0,Math.min(1,parseFloat(this.value)||0))',esc(GLB.near_ratio==null?0.15:GLB.near_ratio),'|现价−阈值|÷阈值 ≤ 此值即算「贴近」，进快层；0=完全相等才算',null,'0.15')
+  +glcell('起跑错峰','glbStg','GLB.stagger_seconds=Math.max(0,Math.min(120,parseInt(this.value)||0))',esc(GLB.stagger_seconds||0),'同轮各渠道起跑拉开的秒数（5 家均分），避免同一秒齐发',null,'秒')
+  +glcell('最小间隔','glbGap','GLB.min_gap_s=Math.max(0,Math.min(300,parseFloat(this.value)||0))',esc(GLB.min_gap_s||0),'同一渠道两次请求的最小间隔；0=不限（去哪儿内部另有 8s）',null,'秒')
+  +glcell('每分钟上限','glbRpm','GLB.per_minute=Math.max(0,Math.min(600,parseInt(this.value)||0))',esc(GLB.per_minute||0),'同一渠道每分钟最多几次；0=不限（滑动窗口，不对齐整分钟）',null,'次')
+  +glcell('熔断','glbBrk','GLB.breaker_enabled=this.checked',GLB.breaker_enabled!==false,'命中 429/风控/验证后停手冷却，而不是换姿势重试','check')
+  +glcell('熔断起步','glbBbs','GLB.breaker_base_s=Math.max(30,Math.min(3600,parseInt(this.value)||300))',esc(GLB.breaker_base_s||300),'首次冷却秒数；连续命中按 2 倍阶梯递增',null,'秒')
+  +glcell('熔断封顶','glbBcs','GLB.breaker_cap_s=Math.max(120,Math.min(86400,parseInt(this.value)||3600))',esc(GLB.breaker_cap_s||3600),'单次冷却上限：封太死会掩盖渠道已经恢复的事实',null,'秒')
+  +glcell('首页预热','glbWarm','GLB.warmup_enabled=this.checked',GLB.warmup_enabled!==false,'每轮每渠道先打一次首页再查深链：抹掉「无 referer / 无风控 cookie」这个最强机器指纹','check')
+  +glcell('预热渠道','glbWarmP','GLB.warmup_platforms=(this.value||"").trim()',esc(GLB.warmup_platforms||''),'逗号分隔；只对声明了入口的渠道生效，留空=不预热','text',null,'qunar, fliggy, tuniu')
+  +'</div>'
+  +'<div id="paceBox" style="margin:6px 0 2px;padding:10px 12px;border:0.5px solid rgba(0,0,0,.12);border-radius:var(--r10);font-size:12px;color:var(--mut);line-height:1.9">读取节流状态…</div>'
   +glsec('通用 · 保存即热生效')
   +'<div class="glgrid">'
   +glcell('浏览器 User-Agent（空=内置默认）','glbUa','GLB.user_agent=this.value',esc(GLB.user_agent||''),'全渠道共用的桌面 UA；风控策略变化时无需改码即可更换','text',null,'留空 = 内置桌面 UA')
@@ -15087,8 +15376,9 @@ function buildForm(){if(!CFG)return;let h='',gh='';
     即亮——syncRouteHead 单源判定，与 setRoute/quickDep 写点同源 */
  CFG.forEach((u,_ui)=>(u.routes||[]).forEach((_r,_uj)=>syncRouteHead(_ui,_uj)));
  syncAirModes();
- renderCfgOverview();
- refreshCfgChrome();
+renderCfgOverview();
+refreshCfgChrome();
+try{loadPacing();}catch(e){}
  try{syncRestartHint();}catch(e){}
  if(CFGQ)cfgFilter(CFGQ);
  if(_fkid){const _fe=document.getElementById(_fkid);if(_fe)_fe.focus({preventScroll:true});}}
@@ -20569,6 +20859,11 @@ class _State:
     boot_cfg = None   # 进程启动快照（重启差量基准，热重载不覆盖）
     users = None
     alerters = []     # 与 users 对齐；雷达降价提醒复用用户通知通道
+    pacing = None     # 节流/熔断上下文（main 挂接；/api/pacing 只读快照）
+    warm_cb = None    # 手动预热回调（main 挂接；可干预入口）
+    verify_cb = None  # 弹出验证窗口回调（main 挂接；人工过验证）
+    scene = None      # 案发现场（main 挂接；被拦 URL/证据/验证后探测）
+    probe_cb = None   # 渠道自检回调（main 挂接；单查询跑完整链路）
     job = None
     report_push = None
     reload_cb = None
@@ -20837,9 +21132,15 @@ def _start_login(plat: str, slot: str = "") -> dict:
     def _run():
         try:
             crawler = slot_crawler(key, cfg, logger)
-            crawler._login_window(evt, 0, timeout_s=600)
-            if not evt.is_set():
-                raise RuntimeError("登录窗口已关闭，尚未确认保存")
+            # 与采集共用同一把渠道锁：登录窗口和定时采集不能同时打开
+            # 同一 profile（否则 SessionBusy 或两份上下文互相覆盖会话）。
+            # 锁键用平台名（采集侧 channel_slot(c.name)）；用 profile_name
+            # 会和采集侧的键分叉。测试替身没有 .name 时回退到槽位平台。
+            _lock_key = str(meta.get("plat") or key)
+            with channel_slot(_lock_key):
+                confirmed = crawler._login_window(evt, 0, timeout_s=600)
+            if not confirmed and not evt.is_set():
+                raise RuntimeError("登录窗口已关闭，尚未确认完成")
             session["saved"] = True
             _State.login_pending[key] = _t.time()
             try:
@@ -21845,7 +22146,7 @@ def _probe_search(frm, to, date, plats, legs=None, task=None, cancel=None,
                         path=rec.get("path"), pathRows=rec.get("rows"))
 
                 c.on_path = _on_path
-                with _PROBE_CHANNEL_GATE:
+                with _probe_plat_lock(p):
                     if cancel is not None and cancel.is_set():
                         _probe_task_channel(task, ix, p, phase="已取消",
                                             status="cancelled")
@@ -21854,13 +22155,13 @@ def _probe_search(frm, to, date, plats, legs=None, task=None, cancel=None,
                                           msg="排队等待时任务已取消")
                         return {"n": 0, "rows": [], "ms": int((_time.time() - t) * 1000),
                                 "status": "cancelled", "detail": 0, "cal": 0}
-                    with _probe_plat_lock(p):
+                    with _PROBE_CHANNEL_GATE:
                         if cancel is not None and cancel.is_set():
                             _probe_task_channel(task, ix, p, phase="已取消",
                                                 status="cancelled")
                             _probe_task_event(task, leg=ix, plat=p, phase="已取消",
                                               status="cancelled",
-                                              msg="同渠道排队时任务已取消")
+                                              msg="等待全局浏览器配额时任务已取消")
                             return {"n": 0, "rows": [], "ms": int((_time.time() - t) * 1000),
                                     "status": "cancelled", "detail": 0, "cal": 0}
                         _probe_task_channel(task, ix, p, phase="等待响应",
@@ -25173,6 +25474,39 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _post_json(self, label="请求", max_len=16384):
+        """POST JSON 统一闸门：同源 + application/json + 体积上限。
+
+        干预类接口会开浏览器窗口、发真实请求，不能只靠"只监听
+        127.0.0.1"——本机浏览器里的任意网页都能向 localhost POST。
+        """
+        if self.command != "POST":
+            self._json({"ok": False, "err": "仅支持 POST"}, 405)
+            return None
+        ct = (self.headers.get("Content-Type") or "").lower()
+        if "application/json" not in ct:
+            self._json({"ok": False, "err": "Content-Type 必须为 application/json"}, 415)
+            return None
+        origin = self.headers.get("Origin") or ""
+        if origin:
+            from urllib.parse import urlparse as _up
+            if (_up(origin).netloc or "") != (self.headers.get("Host") or ""):
+                self._json({"ok": False, "err": "跨站%s请求已拒绝" % label}, 403)
+                return None
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        if length > max_len:
+            self._json({"ok": False, "err": "请求体过大"}, 413)
+            return None
+        try:
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except Exception:
+            self._json({"ok": False, "err": "请求体不是合法 JSON"}, 400)
+            return None
+        if not isinstance(body, dict):
+            self._json({"ok": False, "err": "请求体必须为对象"}, 400)
+            return None
+        return body
+
     def do_HEAD(self):
         """HEAD / 供 uptime/探活使用：只回头部，不构建响应体。"""
         if self.path == "/":
@@ -25272,6 +25606,72 @@ class _Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+            except Exception as e:
+                self._json({"ok": False, "err": str(e)}, 500)
+        elif self.path.startswith("/api/paths"):
+            try:
+                from urllib.parse import parse_qs as _pqs3
+                from urllib.parse import urlparse as _up3
+                _q = _pqs3(_up3(self.path).query)
+                try:
+                    _h = int((_q.get("hours") or ["24"])[0])
+                except (TypeError, ValueError):
+                    _h = 24
+                self._json(_paths_payload(_h, demo=DEMO["on"]))
+            except Exception as e:
+                self._json({"ok": False, "err": str(e)}, 500)
+        elif self.path.startswith("/api/trace"):
+            try:
+                from urllib.parse import parse_qs as _pqs4
+                from urllib.parse import urlparse as _up4
+                _q = _pqs4(_up4(self.path).query)
+                _plat = str((_q.get("platform") or [""])[0]).strip()
+                try:
+                    _lim = int((_q.get("limit") or ["8"])[0])
+                except (TypeError, ValueError):
+                    _lim = 8
+                if DEMO["on"]:
+                    self._json({"ok": True, "platform": _plat, "rows": [],
+                                "demo": True})
+                    return
+                db = _anchored(((_State.cfg or {}).get("output") or {}).get(
+                    "db_path"), "data/prices.db")
+                rows = []
+                if os.path.isfile(db):
+                    rows = PriceStorage(db).recent_paths(_plat, _lim)
+                self._json({"ok": True, "platform": _plat, "rows": rows})
+            except Exception as e:
+                self._json({"ok": False, "err": str(e)}, 500)
+        elif self.path == "/api/pacing":
+            try:
+                if DEMO["on"]:
+                    self._json(_demo_pacing_payload())
+                    return
+                pac = getattr(_State, "pacing", None)
+                if pac is None:
+                    self._json({"ok": False,
+                                "err": "节流未挂接（扫描任务尚未初始化）"}, 503)
+                    return
+                data = pac.snapshot()
+                # 建议引擎（该等还是该干预）：与路径账合并后才说得准
+                try:
+                    from core.pacing import advise
+                    _ps = (_paths_payload(24).get("platforms") or {})
+                    _scene = getattr(_State, "scene", None) or {}
+                    for _p, _ch in (data.get("channels") or {}).items():
+                        _ch["advice"] = advise(
+                            _p, _ch, _ps.get(_p, {}).get("paths") or {},
+                            node=_ps.get(_p) or {})
+                        _ch["scene"] = _scene.get(_p) or {}
+                except Exception as _ae:
+                    _State.logger.warning("[建议] 生成失败: %s", _ae)
+                data["ok"] = True
+                self._json(data)
+            except Exception as e:
+                self._json({"ok": False, "err": str(e)}, 500)
+        elif self.path.startswith("/api/exit-check"):
+            try:
+                self._json(_exit_check())
             except Exception as e:
                 self._json({"ok": False, "err": str(e)}, 500)
         elif self.path == "/api/state":
@@ -25820,6 +26220,52 @@ class _Handler(BaseHTTPRequestHandler):
                                 "jitter_minutes": int(
                                     (cfg.get("schedule") or {}).get(
                                         "jitter_minutes", 0) or 0),
+                                # 1 区 · 夜间静默窗（只管抓取，区别于
+                                # notifier.quiet_* 的"只停推送"）
+                                "scan_quiet_start": str(
+                                    (cfg.get("schedule") or {}).get(
+                                        "scan_quiet_start", "") or ""),
+                                "scan_quiet_end": str(
+                                    (cfg.get("schedule") or {}).get(
+                                        "scan_quiet_end", "") or ""),
+                                # 3 区 · 两级 TTL：贴近阈值走快层，远离走慢层
+                                "fast_ttl_min": int(
+                                    (cfg.get("schedule") or {}).get(
+                                        "fast_ttl_min", 15) or 15),
+                                "slow_ttl_min": int(
+                                    (cfg.get("schedule") or {}).get(
+                                        "slow_ttl_min", 120) or 120),
+                                "near_ratio": float(
+                                    (cfg.get("schedule") or {}).get(
+                                        "near_ratio", 0.15) or 0.15),
+                                # 5 区 · 起跑错峰 + 令牌桶
+                                "stagger_seconds": int(
+                                    (cfg.get("schedule") or {}).get(
+                                        "stagger_seconds", 0) or 0),
+                                "min_gap_s": float(
+                                    ((cfg.get("crawler") or {}).get("rate")
+                                     or {}).get("min_gap_s", 0) or 0),
+                                "per_minute": int(
+                                    ((cfg.get("crawler") or {}).get("rate")
+                                     or {}).get("per_minute", 0) or 0),
+                                # L1/L3 · 首页预热（每轮每渠道一次）
+                                "warmup_enabled": bool(
+                                    ((cfg.get("crawler") or {}).get("warmup")
+                                     or {}).get("enabled", True)),
+                                "warmup_platforms": ", ".join(
+                                    ((cfg.get("crawler") or {}).get("warmup")
+                                     or {}).get("platforms")
+                                    or ["qunar", "fliggy", "tuniu"]),
+                                # 2 区 · 熔断
+                                "breaker_enabled": bool(
+                                    ((cfg.get("crawler") or {}).get("breaker")
+                                     or {}).get("enabled", True)),
+                                "breaker_base_s": int(
+                                    ((cfg.get("crawler") or {}).get("breaker")
+                                     or {}).get("base_s", 300) or 300),
+                                "breaker_cap_s": int(
+                                    ((cfg.get("crawler") or {}).get("breaker")
+                                     or {}).get("cap_s", 3600) or 3600),
                                 "run_on_start": bool(
                                     (cfg.get("schedule") or {}).get(
                                         "run_on_start", True)),
@@ -25851,6 +26297,14 @@ class _Handler(BaseHTTPRequestHandler):
                                     "proxy", "") or ""),
                                 "debug": bool((cfg.get("crawler") or {}).get(
                                     "debug", False)),
+                                # 指纹一致性（L3）：抹掉 navigator.webdriver
+                                # 这类「自动化浏览器」显式标记
+                                "stealth": bool((cfg.get("crawler") or {}).get(
+                                    "stealth", True)),
+                                # 命中人机验证时自动开窗（默认关）
+                                "auto_verify": bool(
+                                    (cfg.get("crawler") or {}).get(
+                                        "auto_verify", False)),
                                 # 内核缓存位（启动级）：空=playwright 渠道
                                 # 默认位；配置后 chromium 安装与查找全部
                                 # 指向该目录（重启生效）
@@ -25943,6 +26397,34 @@ class _Handler(BaseHTTPRequestHandler):
                 if glb.get("jitter_minutes") is not None:
                     cfg.setdefault("schedule", {})["jitter_minutes"] = \
                         max(0, int(glb["jitter_minutes"]))
+                # 1/3/5 区 · 节流参数（保存即热生效）：非法值一律回默认，
+                # 坏配置不能让监控整轮停摆
+                _sc0 = cfg.setdefault("schedule", {})
+                for _k in ("scan_quiet_start", "scan_quiet_end"):
+                    if glb.get(_k) is not None:
+                        _v = str(glb[_k]).strip()[:5]
+                        if not re.match(r"^([01]?\d|2[0-3]):[0-5]\d$", _v):
+                            _v = ""
+                        _sc0[_k] = _v
+                for _k, _d in (("fast_ttl_min", 15), ("slow_ttl_min", 120)):
+                    if glb.get(_k) is not None:
+                        try:
+                            _v = int(glb[_k])
+                        except (TypeError, ValueError):
+                            _v = _d
+                        _sc0[_k] = max(5, min(1440, _v))
+                if glb.get("near_ratio") is not None:
+                    try:
+                        _nr = float(glb["near_ratio"])
+                    except (TypeError, ValueError):
+                        _nr = 0.15
+                    _sc0["near_ratio"] = max(0.0, min(1.0, _nr))
+                if glb.get("stagger_seconds") is not None:
+                    try:
+                        _sg = int(glb["stagger_seconds"])
+                    except (TypeError, ValueError):
+                        _sg = 0
+                    _sc0["stagger_seconds"] = max(0, min(120, _sg))
                 if glb.get("port"):
                     cfg.setdefault("web", {})["port"] = \
                         max(1024, int(glb["port"]))
@@ -26038,11 +26520,53 @@ class _Handler(BaseHTTPRequestHandler):
                     _crw["proxy"] = _px
                 if glb.get("debug") is not None:
                     _crw["debug"] = bool(glb["debug"])
+                if glb.get("stealth") is not None:
+                    _crw["stealth"] = bool(glb["stealth"])
+                if glb.get("auto_verify") is not None:
+                    _crw["auto_verify"] = bool(glb["auto_verify"])
                 # 内核缓存位（启动级）：保存进配置，重启进程生效；
                 # 空串=显式回渠道默认位（显式落键不留脏）
                 if glb.get("browser_dir") is not None:
                     _crw["browser_dir"] = \
                         str(glb["browser_dir"]).strip()[:300]
+                # 2/5 区 · 熔断与请求预算（保存即热生效）
+                _rate0 = _crw.setdefault("rate", {})
+                if glb.get("min_gap_s") is not None:
+                    try:
+                        _mg = float(glb["min_gap_s"])
+                    except (TypeError, ValueError):
+                        _mg = 0.0
+                    _rate0["min_gap_s"] = round(max(0.0, min(300.0, _mg)), 1)
+                if glb.get("per_minute") is not None:
+                    try:
+                        _pm = int(glb["per_minute"])
+                    except (TypeError, ValueError):
+                        _pm = 0
+                    _rate0["per_minute"] = max(0, min(600, _pm))
+                _warm0 = _crw.setdefault("warmup", {})
+                if glb.get("warmup_enabled") is not None:
+                    _warm0["enabled"] = bool(glb["warmup_enabled"])
+                if glb.get("warmup_platforms") is not None:
+                    _valid = ("qunar", "fliggy", "ctrip",
+                              "tongcheng", "tuniu")
+                    _wl = [x.strip() for x in
+                           str(glb["warmup_platforms"]).split(",") if x.strip()]
+                    _warm0["platforms"] = [x for x in _wl if x in _valid]
+                _brk0 = _crw.setdefault("breaker", {})
+                if glb.get("breaker_enabled") is not None:
+                    _brk0["enabled"] = bool(glb["breaker_enabled"])
+                if glb.get("breaker_base_s") is not None:
+                    try:
+                        _bb = int(glb["breaker_base_s"])
+                    except (TypeError, ValueError):
+                        _bb = 300
+                    _brk0["base_s"] = max(30, min(3600, _bb))
+                if glb.get("breaker_cap_s") is not None:
+                    try:
+                        _bc = int(glb["breaker_cap_s"])
+                    except (TypeError, ValueError):
+                        _bc = 3600
+                    _brk0["cap_s"] = max(120, min(86400, _bc))
                 # win_toast 缺省即开启——保存时落显式布尔进 config.yaml
                 for u0 in (cfg["users"] or []):
                     n0 = u0.get("notifier") or {}
@@ -26722,6 +27246,91 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "err": str(e)}, 500)
             finally:
                 st.lock.release()
+        elif self.path == "/api/pacing/reset":
+            try:
+                body = self._post_json("解除")
+                if body is None:
+                    return
+                plat = str(body.get("platform") or "").strip()
+                if plat not in PLATFORMS:
+                    self._json({"ok": False, "err": "未知渠道"}, 400)
+                    return
+                pac = getattr(_State, "pacing", None)
+                if pac is None or not plat:
+                    self._json({"ok": False,
+                                "err": "节流未挂接或缺少 platform"}, 400)
+                    return
+                before = ((pac.snapshot().get("channels") or {})
+                          .get(plat) or {})
+                pac.reset(plat)
+                _State.logger.info(
+                    "[干预] 手动解除 %s 熔断（原剩余 %ss · 原因 %s）",
+                    plat, before.get("remain_s", 0),
+                    before.get("reason") or "-")
+                after = ((pac.snapshot().get("channels") or {})
+                         .get(plat) or {})
+                self._json({"ok": True, "platform": plat,
+                            "before": before, "after": after})
+            except Exception as e:
+                self._json({"ok": False, "err": str(e)}, 500)
+        elif self.path == "/api/channel/probe":
+            try:
+                body = self._post_json("自检")
+                if body is None:
+                    return
+                plat = str(body.get("platform") or "").strip()
+                if plat not in PLATFORMS:
+                    self._json({"ok": False, "err": "未知渠道"}, 400)
+                    return
+                cb = getattr(_State, "probe_cb", None)
+                if cb is None:
+                    self._json({"ok": False,
+                                "err": "自检未挂接或缺少 platform"}, 400)
+                    return
+                _scope = str(body.get("scope") or "").strip().lower()
+                if _scope not in ("", "dom", "intl"):
+                    self._json({"ok": False, "err": "scope 必须是 dom/intl/空"}, 400)
+                    return
+                self._json(cb(plat, scope=_scope))
+            except Exception as e:
+                self._json({"ok": False, "err": str(e)}, 500)
+        elif self.path == "/api/channel/verify":
+            try:
+                body = self._post_json("验证")
+                if body is None:
+                    return
+                plat = str(body.get("platform") or "").strip()
+                if plat not in PLATFORMS:
+                    self._json({"ok": False, "err": "未知渠道"}, 400)
+                    return
+                cb = getattr(_State, "verify_cb", None)
+                if cb is None or not plat:
+                    self._json({"ok": False,
+                                "err": "验证窗口未挂接或缺少 platform"}, 400)
+                    return
+                self._json(cb(plat))
+            except Exception as e:
+                self._json({"ok": False, "err": str(e)}, 500)
+        elif self.path == "/api/channel/warmup":
+            try:
+                body = self._post_json("预热")
+                if body is None:
+                    return
+                plat = str(body.get("platform") or "").strip()
+                if plat not in PLATFORMS:
+                    self._json({"ok": False, "err": "未知渠道"}, 400)
+                    return
+                cb = getattr(_State, "warm_cb", None)
+                if cb is None or not plat:
+                    self._json({"ok": False,
+                                "err": "预热未挂接或缺少 platform"}, 400)
+                    return
+                out = cb(plat)
+                _State.logger.info("[干预] 手动预热 %s → %s",
+                                   plat, "成功" if out.get("ok") else out.get("err"))
+                self._json(out)
+            except Exception as e:
+                self._json({"ok": False, "err": str(e)}, 500)
         elif self.path == "/api/push":
             if st.report_push is None:
                 self._json({"ok": False, "err": "report 未挂接"}, 500)

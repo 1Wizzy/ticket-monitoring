@@ -51,21 +51,22 @@ def _read(rel):
         return f.read()
 
 
-def test_no_fingerprint_spoofing_source_left():
-    qsrc = _read(os.path.join("crawlers", "qunar.py"))
-    bsrc = _read(os.path.join("crawlers", "base.py"))
-    for needle in ("_STEALTH_JS", "navigator, 'webdriver'",
-                   "navigator,'webdriver'", "navigator.webdriver",
-                   "add_init_script", "WebGLRenderingContext",
-                   "Apple GPU", "AutomationControlled"):
-        assert needle not in qsrc, needle
-    for needle in ("navigator,'webdriver'", "navigator.webdriver",
-                   "add_init_script", "WebGLRenderingContext",
-                   "AutomationControlled"):
-        assert needle not in bsrc, needle
+def test_no_captcha_solving_or_credential_forgery():
+    """边界钉：指纹一致性 ≠ 代答验证 / 伪造账号。
+
+    2026-10-25 用户令：浏览器指纹（含 canvas/WebGL）直接应用，故原先
+    「全仓不得出现 add_init_script」的钉子已按令废止。永不许出现的只剩
+    代答验证与凭据伪造。
+    """
+    srcs = "".join(_read(os.path.join(*p)) for p in (
+        ("crawlers", "qunar.py"), ("crawlers", "base.py"),
+        ("core", "pacing.py")))
+    for needle in ("2captcha", "capsolver", "anti-captcha",
+                   "solve_captcha", "打码"):
+        assert needle not in srcs, needle
 
 
-def test_browser_context_installs_no_init_scripts(monkeypatch, tmp_path):
+def _ctx_env(monkeypatch):
     class _Ctx:
         def __init__(self):
             self.scripts = []
@@ -104,13 +105,30 @@ def test_browser_context_installs_no_init_scripts(monkeypatch, tmp_path):
     ctx = _Ctx()
     chromium = _Chromium(ctx)
     monkeypatch.setattr(base_mod, "sync_playwright", lambda: _PW(chromium))
+    return ctx, chromium
+
+
+def test_browser_context_honours_stealth_switch(monkeypatch, tmp_path):
+    """默认开：装 init script + AutomationControlled；显式关：两者都不装。
+
+    「可关」是这条钉的核心——用户能一键回到无指纹干预的行为，
+    而不是被默认值绑死。
+    """
+    ctx, chromium = _ctx_env(monkeypatch)
     c = BaseCrawler({"user_data_dir": str(tmp_path)}, _LOG)
     with c._browser_context(True, False, 0, None) as got:
         assert got is ctx
-    assert ctx.scripts == []
+    assert len(ctx.scripts) == 1 and "webdriver" in ctx.scripts[0]
+    assert "AutomationControlled" in " ".join(chromium.kwargs["args"])
     assert chromium.kwargs.get("user_agent")
     assert chromium.kwargs.get("viewport")
-    assert "AutomationControlled" not in " ".join(chromium.kwargs["args"])
+
+    ctx2, chromium2 = _ctx_env(monkeypatch)
+    c2 = BaseCrawler({"user_data_dir": str(tmp_path), "stealth": False}, _LOG)
+    with c2._browser_context(True, False, 0, None) as got2:
+        assert got2 is ctx2
+    assert ctx2.scripts == []
+    assert "AutomationControlled" not in " ".join(chromium2.kwargs["args"])
 
 
 # ---------------- 2. FAILURE CLASSIFICATION ----------------
@@ -382,3 +400,15 @@ def test_fetch_explicit_no_result_does_not_mark_login(crawler, monkeypatch):
     assert out == []
     assert QunarCrawler.login_suspect is False
     assert crawler._last_no_result is True
+
+
+def test_stealth_script_placeholders_all_resolved(monkeypatch, tmp_path):
+    """注入的脚本里不能残留 __PLACEHOLDER__（漏替换=脚本直接语法错误）。"""
+    ctx, _chromium = _ctx_env(monkeypatch)
+    c = BaseCrawler({"user_data_dir": str(tmp_path)}, _LOG)
+    with c._browser_context(True, False, 0, None):
+        pass
+    js = ctx.scripts[0]
+    for token in ("__SEED__", "__PLAT__", "__CORES__", "__MEM__",
+                  "__GLV__", "__GLR__", "__ADDCHROME__"):
+        assert token not in js, token

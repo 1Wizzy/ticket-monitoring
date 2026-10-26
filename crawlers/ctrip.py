@@ -117,6 +117,9 @@ class CtripCrawler(BaseCrawler):
         if _c not in CITY_NAME:
             CITY_NAME[_c] = _n
 
+    # 预热成效判据：cticket/bfa 落下才算真会话（空=不判）
+    RISK_COOKIES = ("cticket", "_bfa", "MKT_CKID")
+
     def login_url(self) -> str:
         return "https://www.ctrip.com/"
 
@@ -156,7 +159,10 @@ class CtripCrawler(BaseCrawler):
                 captured = self.attach_xhr_collector(page, self.XHR_KEYS)
                 t_h5 = time.time()
                 try:
-                    page.goto(url, wait_until="domcontentloaded")
+                    # 带 referer：从首页点进来的用户不是直接敲深链，
+                    # 缺 referer 是"脚本直捣"最廉价的一条特征
+                    page.goto(url, wait_until="domcontentloaded",
+                              referer="https://m.ctrip.com/html5/")
                     page.wait_for_timeout(8000)
                     for _ in range(4):
                         try:
@@ -342,6 +348,26 @@ class CtripCrawler(BaseCrawler):
     def _fetch_intl_list(self, from_city: str, to_city: str,
                          fc: str, tc: str, dates: List[str],
                          url_tpl: str = "", label: str = "国际") -> List[FlightPrice]:
+        """PC 列表入口的身份闸：这条路径必须用桌面 UA/视口。
+
+        CtripCrawler 默认 use_mobile=True（H5 主路径）。PC 列表若沿用
+        手机身份打开 flights.ctrip.com，UA/视口/触控标记与目标站自相
+        矛盾，实测 0 包/0 行——这不是"PC 没数据"，是拿错身份。这里只
+        在 PC 路径内切桌面，返回后恢复，H5 路径与验证窗口仍按上报的
+        mobile 标记复用同一身份。
+        """
+        bak = self.use_mobile
+        self.use_mobile = False
+        try:
+            return self._fetch_intl_list_pc(from_city, to_city, fc, tc,
+                                            dates, url_tpl=url_tpl,
+                                            label=label)
+        finally:
+            self.use_mobile = bak
+
+    def _fetch_intl_list_pc(self, from_city: str, to_city: str,
+                            fc: str, tc: str, dates: List[str],
+                            url_tpl: str = "", label: str = "国际") -> List[FlightPrice]:
         """PC 国际列表：batchSearch/pull 捕获 → 行程行解析。
 
         profile 未登录时 data.needUserLogin=true 且无行程——置

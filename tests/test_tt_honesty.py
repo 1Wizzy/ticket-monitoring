@@ -196,7 +196,7 @@ def _tn(monkeypatch, *, qf_resp=None, get_exc=None):
     c.rate_limit = False
     c.path_reset()
     monkeypatch.setattr(
-        tn_mod.httpx, "Client",
+        tn_mod._net, "new_client",
         lambda *a, **k: _FakeClient(qf_resp=qf_resp, get_exc=get_exc))
     monkeypatch.setattr(tn_mod.time, "sleep", lambda *a: None)
     monkeypatch.setattr(c, "_sleep", lambda: None)
