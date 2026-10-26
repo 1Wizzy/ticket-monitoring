@@ -93,7 +93,7 @@ def test_best_and_route_calendar_exclude_thin_calendar_rows(tmp_path):
     assert cal and all(p != 719 for _d, p, _tier in cal)
 
 
-def test_srx_links_five_and_intl_unsupported():
+def test_srx_links_five_and_intl_supported():
     dom = webui._srx_links("SHA", "HAK", "2027-01-29")
     assert dom["ok"] and len(dom["links"]) == 5
     assert all(x["ok"] for x in dom["links"]), dom
@@ -101,7 +101,9 @@ def test_srx_links_five_and_intl_unsupported():
     by = {x["key"]: x for x in intl["links"]}
     assert by["tuniu"]["ok"] is True
     assert "m.tuniu.com/m2015/intlFlight/flight/list" in by["tuniu"]["url"]
-    assert by["tongcheng"]["ok"] is False and by["tongcheng"]["url"] == ""
+    # r384：同程国际从"无链接"改为 book1 深链（匿名与登录都出逐日价）
+    assert by["tongcheng"]["ok"] is True, by["tongcheng"]
+    assert "m.ly.com/tiflight/book1.html" in by["tongcheng"]["url"]
     assert by["qunar"]["ok"] and by["ctrip"]["ok"] and by["fliggy"]["ok"]
 
 

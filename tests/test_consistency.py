@@ -171,3 +171,36 @@ def test_specials_deep_links_same_origin_as_crawlers():
         _FC.URL_TPL.format(fn="上海", tn="昆明", fc="SHA", tc="KMG",
                            d="2026-10-20")).hostname
     assert {"depCity", "arrCity", "depDate"} <= _keys(fl[0].link)
+
+
+def test_tongcheng_intl_view_url_matches_crawler_single_source():
+    """r384：同程国际链接不再"宁缺"——book1 页匿名与登录都出逐日价。
+
+    链接必须由爬虫同一构造器 `_intl_h5_url` 生成（城市码归并、中文名、
+    往返参数随爬虫走），否则改版时爬虫与出链各写一套=挂羊头。
+    """
+    from core.intl import airport_city_code, city_short_of
+    a = _a()
+    for fc, fn, tc, tn, d in (
+            ("NRT", "东京成田", "SHA", "上海", "2026-11-16"),
+            ("SHA", "上海", "BKK", "曼谷", "2026-11-16"),
+            ("PVG", "浦东", "NRT", "成田", "2026-12-20")):
+        r = Route(from_code=fc, from_name=fn, to_code=tc, to_name=tn,
+                  dates=[d])
+        got = a._build_view_url(r, d, "tongcheng")
+        f2, t2 = airport_city_code(fc), airport_city_code(tc)
+        exp = TongchengCrawler._intl_h5_url(
+            f2, t2, d,
+            TongchengCrawler.CITY_NAME.get(f2) or city_short_of(f2),
+            TongchengCrawler.CITY_NAME.get(t2) or city_short_of(t2))
+        assert got == exp, f"{fc}->{tc}\n  got {got}\n  exp {exp}"
+        # 机场码必须归并成城市码（NRT→TYO/PVG→SHA），否则页面反查失败
+        assert f"dc={f2}&" in got and f"ac={t2}&" in got
+
+
+def test_tongcheng_domestic_view_url_unchanged():
+    """国内仍是 ft/touch/book1（国际改动不得波及国内出链）。"""
+    a, r = _a(), _route()
+    u = a._build_view_url(r, "2026-10-05", "tongcheng")
+    assert "m.ly.com/ft/touch/book1" in u
+    assert "fromcitycode=SHA" in u and "tocitycode=URC" in u
