@@ -539,6 +539,16 @@ class TongchengCrawler(BaseCrawler):
                 rest = [d for d in dates
                         if d not in covered
                         and (not today or d > today)]
+                if rest:
+                    # 窗口未覆盖的日期不静默消失：逐日落 unsupported，
+                    # 面板能看出"是渠道没有这一天，不是采集漏了"
+                    for d in sorted(rest):
+                        self.path_note("窗历", "unsupported", date=d,
+                                       detail="超出可查窗口/渠道无该日价")
+                    self.logger.warning(
+                        "[tongcheng][intl] 窗历未覆盖 %d 日（%s）——"
+                        "超窗或渠道无报价，按 unsupported 记账",
+                        len(rest), ",".join(sorted(rest)[:4]))
                 if self.probe_mode and rest:
                     # 探针要明细：窗口外/未覆盖日期仍走页内真实列表
                     results.extend(self._intl_browser_fallback(
