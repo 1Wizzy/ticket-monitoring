@@ -195,3 +195,20 @@ def test_tongcheng_domestic_view_url_unchanged():
     u = a._build_view_url(r, "2026-10-05", "tongcheng")
     assert "m.ly.com/ft/touch/book1" in u
     assert "fromcitycode=SHA" in u and "tocitycode=URC" in u
+
+
+def test_intl_view_links_only_for_verified_channels():
+    """r390：国际深链必须实测能出价才给。
+
+    2026-10-27 无痕实测：携程 20 价、飞猪 5 价可验证；同程 302 登录页、
+    去哪儿"查询超时"、途牛永远加载中（登录态复检同样不可用）。
+    三家一律不出链——宁缺勿错，避免"点了看不到价"的挂羊头。
+    """
+    from core.models import Route
+    a = _a()
+    r = Route(from_code="SHA", from_name="上海", to_code="NRT",
+              to_name="东京", dates=["2026-11-16"])
+    for plat in ("ctrip", "fliggy"):
+        assert a._build_view_url(r, "2026-11-16", plat), plat
+    for plat in ("tongcheng", "qunar", "tuniu"):
+        assert a._build_view_url(r, "2026-11-16", plat) == "", plat
