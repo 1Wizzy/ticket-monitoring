@@ -17964,7 +17964,7 @@ function srxKey(f){return f.rowKey||('x|'+[f.platKey,f.rowId,f.rawIdx,f.code,f.d
 function srxEntryOf(f){return (f&&(f.entryPath||(f.prov&&f.prov.entryPath)))||''}
 function srxEvLevel(f){const p=f&&f.prov;return p&&p.evidenceLevel?p.evidenceLevel:(f&&f.entryPath?'path':'unknown')}
 function srxRawKey(f){return (f&&f.rawKey)||srxKey(f)}
-function srxIsCal(f){return !!f.isCal||!(f.code&&f.depTime&&f.arrTime)}
+function srxIsCal(f){return !!f.isCal||!(f.depTime&&f.arrTime)}/* r386：判据只认时刻双空（与后端 _is_calendar_row 同律）。曾额外要求 code——飞猪国际中转卡片渠道不给航班号，会被误标成日历行。 */
 /* stale 是「距本次已采时数」，不是脏标记：只有显式 isStale 或 >6h
    才进入补位语义。旧式 f.stale 真值判断会把 0.4h 的无 raw 行误判
    为补位，整条航线的同班矩阵因此空白。 */
@@ -24380,8 +24380,10 @@ def _user_state(u):
             for _o in _byp.values():
                 _o["outlier"] = _ol
     def _real_offer(f):
-        return bool(str(f.get("code") or "").strip()
-                    and str(f.get("depTime") or "").strip()
+        # r386：真实班次判据=有起降时刻（与 _is_calendar_row 同律）。
+        # 曾额外要求航班号——飞猪国际中转卡片渠道只给航司名不给航班号，
+        # 会被当成"非真实班次"整类剔出直飞/中转最优池（页面看着没中转）。
+        return bool(str(f.get("depTime") or "").strip()
                     and str(f.get("arrTime") or "").strip())
     directs = [f for f in flights
                if not f.get("transCity") and not f.get("_xphan")
