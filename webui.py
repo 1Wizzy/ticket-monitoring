@@ -15004,8 +15004,8 @@ async function loadPacing(){
    +'<div>本轮计划 '+plan+' 次（快 '+lr.fast+' / 慢 '+lr.slow+' / TTL 内 '+lr.skip+'） · 实发 '+(lr.sent||0)+' 次'
    +(lr.paced?(' · 主动未发 '+(lr.paced||0)+' 次'):'')
    +' · 熔断 '+(lr.trips||[]).length+' 次 · 会话让位 '+esc((lr.busy||[]).join('、')||'无')+'</div>'
-   +((lr.sent_by&&Object.keys(lr.sent_by).length)?('<div>各渠道：'+esc(Object.keys(lr.sent_by).map(k=>(CN[k]||k)+' 实发'+(lr.sent_by[k]||0)+((lr.paced_by&&lr.paced_by[k])?('/未发'+lr.paced_by[k]):'')).join(' · '))+'</div>'):'')
-   +'<div>预算：最小间隔 '+esc(String((j.cfg&&j.cfg.min_gap_s)||0))+'s · 每分钟上限 '+esc(String((j.cfg&&j.cfg.per_minute)||0))+'（0=不限） · 近一分钟用量 '
+   +((lr.sent_by&&Object.keys(lr.sent_by).length)?('<div style="white-space:normal;overflow-wrap:anywhere">各渠道：'+esc(Object.keys(lr.sent_by).map(k=>(CN[k]||k)+' 实发'+(lr.sent_by[k]||0)+((lr.paced_by&&lr.paced_by[k])?('/未发'+lr.paced_by[k]):'')).join(' · '))+'</div>'):'')
+   +'<div style="white-space:normal;overflow-wrap:anywhere">预算：最小间隔 '+esc(String((j.cfg&&j.cfg.min_gap_s)||0))+'s · 每分钟上限 '+esc(String((j.cfg&&j.cfg.per_minute)||0))+'（0=不限） · 近一分钟用量 '
    +esc(Object.keys(j.bucket||{}).map(k=>(CN[k]||k)+' '+((j.bucket[k]||{}).per_min_used||0)).join(' · ')||'无')+'</div>'
    +pathRow+warmRow+probeRow+'<div id="traceOut"></div>';
  }catch(e){box.innerHTML='<span style="color:var(--red)">'+esc(String(e))+'</span>';}
