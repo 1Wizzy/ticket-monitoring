@@ -569,9 +569,17 @@ class PriceStorage:
                 if er:
                     evidence[(r["platform"], r["entry_path"],
                               r["path_status"])] = dict(er)
+        # 历史行用旧口径写进库（444 曾被记成 login）。证据自证：
+        # note 含 444/非法链接/202 的 login 行实际是会话软拒，展示时按
+        # soft 归类，避免"登录态失效×53，证据却是 code=444"的自相矛盾。
+        _SOFT_NOTE = ("444", "非法链接", "202")
         out = []
         for r in rows:
             st = str(r["path_status"] or "")
+            _ev0 = evidence.get((r["platform"], r["entry_path"], st)) or {}
+            _nt = str(_ev0.get("note") or "")
+            if st == "login" and any(k in _nt for k in _SOFT_NOTE):
+                st = "soft_reject"
             out.append({
                 "platform": str(r["platform"] or ""),
                 "path": str(r["entry_path"] or ""),

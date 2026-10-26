@@ -124,3 +124,29 @@ def test_panel_shows_recurrence_with_action_flag():
     assert "反复出现" in src
     assert "autoHeal" in src and "需人工" in src and "自动" in src
     assert "failure_kind" in src
+
+
+def test_legacy_444_login_rows_are_relabelled_as_soft(tmp_path):
+    """历史行曾把 444 记成 login；复发账必须按证据改判，避免自相矛盾。"""
+    from core.storage import PriceStorage
+    st = PriceStorage(str(tmp_path / "p.db"))
+    for i in range(3):
+        st.save_fetch_path("tongcheng", "SHA", "BKK", "2027-06-01",
+                           "日历", "login", note="会话门拒 code=444",
+                           attempt_id="old%d" % i)
+    row = st.failure_recurrence(24, 3)[0]
+    assert row["status"] == "soft_reject"
+    assert row["kind"] == "soft"
+    # 证据原样保留，便于核对
+    assert "444" in (row["evidence"] or {}).get("note", "")
+
+
+def test_legacy_real_login_is_not_relabelled(tmp_path):
+    from core.storage import PriceStorage
+    st = PriceStorage(str(tmp_path / "p.db"))
+    for i in range(3):
+        st.save_fetch_path("tuniu", "SHA", "BKK", "2027-06-01",
+                           "H5/API", "login", note="登录号（710114/needLogin）",
+                           attempt_id="t%d" % i)
+    row = st.failure_recurrence(24, 3)[0]
+    assert row["status"] == "login" and row["kind"] == "login"
