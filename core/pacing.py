@@ -295,7 +295,7 @@ class ChannelBreaker:
     def _rec(self, plat):
         return self._st.setdefault(str(plat), {
             "strikes": 0, "until": 0.0, "reason": "", "needs_login": False,
-            "needs_warmup": False})
+            "needs_warmup": False, "ok_streak": 0})
 
     def allow(self, plat, now=None):
         now = time.time() if now is None else now
@@ -341,6 +341,26 @@ class ChannelBreaker:
             st["reason"] = kind
             return cd
 
+    def note_ok(self, plat, need=2):
+        """连续成功 need 次才清 strikes；软拒标记单独清零。
+
+        - strikes/冷却：连续成功才复位，避免抖动渠道反复横跳；
+        - needs_warmup：成功出数本身就是"会话已养熟"的最强证据，
+          立即清（否则面板会一直提示"软拒待预热"）。
+        """
+        with self._lock:
+            st = self._rec(plat)
+            st["ok_streak"] = int(st.get("ok_streak") or 0) + 1
+            st["needs_warmup"] = False
+            if st.get("reason") == "soft":
+                st["reason"] = ""
+            if st["ok_streak"] >= max(1, int(need or 2)):
+                st["strikes"] = 0
+                st["until"] = 0.0
+                st["reason"] = ""
+                st["needs_login"] = False
+            return st["ok_streak"]
+
     def note_warmup_ok(self, plat):
         """预热真的拿到风控 cookie 才清软拒标记。
 
@@ -356,7 +376,8 @@ class ChannelBreaker:
         with self._lock:
             self._st[str(plat)] = {
                 "strikes": 0, "until": 0.0, "reason": "",
-                "needs_login": False, "needs_warmup": False}
+                "needs_login": False, "needs_warmup": False,
+                "ok_streak": 0}
 
     def snapshot(self, now=None):
         now = time.time() if now is None else now
@@ -372,6 +393,7 @@ class ChannelBreaker:
                     "reason": str(st.get("reason") or ""),
                     "needs_login": bool(st.get("needs_login")),
                     "needs_warmup": bool(st.get("needs_warmup")),
+                    "ok_streak": int(st.get("ok_streak") or 0),
                 }
             for p in self._st:
                 if p in out:
@@ -385,6 +407,7 @@ class ChannelBreaker:
                     "reason": str(st.get("reason") or ""),
                     "needs_login": bool(st.get("needs_login")),
                     "needs_warmup": bool(st.get("needs_warmup")),
+                    "ok_streak": int(st.get("ok_streak") or 0),
                 }
         return out
 
@@ -533,15 +556,21 @@ def advise(plat, ch=None, paths=None, now=None, node=None):
         _raw = v.get("rate_excl_empty", v.get("rate"))
         if _raw is None:
             continue
+        # 有效样本护栏：分母里至少 3 次"非售罄"尝试才下路径结论，
+        # 否则 1 次拦截 + 4 次售罄会把一条正常的路判成劣化。
+        _valid = max(0, n - int(v.get("empty") or 0))
+        if _valid < 3:
+            continue
         _r = float(_raw or 0)
         if _r < 0.3 and (bad is None or n > bad[1]):
-            bad = (name, n, _r)
+            bad = (name, n, _r, _valid)
     if bad:
         return {"state": "path_degraded", "action": "route",
                 "severity": "auto",
-                "hint": "%s 近 24h 成功率 %.0f%%（%d 次）——已在日志记录"
-                        "路径偏好（影子模式，暂不改变采集顺序）；"
-                        "可点「自检」验证这条路" % (bad[0], bad[2] * 100, bad[1]),
+                "hint": "%s 近 24h 有效率 %.0f%%（%d 次有效 / %d 次尝试）"
+                        "——已在日志记录路径偏好（影子模式，暂不改变采集"
+                        "顺序）；可点「自检」验证这条路"
+                        % (bad[0], bad[2] * 100, bad[3], bad[1]),
                 "eta_s": 0}
     ok_n = sum(int((v or {}).get("ok") or 0) for v in paths.values())
     rate = (q_ok / q_attempts if q_attempts
@@ -647,6 +676,9 @@ class Pacing:
 
     def reset(self, plat):
         self._breaker.reset(plat)
+
+    def note_ok(self, plat, need=2):
+        return self._breaker.note_ok(plat, need)
 
     def note_warmup_ok(self, plat):
         self._breaker.note_warmup_ok(plat)

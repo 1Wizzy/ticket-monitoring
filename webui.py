@@ -15021,7 +15021,19 @@ async function showTrace(p){
    const col=(st==='ok'||st==='calendar')?'#1a9e75':(st==='empty'?'var(--mut)':'var(--red)');
    return '<div style="white-space:nowrap">'+esc(t)+' · <b>'+esc(r.entry_path||'?')+'</b> · <span style="color:'+col+'">'+esc(st)+'</span> · '+esc(String(r.note||'').slice(0,60))+'</div>';
   }).join('');
-  out.innerHTML='<div style="margin-top:6px;font-size:11px;color:var(--mut)">'+esc(p)+' 最近尝试（时间 · 入口 · 状态 · 证据）</div>'+(rows||'<div style="color:var(--mut)">无记录</div>');
+  // 干预账：每次 解除/预热/自检/验证 的结果与耗时。回答"干预后到底
+  // 有没有恢复"，而不是只看当前状态（那可能是干预前的旧结论）。
+  const ivs=(j.interventions||[]).map(x=>{
+   const t=String(x.at||'').slice(5,16),act=String(x.action||'');
+   const col=x.ok?'#1a9e75':'var(--red)';
+   return '<div style="white-space:nowrap">'+esc(t)+' · <b>'+esc(act)+'</b>'
+     +' · <span style="color:'+col+'">'+(x.ok?'成功':'失败')+'</span>'
+     +(x.rows?(' · '+esc(String(x.rows))+' 行'):'')
+     +(x.ms?(' · '+esc((x.ms/1000).toFixed(1))+'s'):'')
+     +(x.note?(' · '+esc(String(x.note).slice(0,48))):'')+'</div>';
+  }).join('');
+  out.innerHTML='<div style="margin-top:6px;font-size:11px;color:var(--mut)">'+esc(p)+' 最近尝试（时间 · 入口 · 状态 · 证据）</div>'+(rows||'<div style="color:var(--mut)">无记录</div>')
+   +'<div style="margin-top:6px;font-size:11px;color:var(--mut)">'+esc(p)+' 干预记录（时间 · 动作 · 结果 · 耗时）</div>'+(ivs||'<div style="color:var(--mut)">暂无干预</div>');
  }catch(e){out.textContent='溯源失败：'+e;}
 }
 async function exitCheck(b){
@@ -25671,9 +25683,13 @@ class _Handler(BaseHTTPRequestHandler):
                 db = _anchored(((_State.cfg or {}).get("output") or {}).get(
                     "db_path"), "data/prices.db")
                 rows = []
+                ivs = []
                 if os.path.isfile(db):
-                    rows = PriceStorage(db).recent_paths(_plat, _lim)
-                self._json({"ok": True, "platform": _plat, "rows": rows})
+                    _st = PriceStorage(db)
+                    rows = _st.recent_paths(_plat, _lim)
+                    ivs = _st.interventions(_plat, _lim)
+                self._json({"ok": True, "platform": _plat, "rows": rows,
+                            "interventions": ivs})
             except Exception as e:
                 self._json({"ok": False, "err": str(e)}, 500)
         elif self.path == "/api/pacing":
@@ -27303,6 +27319,21 @@ class _Handler(BaseHTTPRequestHandler):
                     before.get("reason") or "-")
                 after = ((pac.snapshot().get("channels") or {})
                          .get(plat) or {})
+                try:
+                    from core.storage import PriceStorage as _PS
+                    _dbp = _anchored(
+                        ((_State.cfg or {}).get("output") or {}).get(
+                            "db_path"), "data/prices.db")
+                    _PS(_dbp).save_intervention(
+                        plat, "reset", ok=True,
+                        before="%s/%s" % (before.get("state"),
+                                          before.get("reason")),
+                        after="%s/%s" % (after.get("state"),
+                                         after.get("reason")),
+                        note="手动解除熔断（原剩余 %ss）"
+                             % before.get("remain_s", 0))
+                except Exception:
+                    pass
                 self._json({"ok": True, "platform": plat,
                             "before": before, "after": after})
             except Exception as e:

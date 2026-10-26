@@ -216,6 +216,46 @@ class PriceStorage:
             if "attempt_id" not in pcols:
                 c.execute("ALTER TABLE fetch_paths ADD COLUMN "
                           "attempt_id TEXT NOT NULL DEFAULT ''")
+            # 干预账本：每次"解除/预热/自检/去验证/补采"一条，回答
+            # "干预后有没有真的恢复"，且重启不丢（rt["scene"] 是内存态）。
+            c.execute(
+                "CREATE TABLE IF NOT EXISTS interventions ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "at TEXT NOT NULL, platform TEXT NOT NULL,"
+                "action TEXT NOT NULL, ok INTEGER NOT NULL DEFAULT 0,"
+                "rows INTEGER DEFAULT 0, scope TEXT DEFAULT '',"
+                "before TEXT DEFAULT '', after TEXT DEFAULT '',"
+                "note TEXT DEFAULT '', ms INTEGER DEFAULT 0)")
+
+    def save_intervention(self, platform, action, ok=False, rows=0,
+                          scope="", before="", after="", note="", ms=0,
+                          at=""):
+        """记录一次干预及其结果（成功/失败、前后状态、耗时）。"""
+        from datetime import datetime
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO interventions (at,platform,action,ok,rows,"
+                "scope,before,after,note,ms) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (str(at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                 str(platform or ""), str(action or ""), 1 if ok else 0,
+                 int(rows or 0), str(scope or ""), str(before or "")[:400],
+                 str(after or "")[:400], str(note or "")[:400],
+                 int(ms or 0)))
+
+    def interventions(self, platform="", limit=20):
+        """最近 N 条干预，按时间倒序（可观测：干预是否真的有效）。"""
+        limit = max(1, min(200, int(limit or 20)))
+        with self._conn() as c:
+            if platform:
+                rows = c.execute(
+                    "SELECT * FROM interventions WHERE platform=? "
+                    "ORDER BY id DESC LIMIT ?", (str(platform), limit)
+                ).fetchall()
+            else:
+                rows = c.execute(
+                    "SELECT * FROM interventions ORDER BY id DESC LIMIT ?",
+                    (limit,)).fetchall()
+        return [dict(r) for r in rows]
 
     @staticmethod
     def radar_query_key(query):

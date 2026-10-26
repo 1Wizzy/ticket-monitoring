@@ -249,7 +249,10 @@ def test_rate_excl_empty_keeps_real_failure_visible(tmp_path):
     # 分母剔除 empty 后只剩 1 次 blocked -> 0%
     assert node["paths"]["H5"]["rate_excl_empty"] == 0.0
     a = advise("qunar", {"state": "ok"}, node["paths"], node=node)
-    assert a["state"] == "path_degraded"
+    # 有效样本只有 1 次：不下"这条路径劣化"的结论（防 1 次抖动误杀），
+    # 但渠道整体成功率仍低，必须如实报 degraded。
+    assert a["state"] == "degraded"
+    assert a["severity"] == "wait"
 
 
 def test_probe_rows_are_persisted_with_evidence_level():

@@ -1813,6 +1813,11 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
         try:
             if rt.get("pacing") is not None:
                 rt["pacing"].record(platform)
+            storage.save_intervention(
+                platform, "warmup", ok=bool(ok), scope="",
+                note="%s 风控 cookie %s" % (
+                    url, ",".join(getattr(c, "warmup_cookies", []) or [])
+                    or "无"))
         except Exception:
             pass
         return {"ok": bool(ok), "platform": platform, "url": url}
@@ -1865,10 +1870,22 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
             _attempt = "refill-%s-%d-%d" % (platform, int(time.time() * 1000),
                                             _i)
             try:
+                _one = []
                 with channel_slot(c.name):
-                    got.extend(c.safe_fetch(fc, tc, [d]) or [])
+                    _one = c.safe_fetch(fc, tc, [d]) or []
+                    got.extend(_one)
                     if rt.get("pacing") is not None:
                         rt["pacing"].record(platform)
+                # 补采出数 = 这条链路已恢复：复位熔断并刷新该键 TTL，
+                # 否则"补采成功"之后下一轮仍按旧的冷却/劣化处理。
+                if _one and rt.get("pacing") is not None:
+                    try:
+                        rt["pacing"].reset(platform)
+                        rt["pacing"].note_fetch(
+                            platform, (fc, tc, d),
+                            min(p.price for p in _one), True)
+                    except (AttributeError, TypeError, ValueError):
+                        pass
                 # 补采也是真实采集：路径账要记，否则「验证后恢复了」
                 # 在统计里看不到，下一轮还会拿旧失败率继续罚该渠道。
                 for _rec in (getattr(c, "paths", None) or []):
@@ -1879,7 +1896,8 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                             rows=_rec.get("rows", 0),
                             note=_rec.get("detail", ""),
                             evidence_level="refill",
-                            attempt_id=_attempt)
+                            attempt_id=_attempt,
+                            http_status=int(_rec.get("http") or 0))
                     except Exception:
                         pass
             except Exception as e:
@@ -1899,6 +1917,8 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
         logger.info("[补采] %s 补采 %d 条查询，落库 %d 条",
                     platform, len(qs), len(got))
         return {"n": len(qs), "rows": len(got)}
+
+    rt["refetch_failed"] = _refetch_failed
 
     def verify_channel(platform):
         """现场 + 弹出验证窗口（可干预）：用**采集同一份 profile** 打开
@@ -1922,6 +1942,7 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
         done = threading.Event()
 
         def _run():
+            _t0 = time.time()
             bak = c.use_mobile
             try:
                 # 与采集共用渠道锁：验证窗口开的是采集同一份 profile，
@@ -1976,6 +1997,22 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
             rt["scene"].setdefault(platform, {})["verify"] = {
                 "at": time.strftime("%H:%M:%S"), "ok": ok,
                 "rows": rows, "note": note, "refill": refill}
+            # 落干预账：重启后仍能回答"上次验证是否真的恢复"
+            try:
+                _aft = (rt.get("pacing").snapshot()["channels"]
+                        .get(platform) if rt.get("pacing") else {}) or {}
+                storage.save_intervention(
+                    platform, "verify", ok=ok, rows=rows,
+                    scope=str(scene.get("kind") or ""),
+                    before=str(scene.get("kind") or ""),
+                    after="%s/%s" % (_aft.get("state"), _aft.get("reason")),
+                    note=("；".join(filter(None, [note,
+                          ("补采 %d 条/落库 %d" % (refill.get("n", 0),
+                                                   refill.get("rows", 0)))
+                          if refill.get("n") else ""]))),
+                    ms=int((time.time() - _t0) * 1000))
+            except Exception:
+                pass
             logger.info("[验证] %s 回归探测：%s（%d 条）%s", platform,
                         "通过" if ok else "未通过", rows, note)
 
@@ -2064,6 +2101,16 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                 if rt.get("pacing") is not None:
                     rt["pacing"].record(platform)
             _raw_paths = [dict(x) for x in (getattr(c, "paths", None) or [])]
+            # 自检出数 = 链路已通：清熔断 + 刷新 TTL，否则会出现
+            # "自检显示 ✓N 条，下一轮仍显示冷却/劣化" 的自相矛盾。
+            if prices and rt.get("pacing") is not None:
+                try:
+                    rt["pacing"].reset(platform)
+                    rt["pacing"].note_fetch(
+                        platform, (q[0], q[1], q[2]),
+                        min(p.price for p in prices), True)
+                except (AttributeError, TypeError, ValueError):
+                    pass
             # 自检也写路径账（evidence_level=probe）：否则"刚验证通过"无法
             # 覆盖 24h 里的旧劣化，下一次刷新仍判路径劣化。
             _attempt = "probe-%s-%d" % (platform, int(time.time() * 1000))
@@ -2093,6 +2140,16 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                    "scene": dict(getattr(c, "last_scene", {}) or {}),
                    "retry_after": int(getattr(c, "retry_after_s", 0) or 0),
                    "ms": int((time.time() - t0) * 1000)}
+            try:
+                storage.save_intervention(
+                    platform, "probe", ok=bool(prices), rows=len(prices),
+                    scope=str(out["scope"]), after=out["scope"],
+                    note="/".join("%s %s×%s" % (
+                        x.get("path"), x.get("status"), x.get("rows"))
+                        for x in paths)[:300],
+                    ms=out["ms"])
+            except Exception:
+                pass
             logger.info("[自检] %s/%s → %d 条（%s，%.1fs）", platform,
                         out["scope"], out["rows"],
                         "/".join(str(p["status"]) for p in paths) or "无路径",
@@ -2454,7 +2511,9 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                     # "换路径成功"误判成"被封"，是本末倒置。
                     # 但旧轮 worker 的结果不能改新轮的熔断/TTL 状态。
                     if _gen_ok:
-                        pac.reset(c.name)
+                        # 连续成功才完全清零 strikes：只成功一次就复位，
+                        # 会让抖动渠道在"冷却/恢复"间反复横跳。
+                        pac.note_ok(c.name)
                         try:
                             pac.note_fetch(c.name, key,
                                            min(p.price for p in prices), True)
