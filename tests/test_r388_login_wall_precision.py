@@ -240,3 +240,36 @@ def test_advise_quiet_param_is_optional():
     a = advise("ctrip", {}, _stale_paths(), now=now,
                node={"paths": _stale_paths()})
     assert a["action"] == "probe"
+
+
+# ---- r393：渠道不提供舱位时必须如实标注「舱位未标」----
+
+def test_cabin_missing_marker_present():
+    """飞猪 100% / 去哪儿 99% 的行没有舱位字段（渠道列表页不提供）。
+
+    明细里舱位片整段不渲染，读者会把公务舱价当经济舱价看。
+    现在对「有航班号+起降时刻」的真班次标注「舱位未标」，日历行不标。
+    """
+    src = _src("webui.py") if False else open(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "webui.py"), encoding="utf-8").read()
+    assert 'class="cmiss"' in src
+    assert "舱位未标" in src
+    # 只在真班次上标：条件里必须同时要求 code/depTime/arrTime
+    i = src.find('class="cmiss"')
+    ctx = src[max(0, i - 260):i]
+    assert "f.code&&f.depTime&&f.arrTime" in ctx, ctx[-200:]
+
+
+def test_cabin_missing_css_defined():
+    src = open(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "webui.py"), encoding="utf-8").read()
+    assert ".cmiss{" in src, "必须有对应样式，否则提示与正文混在一起"
+
+
+def test_unlabelled_cabin_not_silently_treated_as_economy():
+    """舱位未知不得被当成经济舱参与同班比价分组（前端 fp 用独立分组）。"""
+    from core.flightnorm import cabin_class
+    assert cabin_class("") == ""
+    assert cabin_class("公务舱") == "公务舱"
