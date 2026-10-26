@@ -273,3 +273,20 @@ def test_unlabelled_cabin_not_silently_treated_as_economy():
     from core.flightnorm import cabin_class
     assert cabin_class("") == ""
     assert cabin_class("公务舱") == "公务舱"
+
+
+def test_baggage_missing_marker_present():
+    """飞猪/途牛 100%、去哪儿 85% 的行没有行李字段（原始报文 0 个行李键）。
+
+    缺失时明细默认不渲染行李，读者无从判断是否含托运。对真班次标注
+    「行李未标」，并明确"不代表无行李"；有行李或日历行不标。
+    """
+    src = open(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "webui.py"), encoding="utf-8").read()
+    assert "行李未标" in src
+    assert "不代表无行李" in src
+    i = src.find("行李未标")
+    ctx = src[max(0, i - 260):i]
+    assert "f.code&&f.depTime&&f.arrTime" in ctx, ctx[-200:]
+    assert "!f.baggage" in ctx and "!f.carryon" in ctx, ctx[-200:]
