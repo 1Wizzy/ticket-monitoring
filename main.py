@@ -2276,7 +2276,10 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                 for d in r.dates:
                     registry.setdefault((r.from_code, r.to_code, d), set()).add(ui)
 
-        queries = sorted(registry)
+        # 先按出发日、再按航线排序：临期日期优先采到，避免"越近的越晚
+        # 才采"，也让预算不足时先保住最可能下单的日期。
+        queries = sorted(registry, key=lambda k: (str(k[2]), str(k[0]),
+                                                  str(k[1])))
         # 过期监控日期跳采（_split_expired_queries：渠道对过期查询滚动
         # 返回其他日期航班，照常落库=把别的日期的价挂进过期桶）——
         # 过期航班无购买意义，跳过即治本；日志留痕供「为何没数据」对账
@@ -2656,8 +2659,12 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
             # 去哪儿的全局限流错峰由 qunar 渠道自身控制（类级时间锁），
             # 不再让其余渠道陪等
             all_prices = []
-            ex = concurrent.futures.ThreadPoolExecutor(
-                max_workers=max(1, len(plats) or 1))
+            _cap = int(((rt.get("pacing").cfg.get("max_concurrency")
+                         if rt.get("pacing") else 0) or 0))
+            _mw = max(1, len(plats) or 1)
+            if _cap:
+                _mw = min(_mw, _cap)
+            ex = concurrent.futures.ThreadPoolExecutor(max_workers=_mw)
             try:
                 futs = {ex.submit(_timed_fetch, c, fc, tc, d, th_min,
                                   rt.get("_round_gen")): c.name

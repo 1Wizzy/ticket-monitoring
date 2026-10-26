@@ -283,3 +283,31 @@ def test_effect_sql_bindings_are_consistent(tmp_path):
                        attempt_id="z1")
     eff = st.intervention_effect("qunar")
     assert eff["ok"] is True and "before" in eff and "after" in eff
+
+
+def test_queries_are_date_first():
+    """临期日期必须先采：排序键第一维是出发日。"""
+    import inspect
+    import main
+    src = inspect.getsource(main.make_sweep_job)
+    assert 'sorted(registry, key=lambda k: (str(k[2])' in src
+
+
+def test_concurrency_cap_is_configurable():
+    from core.pacing import parse_pacing
+    assert parse_pacing({"crawler": {"max_concurrency": 2}})[
+        "max_concurrency"] == 2
+    assert parse_pacing({"crawler": {"max_concurrency": 99}})[
+        "max_concurrency"] == 5
+    assert parse_pacing({})["max_concurrency"] == 0
+
+
+def test_near_days_configurable():
+    from core.pacing import Pacing
+    now = [1_700_000_000.0]
+    p = Pacing({"schedule": {"fast_ttl_min": 30, "slow_ttl_min": 120,
+                            "near_days": 7}}, clock=lambda: now[0])
+    key = ("qunar", "SHA", "PEK", "2027-06-01")
+    p.note_fetch("qunar", key, 900, True)
+    now[0] += 16 * 60
+    assert p.plan_query("qunar", key, 900, days_ahead=6)[0] == "fast"

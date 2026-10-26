@@ -14859,9 +14859,41 @@ async function paceReset(p){
  loadPacing();
 }
 let _probeScope='';
+let _probeAllRes='';
+let _warmAllRes='';
 function setProbeScope(v){_probeScope=v||'';}
+async function probeAll(){
+ // 顺序逐个自检：不并发开浏览器（并发本身就是限流来源），
+ // 也让结果按渠道顺序滚出来，便于对照。
+ const out=$('probeOut');if(!out)return;
+ const list=['qunar','fliggy','ctrip','tongcheng','tuniu'];
+ _probeAllRes='全部自检中（顺序执行，约 1–5 分钟）…';
+ out.innerHTML=_probeAllRes;
+ const lines=[];
+ for(const p of list){
+  try{
+   const j=await (await fetch('/api/channel/probe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p,scope:_probeScope})})).json();
+   lines.push(esc(p)+'：'+(j.ok?((j.rows||0)+' 条'):('失败 '+(j.err||''))));
+  }catch(e){lines.push(esc(p)+'：失败');}
+  _probeAllRes=lines.join(' · ');
+  const o2=$('probeOut');if(o2)o2.innerHTML=_probeAllRes;
+ }
+ loadPacing();
+}
+async function warmAll(){
+ const list=['qunar','fliggy','tuniu'];
+ const out=$('warmOut');_warmAllRes='全部预热中…';
+ if(out)out.innerHTML=_warmAllRes;
+ for(const p of list){
+  try{await fetch('/api/channel/warmup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p})});}catch(e){}
+ }
+ _warmAllRes='预热已顺序执行完成';
+ const o3=$('warmOut');if(o3)o3.innerHTML=_warmAllRes;
+ loadPacing();
+}
 async function probeNow(p){
  const out=$('probeOut');if(!out)return;
+ _probeAllRes='';
  out.textContent='正在自检 '+p+(_probeScope?('（'+_probeScope+'）'):'')+'（约 10–60 秒）…';
  try{
   const j=await (await fetch('/api/channel/probe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p,scope:_probeScope})})).json();
@@ -14995,14 +15027,16 @@ async function loadPacing(){
   }catch(e){}
   const WARM=['qunar','fliggy','tuniu'];
   const PROBE=['qunar','fliggy','ctrip','tongcheng','tuniu'];
-  const warmRow='<div style="margin-top:2px">手动预热 '+WARM.map(p=>'<a href="javascript:void(0)" style="color:var(--blue);margin-right:8px" onclick="warmNow(\''+p+'\')">'+p+'</a>').join('')+'<span id="warmOut" style="margin-left:4px"></span></div>';
+  const warmRow='<div style="margin-top:2px">手动预热 '+WARM.map(p=>'<a href="javascript:void(0)" style="color:var(--blue);margin-right:8px" onclick="warmNow(\''+p+'\')">'+p+'</a>').join('')+'<span id="warmOut" style="margin-left:4px">'+_warmAllRes+'</span></div>';
+  const probeAll=' <a href="javascript:void(0)" style="color:var(--blue);margin-right:8px" onclick="probeAll()">全部自检</a>';
+  const warmAll=' <a href="javascript:void(0)" style="color:var(--blue);margin-right:8px" onclick="warmAll()">全部预热</a>';
   const probeRow='<div style="margin-top:2px">渠道自检 '
    +'<select id="probeScopeSel" onchange="setProbeScope(this.value)" style="margin-right:6px;font-size:12px;padding:1px 4px">'
    +'<option value=""'+(_probeScope===''?' selected':'')+'>自动</option>'
    +'<option value="dom"'+(_probeScope==='dom'?' selected':'')+'>国内</option>'
    +'<option value="intl"'+(_probeScope==='intl'?' selected':'')+'>国际</option>'
    +'</select>'
-   +PROBE.map(p=>'<a href="javascript:void(0)" style="color:var(--blue);margin-right:8px" onclick="probeNow(\''+p+'\')">'+p+'</a>').join('')+'<span id="probeOut" style="margin-left:4px"></span></div>';
+   +PROBE.map(p=>'<a href="javascript:void(0)" style="color:var(--blue);margin-right:8px" onclick="probeNow(\''+p+'\')">'+p+'</a>').join('')+'<span id="probeOut" style="margin-left:4px">'+_probeAllRes+'</span></div>';
   box.innerHTML='<div style="margin-bottom:4px"><b>节流状态</b> · 静默窗 '+qs
    +' <a href="javascript:void(0)" onclick="loadPacing()" style="color:var(--blue);margin-left:6px">刷新</a></div>'
    +adviceRow

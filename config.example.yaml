@@ -123,7 +123,8 @@ schedule:
   # fast_ttl 建议 < interval−jitter，否则早到的轮次会被 TTL 挡掉。
   fast_ttl_min: 15
   slow_ttl_min: 120
-  near_ratio: 0.15          # |现价−阈值|÷阈值 ≤ 此值算「贴近」
+  near_ratio: 0.15
+  near_days: 3               # 出发 ≤N 天进快层（TTL 减半）          # |现价−阈值|÷阈值 ≤ 此值算「贴近」
   stagger_seconds: 25       # 同轮各渠道起跑错开（5 家均分），防同秒齐发
 crawler:
   headless: true
@@ -159,6 +160,9 @@ crawler:
   proxy_map: {}
   # ── 每渠道最小采集间隔（分钟；0=跟随全局 TTL）──────────────────
   # 慢渠道不要被全局 30 分钟的节奏催；qunar 这类高风控可给 45–60。
+  # 同轮最多几个渠道浏览器并发（0=跟随渠道数）。5 家同秒齐发
+  # 最容易被判成"同一来源多路机器人"，2 是实测较稳的档。
+  max_concurrency: 2
   cadence:
     qunar: 0
     fliggy: 0

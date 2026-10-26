@@ -54,6 +54,11 @@ DEFAULTS = {
     "warmup_enabled": True,
     "warmup_platforms": ("qunar", "fliggy", "tuniu"),
     "cadence": {},
+    # 同轮并发浏览器的硬上限（0=跟随渠道数）。同机 5 家齐发最容易被
+    # 判成"同一来源的多路机器人"，2 路是实测较稳的档。
+    "max_concurrency": 0,
+    # 临期多少天内进入快层（默认 3 天）
+    "near_days": 3,
 }
 
 
@@ -132,6 +137,13 @@ def parse_pacing(cfg):
                 _v = 0
             _cad[_p] = max(0, min(10080, _v))
     out["cadence"] = _cad
+    try:
+        out["max_concurrency"] = max(0, min(5, int(
+            crw.get("max_concurrency") or 0)))
+    except (TypeError, ValueError):
+        out["max_concurrency"] = 0
+    out["near_days"] = _num(sc.get("near_days"),
+                            DEFAULTS["near_days"], 0, 30)
     return out
 
 
@@ -804,7 +816,7 @@ class Pacing:
         except (TypeError, ValueError):
             _d = None
         if _d is not None and _d >= 0:
-            if _d <= 3:
+            if _d <= int(self.cfg.get("near_days") or 3):
                 fast_ttl = max(5, int(round(fast_ttl / 2.0)))
             elif _d >= 30:
                 slow_ttl = min(1440, int(round(slow_ttl * 2.0)))
