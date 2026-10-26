@@ -268,3 +268,12 @@ def test_pacing_panel_refreshes_and_counts_down():
     assert "if(document.hidden||VIEW!=='cfg')" in src
     assert "已自动处理" in src          # 自动类建议不再被过滤
     assert "软拒" in src                # 路径提示可见软拒
+
+
+def test_initial_round_snapshot_has_budget_fields():
+    """进程刚起、还没跑第一轮时，前端读到的字段也必须齐。"""
+    p = Pacing({})
+    rnd = p.snapshot()["last_round"]
+    for k in ("sent", "paced", "sent_by", "paced_by"):
+        assert k in rnd, k
+    assert rnd["sent"] == 0 and rnd["paced"] == 0
