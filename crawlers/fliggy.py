@@ -518,20 +518,38 @@ class FliggyCrawler(BaseCrawler):
 
     @classmethod
     def _parse_intl_items(cls, items, date: str) -> list:
-        """国际列表 DOM 提取值 → extra 行；无航班号/时刻/正价一律丢。"""
+        """国际列表 DOM 提取值 → extra 行；无时刻/正价一律丢。
+
+        r386 实测：飞猪国际**中转卡片不给航班号**——行头是
+        「马来西亚亚航长途 等2家航司」（aria-label=航班号 的 span 里只有
+        航司名），后面还有「2程航班」+ 转城市 + 起降时刻 + 含税价。旧
+        实现对行头死抠 `航司 代码` 正则，判不中就整条丢弃：SHA→SIN 页面
+        82 张卡片里 68 张是中转，生产只存了 14 条直飞（中转全丢，价格
+        也只看到直飞那一档）。
+        现在中转卡片按「航司名 + 转城市 + 两时刻 + 含税价」如实建行，
+        `code` 留空（渠道不给就不编），`transfer/transCity` 置位；
+        解析不了的（无行头/无时刻/无价）仍然丢。
+        """
         out = []
         for it in items or []:
             if not isinstance(it, dict):
                 continue
             line = str(it.get("nameLine") or "").strip()
             m = re.match(r"^(.*?)\s*([A-Z0-9]{2}\d{3,4})\s*$", line)
-            if not m:
-                continue
-            name, code = m.group(1).strip(), m.group(2).upper()
             dep = str(it.get("depTime") or "").strip()
             arr = str(it.get("arrTime") or "").strip()
             if not (dep and arr):
                 continue
+            trans = " ".join(str(it.get("trans") or "").split())
+            segs = int(it.get("segs") or 1)
+            if m:
+                name, code = m.group(1).strip(), m.group(2).upper()
+            else:
+                # 中转卡片：行头只有航司名（可能带「等N家航司」）
+                name = re.sub(r"\s*等\s*\d+\s*家航司\s*$", "", line).strip()
+                if not name or not (trans or segs > 1):
+                    continue      # 既没航班号也不是中转 = 认不出，丢
+                code = ""
             raw_price = str(it.get("priceText") or "")
             if "机票价格" in raw_price:
                 raw_price = raw_price.split("机票价格")[-1]
@@ -570,7 +588,10 @@ class FliggyCrawler(BaseCrawler):
             })
         uniq = {}
         for r in out:
-            k = (r["code"], r["depTime"], r["arrTime"], r["price"])
+            # 中转卡片无航班号（code 为空）：去重键补航司名+转城市，
+            # 否则「同一起飞时刻的不同中转方案」会被压成一条
+            k = (r["code"] or r["name"], r["transCity"],
+                 r["depTime"], r["arrTime"], r["price"])
             uniq.setdefault(k, r)
         return list(uniq.values())
 

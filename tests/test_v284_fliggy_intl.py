@@ -115,3 +115,51 @@ def test_tongcheng_session_evidence_and_density_pins():
     src = pathlib.Path(webui.__file__).read_text(encoding="utf-8")
     assert "近 14 天出发日均未采" in src and "data-bandexpand" in src
     assert "@media(max-height:980px)" in src and "srx-probe-on .srx-audit" in src
+
+
+# ---- r386：飞猪中转卡片无航班号（实测行头「马来西亚亚航长途 等2家航司」）
+
+def _transfer(**over):
+    base = _item(nameLine="马来西亚亚航长途 等2家航司", tips="2程航班",
+                 depTime="01:35", arrTime="10:20", cross="",
+                 priceText="机票价格739元", priceNum="含税￥739",
+                 taxText="", quantity="少量", trans="吉隆坡", segs=2)
+    base.update(over)
+    return base
+
+
+def test_transfer_card_without_flight_no_is_kept():
+    """r386：SHA→SIN 页面 82 张卡片里 68 张中转，旧解析全丢只存 14 条直飞。"""
+    rows = FliggyCrawler._parse_intl_items([_transfer()], "2026-11-16")
+    assert len(rows) == 1, "中转卡片不得因缺航班号被丢"
+    r = rows[0]
+    assert r["code"] == "", "渠道不给航班号就不编"
+    assert r["name"] == "马来西亚亚航长途", "去掉「等2家航司」尾巴"
+    assert r["transfer"] is True and r["transCity"] == "吉隆坡"
+    assert r["price"] == 739 and r["depTime"] == "01:35"
+    assert r["arrTime"] == "10:20"
+
+
+def test_transfer_cards_same_dep_different_arr_not_deduped():
+    """同一航司同一起飞时刻的不同中转方案必须都保留。"""
+    rows = FliggyCrawler._parse_intl_items(
+        [_transfer(arrTime="10:20"), _transfer(arrTime="11:35"),
+         _transfer(arrTime="13:40")], "2026-11-16")
+    assert len(rows) == 3, [r["arrTime"] for r in rows]
+    assert sorted(r["arrTime"] for r in rows) == ["10:20", "11:35", "13:40"]
+
+
+def test_transfer_without_price_or_times_still_dropped():
+    """认不出/没时刻/没价的仍然丢——不当假行。"""
+    rows = FliggyCrawler._parse_intl_items([
+        _transfer(priceText="机票价格0元"),
+        _transfer(depTime="", arrTime=""),
+        _item(nameLine="", trans="", segs=1),   # 无行头也非中转
+    ], "2026-11-16")
+    assert rows == []
+
+
+def test_direct_card_unchanged():
+    rows = FliggyCrawler._parse_intl_items([_item()], "2026-11-16")
+    assert len(rows) == 1 and rows[0]["code"] == "9C7293"
+    assert rows[0]["transfer"] is False
