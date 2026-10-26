@@ -14941,14 +14941,14 @@ async function loadPacing(){
   const urg=Object.keys(ch).map(k=>{
    const a=(ch[k]||{}).advice||{};
    if(a.severity!=='act'&&a.severity!=='wait')return '';
-   return '<span style="white-space:nowrap">'+(CN[k]||k)+'：'+esc(a.hint)+(a.eta_s?('（'+_paceLeft(a.eta_s)+'）'):'')+'</span>';
+   return '<span style="white-space:normal;overflow-wrap:anywhere">'+(CN[k]||k)+'：'+esc(a.hint)+(a.eta_s?('（'+_paceLeft(a.eta_s)+'）'):'')+'</span>';
   }).filter(Boolean);
   // 自动处理类（路径劣化/软拒/日历兜底）也要出现在建议行：
   // 否则 chips 显示"路径劣化"、下面却写"各渠道正常"，同屏自相矛盾。
   const auto=Object.keys(ch).map(k=>{
    const a=(ch[k]||{}).advice||{};
    if(a.severity!=='auto')return '';
-   return '<span style="white-space:nowrap">'+(CN[k]||k)+'：'+esc(a.hint)+'</span>';
+   return '<span style="white-space:normal;overflow-wrap:anywhere">'+(CN[k]||k)+'：'+esc(a.hint)+'</span>';
   }).filter(Boolean);
   const adviceRow=(urg.length||auto.length)
    ?'<div style="margin:2px 0;color:#b07700">'
