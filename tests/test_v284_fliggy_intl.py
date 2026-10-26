@@ -191,3 +191,20 @@ def test_calendar_row_still_detected_by_missing_times():
                 "transCity": "巴林", "transfer": True}
     assert A._is_calendar_row(transfer) is False, \
         "有时刻的中转行是真实班次，不是日历行"
+
+
+def test_transfer_segments_not_written_into_plane():
+    """r386：tips 对中转是段数标记（「2程航班」），不能占机型字段。"""
+    rows = FliggyCrawler._parse_intl_items(
+        [_transfer(tips="2程航班")], "2026-11-16")
+    r = rows[0]
+    assert r["plane"] == "", "机型不得写成「2程航班」"
+    assert r["segments"] == 2, "段数另立字段供展示"
+
+
+def test_direct_plane_kept_and_segments_zero():
+    rows = FliggyCrawler._parse_intl_items(
+        [_item(tips="中型机321")], "2026-11-16")
+    r = rows[0]
+    assert r["plane"] == "中型机321"
+    assert r["segments"] == 0

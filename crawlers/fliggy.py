@@ -580,7 +580,11 @@ class FliggyCrawler(BaseCrawler):
                 "depAirport": str(it.get("depAirport") or "").strip(),
                 "arrAirport": str(it.get("arrAirport") or "").strip(),
                 "totalDuration": str(it.get("duration") or "").replace("约", "").strip(),
-                "plane": tips, "price": price, "tax": tax,
+                # tips 对直飞是机型串（「中型机320」），对中转是段数
+                # 标记（「2程航班」）——写进 plane 会让机型列显示"2程航班"
+                "plane": ("" if (trans or segs > 1) else tips),
+                "segments": (segs if (trans or segs > 1) else 0),
+                "price": price, "tax": tax,
                 "leftTickets": qty,
                 "transfer": bool(trans) or segs > 1,
                 "transCity": trans, "intl": 1,
