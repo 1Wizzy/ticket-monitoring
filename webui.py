@@ -22341,7 +22341,7 @@ def _probe_search(frm, to, date, plats, legs=None, task=None, cancel=None,
                             "depTime": dep, "arrTime": arr, "dur": dur,
                             "date": dat, "transfer": bool(trans), "trans": trans,
                             "cross": str(g.get("crossDayDesc") or ""),
-                            "isCal": not (code and dep and arr),
+                            "isCal": not (dep and arr),   # r386：只认时刻（无航班号中转行是真班次）
                             "probeIdx": raw_ix, "synthetic": synthetic,
                             "intl": 1 if _is_intl(fc, tc) else 0,
                             "plat": _A.PLATFORM_CN.get(p, p), "platKey": p,
@@ -22593,8 +22593,7 @@ def _probe_search(frm, to, date, plats, legs=None, task=None, cancel=None,
         m.pop("_err", None)
     merged = {p: merged[p] for p in sorted(merged, key=_plat_rank)}
     for r in out:
-        r["isCal"] = not (r.get("code") and r.get("depTime")
-                          and r.get("arrTime"))
+        r["isCal"] = not (r.get("depTime") and r.get("arrTime"))
         r["isStale"] = False
         r["stale"] = 0
         r["rowKey"] = _srx_row_key(r)
@@ -22857,10 +22856,9 @@ def _srx_calendar_raw(frm, to, date, days=14, axis="both"):
                 items = obj if isinstance(obj, list) else ([obj] if isinstance(obj, dict) else [])
                 is_cal = not any(
                     isinstance(x, dict)
-                    and str(x.get("code") or "").strip()
                     and str(x.get("depTime") or "").strip()
                     and str(x.get("arrTime") or "").strip()
-                    for x in items)
+                    for x in items)   # r386：只认时刻（无航班号中转行也算真班次）
             except Exception:
                 pass
             dep.append({"date": d0, "price": round(float(r["price"])),
@@ -24018,8 +24016,7 @@ def _user_state(u):
                         "_fetched_at") or ""
                     g["_pair"] = _k3
                     g["depDate"] = g.get("depDate") or _d0
-                    _is_cal = not (str(g.get("code") or "").strip()
-                                   and str(g.get("depTime") or "").strip()
+                    _is_cal = not (str(g.get("depTime") or "").strip()
                                    and str(g.get("arrTime") or "").strip())
                     if _is_cal and (_frm0, _to0, p, g["depDate"]) in have_cal:
                         continue   # 当轮已有同日历行：补位不再复制一条
@@ -24087,7 +24084,7 @@ def _user_state(u):
         qual = _qual_of(f, transfer, price)
         # 日历/薄行没有航班身份，只有一条渠道最低价：不参与达标判定，
         # 也不得落 near/brk（否则明细会给出「行情破线」的绿描边暗示）
-        is_cal = not (f.get("code") and f.get("depTime") and f.get("arrTime"))
+        is_cal = not (f.get("depTime") and f.get("arrTime"))
         rr = _rr_of(f)
         # 每行都带航线标签+📈 走势入口：走势是可观测性的基础能力，
         # 单启用航线×单日期也必须能点开（旧条件曾让整表入口消失）。
@@ -24341,7 +24338,7 @@ def _user_state(u):
             # 日历薄行标记（无航班号无时刻=日历价，非具体航班）。
             # isCal 与 cal 同值但语义化，供检索台列表/矩阵/导出统一消费。
             "cal": is_cal,
-            "isCal": not (f.get("code") and f.get("depTime") and f.get("arrTime")),
+            "isCal": not (f.get("depTime") and f.get("arrTime")),
             "route": rt_label,
             "dur": f.get("totalDuration") or "",
             "durM": _dur_min(f.get("totalDuration")),
