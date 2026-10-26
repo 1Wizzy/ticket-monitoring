@@ -660,6 +660,12 @@ def advise(plat, ch=None, paths=None, now=None, node=None):
             if (str(_name).startswith(_CAL_FAMILY)
                     and _cal_family_ok(_sp, _name)):
                 continue
+            # r388：只对"最近真的在试"的路下结论。某条兜底路径可能几小时
+            # 没被用到（主路径一直成功就不走它），拿半天前的旧样本报
+            # 「路径劣化」等于催用户去修一条根本没在用的路。
+            _age = _age_min((_v or {}).get("last_at"), now)
+            if _age is not None and _age > 180:
+                continue
             _raw = _v.get("rate_excl_empty", _v.get("rate"))
             if _raw is None:
                 continue
@@ -680,6 +686,10 @@ def advise(plat, ch=None, paths=None, now=None, node=None):
             continue
         if (str(name).startswith(_CAL_FAMILY)
                 and _cal_family_ok(paths, name)):
+            continue
+        # r388：陈旧样本不判劣化（见上）
+        _age2 = _age_min(v.get("last_at"), now)
+        if _age2 is not None and _age2 > 180:
             continue
         # 优先用"排除售罄空结果"的比率：真无票不等于路径坏了。
         # None = 有效样本为 0，不参与判定（既非 0% 也非 100%）。

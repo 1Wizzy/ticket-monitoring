@@ -157,3 +157,39 @@ def test_ui_renders_dash_for_empty_coverage():
     assert "(j.coverage.ratio||0)*100" not in src, \
         "不得再把「没发」渲染成 0%"
     assert "j.coverage.ratio==null?'—'" in src
+
+
+# ---- r388d：陈旧样本不得报「路径劣化」----
+
+def _node(paths):
+    return {"paths": paths, "query_attempts": 10, "query_ok": 9,
+            "query_detail_ok": 9, "query_calendar_only": 0,
+            "scopes": {"dom": {"paths": paths}, "intl": {"paths": {}}}}
+
+
+def test_stale_path_not_reported_degraded():
+    """兜底路径几小时没被用到（主路径一直成功）→ 不催用户去"修"。"""
+    from core import pacing as P
+    old = "2026-01-01 00:00:00"
+    paths = {"H5": {"attempts": 50, "ok": 45, "rate": 0.9,
+                    "rate_excl_empty": 0.9, "last_at": "2026-10-27 19:30:00"},
+             "API": {"attempts": 20, "ok": 0, "rate": 0.0,
+                     "rate_excl_empty": 0.0, "last_at": old}}
+    now = P.time.mktime(P.time.strptime("2026-10-27 20:00:00",
+                                        "%Y-%m-%d %H:%M:%S"))
+    a = P.advise("qunar", {}, paths, now=now, node=_node(paths))
+    assert a["state"] != "path_degraded", a
+
+
+def test_fresh_degraded_path_still_reported():
+    """新鲜样本（<3h）仍要报劣化，门槛不能把真问题一起吞掉。"""
+    from core import pacing as P
+    paths = {"H5": {"attempts": 50, "ok": 45, "rate": 0.9,
+                    "rate_excl_empty": 0.9, "last_at": "2026-10-27 19:30:00"},
+             "API": {"attempts": 20, "ok": 0, "rate": 0.0,
+                     "rate_excl_empty": 0.0, "last_at": "2026-10-27 19:55:00"}}
+    now = P.time.mktime(P.time.strptime("2026-10-27 20:00:00",
+                                        "%Y-%m-%d %H:%M:%S"))
+    a = P.advise("qunar", {}, paths, now=now, node=_node(paths))
+    assert a["state"] == "path_degraded", a
+    assert "API" in a["hint"]
