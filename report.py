@@ -13,6 +13,7 @@ import os
 import re
 import sqlite3
 import sys
+import time
 import urllib.parse
 from datetime import datetime
 
@@ -2074,6 +2075,12 @@ def upload_freeimage(png_path, logger):
     return None
 
 
+# r389：GitHub 图床失败熔断（进程级）。失败后 N 秒内不再为每张图
+# 重复撞同一条失败链路；任何一次成功立即清零。
+_GH_FAIL_UNTIL = 0.0
+_GH_FAIL_COOLDOWN_S = 600.0
+
+
 def upload_ghimg(png_path, ih, logger):
     """GitHub 图库上传（Contents API 单文件 PUT，公开库）。
 
@@ -2178,10 +2185,21 @@ def upload_chart(png_path, cfg, logger, ih=None):
     if provider == "ghimg" and (ih.get("repo") or "").strip() \
             and ((ih.get("ghtoken") or "").strip()
                     or (ih.get("token") or "").strip()):
+        # r389：连续失败熔断。实测同一代理链路（TLS EOF）下每张图每轮都会
+        # 直连+代理各撞一次（一轮多图=多次无谓请求，且每轮重复）。
+        # 失败后 10 分钟内直接跳过，交文本兜底；成功即清零。
+        global _GH_FAIL_UNTIL
+        if time.time() < _GH_FAIL_UNTIL:
+            logger.info("[图床] GitHub 熔断中（剩余 %ds），直出文本兜底",
+                        int(_GH_FAIL_UNTIL - time.time()))
+            return None
         url = upload_ghimg(png_path, ih, logger)
         if url:
+            _GH_FAIL_UNTIL = 0.0
             return url
-        logger.warning("[走势] GitHub 图库失败，放弃图链路交文本兜底")
+        _GH_FAIL_UNTIL = time.time() + _GH_FAIL_COOLDOWN_S
+        logger.warning("[走势] GitHub 图库失败，放弃图链路交文本兜底"
+                       "（%.0f 分钟内不再尝试）", _GH_FAIL_COOLDOWN_S / 60.0)
     if provider == "smms" and (ih.get("token") or "").strip():
         url = upload_smms(png_path, ih["token"].strip(), logger)
         if url:
