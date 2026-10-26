@@ -171,8 +171,14 @@ def test_legacy_no_result_login_rows_are_relabelled_as_empty(tmp_path):
     assert "无符合条件的航班" in (row["evidence"] or {}).get("note", "")
 
 
-def test_legacy_1999_login_wall_stays_login(tmp_path):
-    """1999 国际列表硬拒是真的登录墙（重登可恢复），不得改判 empty。"""
+def test_legacy_1999_login_rows_are_relabelled_soft(tmp_path):
+    """r385 受控 A/B 推翻了 r382 的假设：1999 不是登录墙。
+
+    同 profile、零介入、6 轮 × SHA→LHR：首轮 1999 后连续 5 轮出数，
+    未重登即自愈。故历史 login 行（证据写 1999）展示时按 soft 归类，
+    不再催用户重登。改名保留用例位（原 test_legacy_1999_login_wall_
+    stays_login 的结论已被实测推翻）。
+    """
     from core.storage import PriceStorage
     st = PriceStorage(str(tmp_path / "p.db"))
     for i in range(3):
@@ -180,7 +186,7 @@ def test_legacy_1999_login_wall_stays_login(tmp_path):
                            "login", note="国际列表 1999/8 未登录硬拒",
                            attempt_id="k%d" % i)
     row = st.failure_recurrence(24, 3)[0]
-    assert row["status"] == "login" and row["kind"] == "login"
+    assert row["status"] == "soft_reject" and row["kind"] == "soft"
 
 
 def test_recurrence_marks_recovered_after_later_success(tmp_path):

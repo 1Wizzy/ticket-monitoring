@@ -110,3 +110,33 @@ def test_streak_state_is_instance_scoped():
     b = QunarCrawler({}, _LOG)
     a._qn1999_streak["SHA|LHR|2026-11-16"] = 2
     assert b._qn1999_streak == {}, "计数必须实例内（不跨实例串味）"
+
+
+def test_legacy_1999_login_rows_show_as_soft(tmp_path):
+    """历史 1999 行写的是 login；复发账必须按证据改判 soft（r385 A/B）。
+
+    否则面板持续挂"登录态失效（需人工）"，催用户做无效重登——而那条
+    路同会话 1.5 分钟就自愈。
+    """
+    from core.storage import PriceStorage
+    st = PriceStorage(str(tmp_path / "p.db"))
+    for i in range(4):
+        st.save_fetch_path("qunar", "SHA", "LHR", "2026-11-16", "H5",
+                           "login", note="国际列表 1999/8 未登录硬拒",
+                           attempt_id="q%d" % i)
+    row = next(r for r in st.failure_recurrence(24, 3) if r["path"] == "H5")
+    assert row["status"] == "soft_reject"
+    assert row["kind"] == "soft"
+    assert "1999" in (row["evidence"] or {}).get("note", "")
+
+
+def test_real_login_wall_still_login(tmp_path):
+    """真登录页证据（passport/请先登录）不得被 1999 改判波及。"""
+    from core.storage import PriceStorage
+    st = PriceStorage(str(tmp_path / "p.db"))
+    for i in range(4):
+        st.save_fetch_path("qunar", "SHA", "LHR", "2026-11-16", "H5",
+                           "login", note="登录门（passport）",
+                           attempt_id="p%d" % i)
+    row = next(r for r in st.failure_recurrence(24, 3) if r["path"] == "H5")
+    assert row["status"] == "login" and row["kind"] == "login"

@@ -590,6 +590,10 @@ class PriceStorage:
         # 无票说成"登录失效（需人工）"，把用户推去做无用重登。
         _SOFT_NOTE = ("444", "非法链接", "202")
         _EMPTY_NOTE = ("无符合条件的航班", "未查询到", "没有查询到")
+        # r385 受控 A/B 定谳：1999 单次是"间歇放行"，同会话未重登即自愈
+        # ——历史 login 行证据写的是 1999 的，展示时按 soft 归类。否则面板
+        # 一直挂"登录态失效（需人工）"催人去重登，而那条路 1.5 分钟自愈。
+        _SOFT_1999 = ("1999",)
         out = []
         for r in rows:
             st = str(r["path_status"] or "")
@@ -599,6 +603,8 @@ class PriceStorage:
                                  _fr, _to)) or {}
             _nt = str(_ev0.get("note") or "")
             if st == "login" and any(k in _nt for k in _SOFT_NOTE):
+                st = "soft_reject"
+            elif st == "login" and any(k in _nt for k in _SOFT_1999):
                 st = "soft_reject"
             elif st == "login" and any(k in _nt for k in _EMPTY_NOTE):
                 st = "empty"
