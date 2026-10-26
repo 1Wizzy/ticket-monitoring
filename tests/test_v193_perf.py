@@ -39,9 +39,11 @@ def _mk_db(td):
     dbp = _os.path.join(td, "t.db")
     db = _sq.connect(dbp)
     db.execute(
+        # prov：report.recent_platform_flights 会读它（补位行溯源），
+        # 缺列会让该函数在执行期抛 no such column（测试自足性缺口）。
         "CREATE TABLE flight_prices (id INTEGER PRIMARY KEY AUTOINCREMENT,"
         "platform TEXT, extra TEXT, fetched_at TEXT, from_city TEXT,"
-        "to_city TEXT, depart_date TEXT, price REAL)")
+        "to_city TEXT, depart_date TEXT, price REAL, prov TEXT)")
     db.commit()
     db.close()
     return dbp

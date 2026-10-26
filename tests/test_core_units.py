@@ -947,7 +947,9 @@ def test_digest_detail_link_when_base_url():
                 base_url="http://127.0.0.1:8765")
     a._archive_notify = lambda title, desp: (
         "" if not a.base_url else a.base_url + "/notify/NTEST")
-    r = Route(from_code="SHA", from_name="上海", to_code="SYN",
+    # 三亚真实三字码是 SYX（SYN 不在大陆码表，会被判成国际航线——
+    # 曾因此让本用例走国际分支、靠旧的兜底出链侥幸通过）
+    r = Route(from_code="SHA", from_name="上海", to_code="SYX",
               to_name="三亚", dates=["2026-09-25"],
               alert_direct=1600, alert_transfer=0)
     s = {"date": "2026-09-25", "seen_plats": ["qunar"],
