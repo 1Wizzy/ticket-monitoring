@@ -113,34 +113,37 @@ def test_missing_names_and_partial_route_fall_back_to_entry():
 
 
 def test_channel_login_metadata_separates_session_and_page():
+    """全渠道统一「必须登录」；会话(采集端)与页面(入口)两层仍分开。
+
+    2026-10-27 政策：不再有「建议登录」这种模糊档位。凡是标了登录要求的
+    入口一律 required；飞猪 PC/H5 因两个域、会话不共享而分别标注。
+    """
     from core.channel_links import channel_links
     r = channel_links()
     ch = {x["plat"]: x for x in r["channels"]}
     assert set(ch) == {"ctrip", "qunar", "fliggy", "tongcheng", "tuniu"}
-    assert ch["ctrip"]["session"] == "required"
-    assert ch["qunar"]["session"] == "required"
-    assert ch["fliggy"]["session"] == "required"
-    assert ch["fliggy"]["session_label"] == "H5 需淘宝登录（PC 可匿名）"
+    # 五家全部 required
+    for p in ("ctrip", "qunar", "fliggy", "tongcheng", "tuniu"):
+        assert ch[p]["session"] == "required", (p, ch[p]["session"])
+        assert "必须登录" in ch[p]["session_label"], (p, ch[p]["session_label"])
     assert "双端登录" in ch["fliggy"]["login_note"]
-    assert "弹窗登录为 PC" not in ch["fliggy"]["login_note"]
-    assert ch["tongcheng"]["session"] == "suggested"
-    assert ch["tuniu"]["session"] == "suggested"
+    assert "会话不共享" in ch["fliggy"]["login_note"]
+
     c = _cells(r)
-    assert c[("fliggy", "h5", "domestic")]["login"] == "淘宝账号"
-    assert c[("fliggy", "pc", "domestic")]["login"] == ""
-    assert c[("fliggy", "h5", "domestic")]["login_required"] is True
-    assert c[("fliggy", "pc", "domestic")]["login_required"] is False
+    # 飞猪 PC / H5 都要求登录（两个域，各自登录）
+    for sfc in ("pc", "h5"):
+        assert c[("fliggy", sfc, "domestic")]["login"] == "淘宝账号", sfc
+        assert c[("fliggy", sfc, "domestic")]["login_required"] is True, sfc
+    # 单槽渠道的 PC 入口同样标出登录要求
+    assert c[("ctrip", "pc", "domestic")]["login_required"] is True
+    assert c[("tongcheng", "pc", "intl")]["login_required"] is True
     assert c[("tuniu", "pc", "intl")]["login"] == "登录"
     assert c[("tuniu", "pc", "intl")]["login_required"] is True
     assert c[("qunar", "h5", "domestic")]["login"] == "登录后出价"
-    assert c[("ctrip", "pc", "domestic")]["login"] == ""
-    assert "会话不共享" in ch["fliggy"]["login_note"]
-    sp = {(x["plat"], x["surface"]): x for x in r["specials"]}
-    assert sp[("fliggy", "pc")]["login"] == ""
-    assert sp[("fliggy", "h5")]["login"] == "淘宝账号"
-    assert sp[("fliggy", "pc")]["login_required"] is False
-    assert sp[("fliggy", "h5")]["login_required"] is True
 
+    sp = {(x["plat"], x["surface"]): x for x in r["specials"]}
+    assert sp[("fliggy", "h5")]["login"] == "淘宝账号"
+    assert sp[("fliggy", "h5")]["login_required"] is True
 
 def test_channel_board_renderer_replaces_flat_grid():
     import webui
@@ -152,7 +155,13 @@ def test_channel_board_renderer_replaces_flat_grid():
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "core", "channel_links.py"), encoding="utf-8").read()
     assert "必须登录" in links_src
-    assert "需淘宝登录" in links_src
+    # 2026-10-27 起全渠道统一「必须登录」——数据层（SESSION_REQUIREMENT）
+    # 不得再出现 suggested 档位；飞猪双域事实改由 note 说明。
+    from core.channel_links import SESSION_REQUIREMENT
+    for _p, (_lv, _lb) in SESSION_REQUIREMENT.items():
+        assert _lv == "required", (_p, _lv)
+        assert "必须登录" in _lb, (_p, _lb)
+    assert "会话不共享" in links_src
     assert "采集免登" not in src
     assert "采集必须" not in src
     assert 'class="chlgrid' not in src

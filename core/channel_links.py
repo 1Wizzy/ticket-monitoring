@@ -17,42 +17,67 @@ PLAT_NAME = {"ctrip": "携程", "qunar": "去哪儿", "fliggy": "飞猪",
              "tongcheng": "同程", "tuniu": "途牛"}
 # 采集会话要求（弹窗登录/会话保存）与页面登录要求分开：前者是爬虫
 # 本机会话，后者只标在确实要求登录的入口页上，避免把两者混为一谈。
+# 全部渠道统一要求登录（2026-10-27 定）：
+# 入口页大多可匿名浏览，但**出价/明细必须登录**——把"建议登录"这种模糊
+# 词从界面上拿掉，用户不必猜。各渠道的差异写进 note 而不是 requirement。
+#   飞猪：PC 与 H5 是两个域（fliggy.com / taobao.com），会话不共享，双槽
+#   同程：ly.com 父域 cookie 覆盖 www/m/tiflight，**单槽即可**，国际无需
+#         二次登录（实测同 profile 下国际 H5 显示「退出」且出完整卡片）
 SESSION_REQUIREMENT = {
     "ctrip": ("required", "必须登录"),
     "qunar": ("required", "必须登录"),
-    "fliggy": ("required", "H5 需淘宝登录（PC 可匿名）"),
-    "tongcheng": ("suggested", "建议登录"),
-    "tuniu": ("suggested", "建议登录"),
+    "fliggy": ("required", "必须登录（PC/H5 分别登录）"),
+    "tongcheng": ("required", "必须登录（国内国际同一会话）"),
+    "tuniu": ("required", "必须登录"),
 }
+# 每个入口页的登录要求。全部渠道出价/明细都要登录，所以 20 格里有
+# 登录要求的都标出来，不再出现"这条入口不用登"的暗示。
 PAGE_LOGIN = {
-    ("fliggy", "h5", "domestic"): "淘宝账号",
-    ("fliggy", "h5", "intl"): "淘宝账号",
+    # 携程：PC 列表与 H5 都要求登录后才出价
+    ("ctrip", "pc", "domestic"): "携程账号",
+    ("ctrip", "pc", "intl"): "携程账号",
+    ("ctrip", "h5", "domestic"): "携程账号",
+    ("ctrip", "h5", "intl"): "携程账号",
+    # 去哪儿：PC 官网可查但出价需登录；H5 登录后出价
+    ("qunar", "pc", "domestic"): "去哪儿账号",
+    ("qunar", "pc", "intl"): "去哪儿账号",
     ("qunar", "h5", "domestic"): "登录后出价",
     ("qunar", "h5", "intl"): "登录后出价",
-    ("tuniu", "pc", "intl"): "登录",
-    # 同程 H5 国际实测（2026-10-27）：带参进 m.ly.com/tiflight/book1.html
-    # 会 302 到 passport/login.html，登录后才出航班卡片。
+    # 飞猪：PC / H5 两个域，各自登录
+    ("fliggy", "pc", "domestic"): "淘宝账号",
+    ("fliggy", "pc", "intl"): "淘宝账号",
+    ("fliggy", "h5", "domestic"): "淘宝账号",
+    ("fliggy", "h5", "intl"): "淘宝账号",
+    # 同程：单会话覆盖全端；国际 H5 实测带参 302 passport
+    ("tongcheng", "pc", "domestic"): "同程账号",
+    ("tongcheng", "pc", "intl"): "同程账号",
+    ("tongcheng", "h5", "domestic"): "同程账号",
     ("tongcheng", "h5", "intl"): "登录",
+    # 途牛：单会话覆盖全端
+    ("tuniu", "pc", "domestic"): "途牛账号",
+    ("tuniu", "pc", "intl"): "登录",
+    ("tuniu", "h5", "domestic"): "途牛账号",
+    ("tuniu", "h5", "intl"): "途牛账号",
 }
 SPECIAL_PAGE_LOGIN = {
     ("fliggy", "h5"): "淘宝账号",
     ("qunar", "h5"): "登录后出价",
 }
-# 页面登录是否强制：飞猪 PC 可匿名查价，H5 进入即登录；其余标注入口
-# 均会直接要求登录后才能继续。
-PAGE_LOGIN_REQUIRED = {
-    ("fliggy", "h5", "domestic"), ("fliggy", "h5", "intl"),
-    ("qunar", "h5", "domestic"), ("qunar", "h5", "intl"),
-    ("tuniu", "pc", "intl"),
-    ("tongcheng", "h5", "intl"),
-}
+# 页面登录是否强制（2026-10-27 统一）：所有渠道出价/明细都要登录，
+# 因此凡标注了登录要求的入口一律按"必须"呈现，不再有"可选/建议"档。
+# 入口页本身仍可匿名打开——这属于浏览，不属于取数。
+# 由 PAGE_LOGIN 单向派生，避免两张表各写一遍后漂移：
+# 凡是标了登录要求的入口，就是"必须登录"（没有"可选"档）。
+PAGE_LOGIN_REQUIRED = set(PAGE_LOGIN)
 SPECIAL_LOGIN_REQUIRED = {
-    ("fliggy", "h5"), ("qunar", "h5"),
+    ("fliggy", "pc"), ("fliggy", "h5"), ("qunar", "h5"),
+    ("ctrip", "pc"), ("ctrip", "h5"), ("tongcheng", "pc"),
+    ("tongcheng", "h5"), ("tuniu", "pc"), ("tuniu", "h5"),
 }
-# Fliggy 的 PC/H5 是两个域：PC 可匿名查价，H5 进入即跳淘宝登录；
-# 两处账号域不同、会话不共享，均在「双端登录」弹窗中分别管理。
+# 飞猪 PC/H5 是两个域、两个独立 profile（.fliggy.com vs .m.taobao.com），
+# 同账号也要分别登录；其余四家实测同一 profile 覆盖全端。
 LOGIN_NOTE = {
-    "fliggy": "淘宝账号：PC 可匿名查价；H5 进入即登录；PC/H5 会话不共享，均可在「双端登录」中分别登录。",
+    "fliggy": "淘宝账号：PC 与 H5 会话不共享，需分别登录（「双端登录」）。",
 }
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 

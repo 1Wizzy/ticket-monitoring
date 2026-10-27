@@ -268,7 +268,9 @@ def test_pacing_panel_refreshes_and_counts_down():
     import webui
     src = inspect.getsource(webui)
     assert "_paceStartAuto" in src and "setInterval" in src
-    assert "if(document.hidden||VIEW!=='cfg')" in src
+    # 节流面板 2026-10-27 移入「监控 · 渠道健康」：轮询条件随之从
+    # 「在配置页」改为「在监控页的健康 tab」，否则搬到新位置后不再刷新。
+    assert "if(document.hidden||VIEW!=='mon'||MONTAB!=='health')" in src
     assert "已自动处理" in src          # 自动类建议不再被过滤
     assert "软拒" in src                # 路径提示可见软拒
 
