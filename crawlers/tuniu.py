@@ -1232,7 +1232,10 @@ class TuniuCrawler(BaseCrawler):
                                  len(flights), n_d, len(flights) - n_d)
             else:
                 self.logger.warning("[tuniu] %s 未解析到价格", date)
-                self.path_note("H5/API", "empty", date=date,
+                # 有响应但解析不出价（r403）：可能是改版打穿键义，也可能
+                # 是真无票；没有"明确无票"措辞时不断言无票。empty 会让
+                # 读者停止关注，error 会让人去看现场——后者才是事实。
+                self.path_note("H5/API", "error", date=date,
                                detail="接口有响应但未解析出价格",
                                ms=int((time.time() - t_h5) * 1000))
             self._sleep()

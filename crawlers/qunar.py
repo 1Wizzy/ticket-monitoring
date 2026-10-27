@@ -610,12 +610,15 @@ class QunarCrawler(BaseCrawler):
         # "真无票"，按 error 记，让人去看现场。
         _noev = bool(getattr(self, "_last_no_evidence", False))
         _soft_h5 = dict(getattr(self, "last_soft_reject", None) or {})
+        # 末位兜底也是 error（r403）：走到这里说明既没拿到数据，也没有
+        # 无票/门拒/登录/无证据中的任何一种证据。此时"empty"（真无票）
+        # 是凭空断言——r403 的结构化守卫把它钉死：empty 必须由"明确
+        # 无票"支撑，不能是层层 else 的最后落点。
         _h5_status = ("ok" if got else (_sig.status if _sig else
                        ("empty" if _nores else
                         ("soft_reject" if _soft_h5 else
-                         ("error" if _noev else
-                          ("login" if QunarCrawler.login_suspect
-                           else "empty"))))))
+                         ("login" if QunarCrawler.login_suspect
+                          and not _noev else "error")))))
         self.path_note(
             "H5", _h5_status,
             rows=len(got[1]) if got else 0, date=date, url=_h5_url,
@@ -658,11 +661,12 @@ class QunarCrawler(BaseCrawler):
         _sig = getattr(self, "_last_challenge", None)
         _nores = bool(getattr(self, "_last_no_result", False))
         _soft = dict(getattr(self, "last_soft_reject", None) or {})
+        # 同 H5：末位兜底记 error，不凭空断言无票（r403）。
         _api_status = ("ok" if got else (_sig.status if _sig else
                         ("empty" if _nores else
                          ("soft_reject" if _soft else
                           ("login" if QunarCrawler.login_suspect
-                           else "empty")))))
+                           else "error")))))
         self.path_note(
             "API", _api_status,
             rows=len(got[1]) if got else 0, date=date,
@@ -2691,7 +2695,8 @@ class QunarCrawler(BaseCrawler):
                 self.logger.warning(
                     "[qunar][intl] %s 未解析到价格（响应 %d 份%s）",
                     date, len(bodies), f"，风控态 {risk}" if risk else "")
-                self.path_note("H5", "empty", date=date,
+                # 有响应但解析不出价（r403）：不断言无票，记 error 供排查。
+                self.path_note("H5", "error", date=date,
                                detail="国际列表有响应但未解析出价格")
             self._sleep()
         return results

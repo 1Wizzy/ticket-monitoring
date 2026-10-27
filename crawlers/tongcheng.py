@@ -709,8 +709,10 @@ class TongchengCrawler(BaseCrawler):
                                 detail=_lf[1],
                                 ms=int((time.time() - t_list) * 1000))
                         else:
+                            # 列表页拿不到且无失败证据（r403）：没有"明确
+                            # 无票"依据时不断言无票，记 error 供排查。
                             self.path_note(
-                                "H5列表", "empty", date=date,
+                                "H5列表", "error", date=date,
                                 detail="同程国际 H5 未解析到航班",
                                 ms=int((time.time() - t_list) * 1000))
                     # 列表失败后页面停在 m.ly.com，日历页内 fetch 跨域
