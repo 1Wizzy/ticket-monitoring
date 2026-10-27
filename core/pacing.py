@@ -782,9 +782,20 @@ def advise(plat, ch=None, paths=None, now=None, node=None,
         return {"state": "stale", "action": "probe", "severity": "wait",
                 "hint": "最近一次成功已 %d 分钟，点「立即扫描」或等下一轮"
                         % int(min(ages)), "eta_s": 0}
+    # 口径要写明：这里是**查询口径**（一次查询有一条路径出数就算成功），
+    # 与健康面板的轮次口径会不同（同程 query 76% vs 轮次 13% 曾让人
+    # 以为两个面板互相矛盾）。有退役通路时一并说明，否则用户看到
+    # 「76%」不知道旧的坏通路已经被剔除。
+    _retired = [n for n in (node.get("retired_paths") or [])]
+    _live = node.get("query_rate_live")
+    _tail = ""
+    if _retired:
+        _tail = "；已排除退役通路 %s" % "、".join(str(x) for x in _retired)
+        if _live is not None:
+            _tail += "（在用 %.0f%%）" % (float(_live) * 100)
     return {"state": "ok", "action": "none", "severity": "ok",
-            "hint": "近 24h 成功率 %.0f%%（明细 %d / 日历 %d），无需操作"
-                    % (rate * 100, det, cal),
+            "hint": "近 24h 查询成功率 %.0f%%（明细 %d / 日历 %d）%s，无需操作"
+                    % (rate * 100, det, cal, _tail),
             "eta_s": 0}
 
 
