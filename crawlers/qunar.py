@@ -582,6 +582,11 @@ class QunarCrawler(BaseCrawler):
         # H5 先行；匿名/失效会话 H5 空结果时不再把每日期 ~72s 耗在
         # PC 死入口上，直接走 token 直连。PC 探测保留为显式开关。
         self._last_challenge = None
+        # 逐日期复位（r398）：`_last_no_result` 原先只在 fetch() 开头清一次，
+        # 于是"上一个日期确认无航班"会把本日期任何无名失败都染成 empty。
+        # empty 的语义是"站点明确说没票"，被污染后一个真登录墙会被说成
+        # 无票——既藏了"该重登"，也让 0 行看起来合理。
+        self._last_no_result = False
         got = self._fetch_via_browser(from_city, to_city, date)
         _sig = getattr(self, "_last_challenge", None)
         # 账本记的是"这条路径打了哪个地址"（r396）：H5 与 API 用的不是
@@ -630,6 +635,10 @@ class QunarCrawler(BaseCrawler):
         else:
             self.logger.info("[qunar] H5 未命中，跳过已停服的 PC，回退 httpx")
         self._last_challenge = None
+        # 换路径即换证据（r398）：API 走的是另一条请求，不能继承 H5 刚才
+        # 判出的 "no-result"。实测库里有 18 行 `API/login` 却写着
+        # 「原站返回无符合条件的航班」——那是 H5 的判定漏到了 API 头上。
+        self._last_no_result = False
         got = self._fetch_via_httpx(from_city, to_city, date)
         _sig = getattr(self, "_last_challenge", None)
         _nores = bool(getattr(self, "_last_no_result", False))
@@ -1569,6 +1578,14 @@ class QunarCrawler(BaseCrawler):
 
         flights = self._parse_response_flights(text)
         if not flights:
+            # 原站明确"没有符合条件的航班"（1999 + 该措辞）是真无票，
+            # 不是登录墙也不是解析失败（r398）：此前这条路径从不认这个
+            # 信号，于是明确无票被归成 login —— 既催人重登一个没坏的
+            # 会话，也把真无票藏起来。只认显式措辞，不猜。
+            if self._no_result_text(text):
+                self._last_no_result = True
+                self.logger.info("[qunar] httpx 明确无符合条件的航班")
+                return None
             # 碎片响应仅价格无明细：裸价曾直入阈值告警并污染去抖基准
             # （0.5x 幻觉价守卫依赖明细，此路径完全裸奔）——整单拒收走重试。
             # 起分片形态已可还原，此路只剩真截断/风控形态
