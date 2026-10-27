@@ -129,3 +129,40 @@ def test_scopes_have_their_own_retired_sets():
     n = _node(st, "tc")
     assert n["scopes"]["intl"]["retired_paths"] == ["日历"], n["scopes"]["intl"]
     assert n["scopes"]["dom"]["retired_paths"] == [], n["scopes"]["dom"]
+
+
+# ── advise 必须采用在用口径，否则修了统计也传不到用户眼前 ──────────────
+
+def test_advise_uses_live_rate():
+    """退役路径拉低原口径时，advise 必须报在用口径的数字。
+
+    真实形态：同程原口径 63.5%、在用口径 100%。若 advise 仍读原口径，
+    用户看到的还是"63.5%、需要处理"——修了统计等于没修。
+    """
+    from core.pacing import advise
+    st = _store()
+    # 与真实形态一致：国内 H5 出明细 + 国际窗历出日历价
+    _feed(st, "tc", [("日历", "login", "a1", "2026-11-16", 0),
+                     ("日历", "login", "a2", "2026-11-16", 10)])
+    _feed(st, "tc", [("窗历", "calendar", "b1", "2026-11-16", 600)])
+    st.save_fetch_path("tc", "SHA", "URC", "2026-11-16", "H5", "ok",
+                       rows=9, attempt_id="dom1")
+    n = st.path_stats(hours=24)["tc"]
+    assert n["query_rate"] < 1.0, "前置：原口径应被旧路径拖低"
+    assert n["query_rate_live"] == 1.0
+    a = advise("tc", {}, {}, node=n)
+    assert "100%" in a["hint"], a["hint"]
+    assert a["state"] == "ok", a
+
+
+def test_advise_falls_back_when_no_retired():
+    """没有退役路径时行为不变（不引入新分支差异）。"""
+    from core.pacing import advise
+    st = _store()
+    _feed(st, "q", [("H5", "ok", "x1", "2026-11-16", 0),
+                    ("H5", "ok", "x2", "2026-11-16", 10)])
+    n = st.path_stats(hours=24)["q"]
+    assert n["retired_paths"] == []
+    assert n["query_rate_live"] == n["query_rate"]
+    a = advise("q", {}, {}, node=n)
+    assert a["state"] == "ok"

@@ -619,10 +619,20 @@ def advise(plat, ch=None, paths=None, now=None, node=None,
                 "hint": hint, "eta_s": left}
     attempts = sum(int((v or {}).get("attempts") or 0)
                    for v in paths.values())
-    q_attempts = int(node.get("query_attempts") or 0) or sum(
-        int((v or {}).get("query_attempts") or 0) for v in paths.values())
-    q_ok = int(node.get("query_ok") or 0) or sum(
-        int((v or {}).get("query_ok") or 0) for v in paths.values())
+    # 优先用「在用口径」（r406）：退役通路（如被「窗历」取代的旧「日历」）
+    # 留在窗口里的必败历史不该把健康渠道判成劣化。`query_attempts_live`
+    # 只在确实识别出退役路径时才有值，否则回落到原口径，行为不变。
+    _qa_live = node.get("query_attempts_live")
+    if _qa_live is not None and int(_qa_live) > 0:
+        q_attempts = int(_qa_live)
+        _r_live = node.get("query_rate_live")
+        q_ok = (int(round(float(_r_live) * q_attempts))
+                if _r_live is not None else int(node.get("query_ok") or 0))
+    else:
+        q_attempts = int(node.get("query_attempts") or 0) or sum(
+            int((v or {}).get("query_attempts") or 0) for v in paths.values())
+        q_ok = int(node.get("query_ok") or 0) or sum(
+            int((v or {}).get("query_ok") or 0) for v in paths.values())
     if not attempts and not q_attempts:
         return {"state": "unknown", "action": "scan", "severity": "ok",
                 "hint": "近 24h 无样本：先跑一轮再判断", "eta_s": 0}
