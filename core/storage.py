@@ -429,7 +429,7 @@ class PriceStorage:
         def new_node():
             return {"paths": {}, "attempts": 0, "ok": 0, "detail_ok": 0,
                     "calendar_ok": 0, "blocked": 0, "soft": 0,
-                    "empty": 0, "unsupported": 0, "error": 0,
+                    "empty": 0, "unsupported": 0, "login": 0, "error": 0,
                     "rate": 0.0, "detail_rate": 0.0, "rate_excl_empty": 0.0,
                     "query_attempts": 0, "query_ok": 0,
                     "query_detail_ok": 0, "query_calendar_only": 0,
@@ -438,7 +438,7 @@ class PriceStorage:
         def new_path():
             return {"attempts": 0, "ok": 0, "detail_ok": 0, "calendar_ok": 0,
                     "blocked": 0, "soft": 0, "empty": 0, "unsupported": 0,
-                    "error": 0,
+                    "login": 0, "error": 0,
                     "rate": 0.0, "rate_excl_empty": 0.0,
                     "detail_rate": 0.0, "last_at": "", "last_ok_at": ""}
 
@@ -465,6 +465,12 @@ class PriceStorage:
                 # 无票，单列——并进 error 会让"渠道本来就不支持"永远像
                 # 一条坏掉的路（往返航线会被反复判劣化）。
                 node["unsupported"] = int(node.get("unsupported") or 0) + 1
+            elif status == "login":
+                # 登录墙单列（r397）：并进 error 会把"需要人工重登"混进
+                # "网络/解析/超时失败"，而两者处置完全不同——重登能解，
+                # 重试不能。实测同程 24h 53 条 444 历史 login 行让渠道
+                # 错误率显示成 40%，而它根本没有网络故障。
+                node["login"] = int(node.get("login") or 0) + 1
             else:
                 node["error"] += 1
             if last > node["last_at"]:

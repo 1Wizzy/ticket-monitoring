@@ -1549,3 +1549,61 @@ proxy 空／stealth／seed=200）；携程同样成立。已加
 守卫 `test_r396_request_url_traceability.py` 五条：显式值保留、显式值
 压过页面兜底、无值时页面兜底仍生效、端到端写进列、三个落账点一个都
 不许漏（漏一处会出现"有些路径有 URL、有些没有"，比全无更难排查）。
+
+### 16.6 已知未完成：溯源面板还没渲染 URL（记录，待接）
+
+r396 把 URL 写进了库，`recent_paths()` 用 `SELECT *` 取全字段、`/api/trace`
+也已经原样透传，所以**数据面已经通了**；但前端 `_paceTraceFill` 的单行
+模板只渲染 时间/入口/状态/note 四列：
+
+```js
+'<div class="pace-tline">…<span class="n">'+esc(note.slice(0,60))+'</span></div>'
+```
+
+即：URL 现在能在 API 里拿到，却还看不见。接的方式很直接——在 `.pace-tline`
+里加一个可折叠的地址位（或把 note 换成 `<a title=完整URL>`），但 `webui.py`
+当前由另一条会话在改，本会话不动它，避免把别人的未提交改动裹进提交。
+
+在接上之前，需要 URL 的人可以：
+`GET /api/trace?platform=qunar&limit=8` → `rows[i].request_url`。
+
+### 16.7 登录墙被算成「错误」，把"该重登"说成"该重试"（r397）
+
+**症状**：`path_stats` 对同程 24h 报 `error=53`、渠道错误率 40%，看起来
+像链路坏了。查账本：这 53 条 **全部是 `path_status='login'`**（444 历史
+行），真正的网络/解析/超时错误是 **0**。
+
+**根因**：`bump()` 的分类是 if/elif 链，blocked / soft_reject / empty /
+unsupported 各有专桶，`login` 落到最后的 `else: error`。于是：
+
+- 渠道错误率虚高（同程 40%），读者以为要排查链路；
+- 处置方向被带偏：error 的语义是"重试/看现场"，login 的语义是"重登"。
+  按 error 处置＝让人反复重试一个**只有重登能解**的状态——这正是目标里
+  「异常可分类」「可解决」的反面。
+
+**修法**：加 `login` 专桶（node 与 path 两级都建；`bump` 里在
+unsupported 之后、else 之前判 login）。login 仍算失败（不进
+`rate_excl_empty` 的分母剔除），只是不再冒充 error。
+
+**验证**（真实库，同一份数据）：
+
+```
+修前： tongcheng attempts=132 ok=73 error=53 soft=6
+修后： tongcheng attempts=132 ok=73 login=53 error=0 soft=6
+```
+
+**分类桶现在的完整语义**（六桶一状态，互不代偿）：
+
+| 桶 | 含义 | 处置 |
+|---|---|---|
+| ok / calendar | 出数（明细 / 只出价） | 无需操作 |
+| empty | 明确无符合条件的航班 | 无需操作（真无票） |
+| unsupported | 能力边界（往返无源/超窗） | 无需操作 |
+| soft | 444/202 门拒 | 预热，会自动恢复 |
+| login | 真登录墙 | 重登（人工） |
+| error | 网络/解析/超时 | 重试/看现场 |
+
+守卫 `test_r397_login_not_error.py` 四条，其中
+`test_buckets_sum_to_attempts` 钉住"六桶必须加总回 attempts"——防止将来
+新增状态时又落进某个万能桶、在统计里凭空消失。已确认前两条在旧代码上
+会红。
