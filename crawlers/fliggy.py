@@ -219,13 +219,10 @@ class FliggyCrawler(BaseCrawler):
             _status = ("ok" if flights else
                        ("blocked" if _blocked else
                         ("login" if _login else "empty")))
-            # 成功也记地址（r409）：_fetch_pc 内部用的页面就是 _last_page，
+            # 成功也记地址（r409/r409b）：用 _fetch_pc 记下的列表页 URL。
+            # 浏览器上下文已关，页面取不到；这里只用它自己构造的那个值，
             # 取不到就留空（宁缺勿错，不编造）。
-            _pg = getattr(self, "_last_page", None)
-            try:
-                _pg_url = str(getattr(_pg, "url", "") or "") if _pg else ""
-            except Exception:
-                _pg_url = ""
+            _pg_url = str(getattr(self, "_last_list_url", "") or "")
             self.path_note("PC", _status,
                            rows=len(flights), date=date,
                            url=_pg_url,
@@ -488,9 +485,12 @@ class FliggyCrawler(BaseCrawler):
                         _body = ""
                     _sig = classify_text(_body, str(page.url))
                     _login = bool(_sig and _sig.status == "login")
+                    # 国际 PC 也记地址（r409c）：这条才是真实账本里
+                    # "fliggy PC" 的发布点；此前只有国内 _fetch_pc 记了。
                     self.path_note(
                         "PC", "ok" if rows else ("login" if _login else "empty"),
                         rows=len(rows), date=date,
+                        url=str(getattr(page, "url", "") or ""),
                         detail="sjipiao.fliggy.com 国际列表",
                         ms=int((time.time() - t0) * 1000))
                     self._debug_snapshot(
@@ -680,6 +680,9 @@ class FliggyCrawler(BaseCrawler):
             fc=fc, tc=tc, d=date,
             fn=urllib.parse.quote(_Q.CITY_NAME.get(fc, fc)),
             tn=urllib.parse.quote(_Q.CITY_NAME.get(tc, tc)))
+        # 记下本次真正请求的列表页地址（r409b）：上下文退出后页面已关，
+        # `_last_page.url` 取不到，只能用构造它的这个值。
+        self._last_list_url = url
         texts = set()
         flights = []
         share_map = {}
