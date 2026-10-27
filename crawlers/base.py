@@ -888,11 +888,23 @@ class BaseCrawler:
         # 不会 new_page，若不清空会把上一页截进本轮现场。
         self._last_page = None
         try:
-            self.logger.info("[%s] 开始抓取 %s->%s 日期=%s",
-                             self.name, from_city, to_city, dates)
+            # 域标记入日志（r415）：健康面板此前只能按厂商聚合，同一家
+            # 的国内与国际混成一个数——实报同程 13%，而它国际窗历当天
+            # 全成功、国内 H5 全绿，看不出「哪一端坏了」。日志文本是健康
+            # 解析的唯一数据源，域必须写在行首标记里才分得开。
+            try:
+                from core.intl import is_intl_route as _iir
+                _scope = "国际" if _iir(from_city, to_city) else "国内"
+            except Exception:
+                _scope = ""
+            self.logger.info("[%s] 开始抓取 %s->%s 日期=%s%s",
+                             self.name, from_city, to_city, dates,
+                             (" · " + _scope) if _scope else "")
             results = self.fetch(from_city, to_city, dates,
                                  ret_date=ret_date) or []
-            self.logger.info("[%s] 抓取完成，得到 %d 条记录", self.name, len(results))
+            self.logger.info("[%s] 抓取完成，得到 %d 条记录%s",
+                             self.name, len(results),
+                             (" · " + _scope) if _scope else "")
             return results
         except SessionBusyError as e:
             # 让位：不记异常栈（这是预期内的排队，不是故障），也不重试

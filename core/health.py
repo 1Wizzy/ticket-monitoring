@@ -52,12 +52,27 @@ _TS_FMT = "%Y-%m-%d %H:%M:%S"
 
 def _evidence_scope(message):
     # 历史国内日志常无标签；缺范围时保留 unknown，不能当作国内证据。
-    if (re.match(r"\[(?:intl|international|国际)\]", message)
-            or re.search(r"(?:^|\s)国际(?!机场)", message)):
+    # 渠道前缀可嵌套（[tongcheng][intl]、[qunar][intl]），所以不能只在
+    # 行首 match，用 search 找任意位置的方括号标记。
+    if (re.search(r"\[(?:intl|international|国际)\]", message)
+            or re.search(r"(?:^|\s)国际(?!机场)", message)
+            or "· 国际" in message):
         return "international"
-    if (re.match(r"\[(?:domestic|国内)\]", message)
-            or re.search(r"(?:^|\s)国内", message)):
+    if (re.search(r"\[(?:domestic|国内)\]", message)
+            or re.search(r"(?:^|\s)国内", message)
+            or "· 国内" in message):
         return "domestic"
+    # 兜底：日志行里常有航线三字码（"开始抓取 SHA->HAK"）。用航线判域，
+    # 让历史日志也能分端——否则分域面板只有国际一侧有数，国内永远空白。
+    m = re.search(r"(?<![A-Z])([A-Z]{3})\s*(?:->|→)\s*([A-Z]{3})(?![A-Z])",
+                  message)
+    if m:
+        try:
+            from .intl import is_intl_route
+            return ("international" if is_intl_route(m.group(1), m.group(2))
+                    else "domestic")
+        except Exception:
+            pass
     return "unknown"
 
 
@@ -134,16 +149,21 @@ def parse_health(log_text, now=None, hours=24):
                 s = "fail"
                 note = note or ("需登录 · 会话失效" if need_login
                                 else "抓取失败")
+            _scs = sorted(ev.get("scopes") or ())
             plats[plat] = {"s": s, "ok": ok_n, "tot": tot, "note": note,
                            "empty": empty_n,
                            "cal": cal_n, "detail": detail_n,
                            "cal_only": bool(cal_n and not detail_n),
-                           "need_login": need_login}
+                           "need_login": need_login,
+                           # 单域轮直接给域名；两端都有（罕见）给 mixed；
+                           # 旧日志无标记给 unknown，绝不默认成国内。
+                           "scope": (_scs[0] if len(_scs) == 1
+                                     else ("mixed" if _scs else "unknown"))}
         for plat in maint:
             if plat not in plats:
                 plats[plat] = {"s": "maint", "ok": 0, "tot": 0,
                                "note": "渠道维护模式", "cal": 0, "detail": 0,
-                               "need_login": False}
+                               "need_login": False, "scope": "unknown"}
         if cur["ts"] >= cutoff:
             rounds.append({"ts": cur["ts"].strftime("%Y-%m-%d %H:%M"),
                            "plats": plats})
@@ -178,7 +198,7 @@ def parse_health(log_text, now=None, hours=24):
                 ev = cur["events"].setdefault(plat, {
                     "ok": set(), "fail": set(), "retry": 0,
                     "generic_fail": 0, "empty": 0, "note": "",
-                    "kinds": {}, "auth": False})
+                    "kinds": {}, "auth": False, "scopes": set()})
                 if not ev["note"]:
                     ev["note"] = ("哨兵: " + sm.group(2))[:60]
             continue
@@ -188,7 +208,12 @@ def parse_health(log_text, now=None, hours=24):
         ev = cur["events"].setdefault(plat, {
             "ok": set(), "fail": set(), "retry": 0,
             "generic_fail": 0, "empty": 0, "note": "", "kinds": {},
-            "auth": False})
+            "auth": False, "scopes": set()})
+        # 该行日志属于哪个域（国内/国际）：厂商级健康会把两端混成一个数，
+        # 而国际日历门拒会让整家渠道看起来「坏了」，国内其实全绿。
+        _sc = _evidence_scope(rest)
+        if _sc != "unknown":
+            ev["scopes"].add(_sc)
         dm = _DATE.search(rest)
         d = dm.group(1) if dm else None
         okm = _OK_PRICE.search(msg)
@@ -261,6 +286,39 @@ def parse_health(log_text, now=None, hours=24):
                 st["cal_only"] += 1
             if p.get("need_login"):
                 st["auth"] += 1
+    # 厂商 × 域：同一家渠道国内与国际走不同入口/登录墙，混成一个数会
+    # 掩盖「哪一端坏了」。空表（旧日志无域标记）时上层按未知处理。
+    by_scope = {}
+    for r in rounds:
+        for plat, p in r["plats"].items():
+            sc = str(p.get("scope") or "unknown")
+            if sc == "unknown":
+                continue
+            # 一轮里国内与国际都跑过（mixed）不能整轮丢弃——那会让分端
+            # 统计只剩"纯单端"的轮次，同程国内样本正是这样消失的。
+            # 按该轮实际产出的日期数分账：明细/日历来自哪端无法再拆，
+            # 就如实两边各记一笔并标注，宁可双侧近似也不凭空丢样本。
+            _scopes = ([sc] if sc != "mixed"
+                       else ["domestic", "international"])
+            for _sc in _scopes:
+                node = (by_scope.setdefault(plat, {})
+                        .setdefault(_sc, {"ok": 0, "part": 0, "fail": 0,
+                                          "maint": 0, "empty": 0, "rate": 0.0,
+                                          "detail_ok": 0, "cal_only": 0,
+                                          "detail": 0, "mixed_src": 0}))
+                node[p["s"]] = node.get(p["s"], 0) + 1
+                node["detail"] += p.get("detail", 0)
+                if p.get("detail", 0) > 0:
+                    node["detail_ok"] += 1
+                if p.get("cal_only"):
+                    node["cal_only"] += 1
+                if sc == "mixed":
+                    node["mixed_src"] = node.get("mixed_src", 0) + 1
+    for _pl, scopes in by_scope.items():
+        for _sc, node in scopes.items():
+            _att = node["ok"] + node["part"] + node["fail"]
+            node["rate"] = (node["ok"] / _att) if _att else 0.0
+
     for plat, st in stats.items():
         att = st["ok"] + st["part"] + st["fail"]
         st["rate"] = (st["ok"] / att) if att else 0.0
@@ -268,4 +326,5 @@ def parse_health(log_text, now=None, hours=24):
         # 永远不可能有航班级明细，放进分母会把 16/18 压成 16/96
         det_att = att - st["cal_only"]
         st["detail_rate"] = (st["detail_ok"] / det_att) if det_att else 0.0
-    return {"rounds": rounds, "stats": stats, "evidence": evidence}
+    return {"rounds": rounds, "stats": stats, "evidence": evidence,
+            "by_scope": by_scope}
