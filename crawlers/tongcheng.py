@@ -1016,6 +1016,7 @@ class TongchengCrawler(BaseCrawler):
                             date, price, len(flights), n_d, len(flights) - n_d)
                         self.path_note(
                             "H5", "ok", rows=len(flights), date=date,
+                            url=str(getattr(page, "url", "") or url),
                             detail="www.ly.com H5 列表",
                             ms=int((time.time() - t_h5) * 1000))
                     else:
