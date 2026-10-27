@@ -1749,3 +1749,37 @@ httpx 两条路径都先判门拒（早于 no_result 判定），记
 判别方法固定为**跨样本对照**：换航线还一样吗？与别处刚采到的价矛盾吗？
 一样且矛盾 ⇒ 是门拒，不是航线属性。守卫
 `test_r400_qunar_blanket_gate.py` 六条，其中三条专门钉"门拒 ≠ 无票"。
+
+### 16.11 有行无价：`min(prices)` 空序列把异常留成了无证据的空（r401）
+
+**症状**：2026-10-27 09:30 两条 SHA→HAK 的账本自相矛盾——
+
+```
+09:30:10 SHA→HAK 2027-01-29 H5   empty  「原站返回无符合条件的航班」
+09:30:10 SHA→HAK 2027-01-29 API  ok     「原站返回无符合条件的航班」 rows=0
+```
+
+`ok` 却 `rows=0`、`note` 又写着无票，三者互斥。而同一天 08:48 与 10:08
+同航线都拿到 70+ 行，说明这条航线有票。
+
+**根因**：httpx 解析出明细行、但**没有任何一条带价格**时：
+
+```python
+prices = sorted({f["price"] for f in flights if f.get("price")})
+return float(min(prices)), flights      # min(()) → ValueError
+```
+
+`ValueError: min() arg is an empty sequence` 穿过 `_fetch_one` 抛到外层，
+被兜底逻辑记成一次**不带证据**的失败；上层再叠上"无票"话术，就成了
+上面那三条互斥的记录。浏览器路径早就有 `if prices:` 守卫，httpx 这条没有。
+
+**修法**：httpx 同样在 `min()` 前判空，命中时置
+`last_soft_reject={"kind":"no_price"}`，note 写"解析出 N 行但均无价格"——
+把"有行无价"这个事实如实写出来，不再伪装成无票。
+
+**教训**：`min()`/`max()`/下标 `[0]` 这类"必然非空"的假设，正是把
+**可解释的失败**变成**不可解释的失败**的地方。异常一旦穿过记账层，
+在账本里留下的往往不是"崩溃"，而是一条看起来正常、实则无证据的记录——
+比直接报错更难查。守卫 `test_priceless_rows_do_not_crash`
+与 `test_ok_status_always_has_rows`（ok 必须 rows>0）已落地，前者
+在修复前会红（`ValueError: min() arg is an empty sequence`）。

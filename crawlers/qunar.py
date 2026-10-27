@@ -1630,6 +1630,19 @@ class QunarCrawler(BaseCrawler):
         # 重摇、且不再参与取价——散点与明细两套来源曾造出 1-2 倍内的
         # 幻影低价窗口（渠道指纹比 p50=0.978 低价侧漂移的源头之一）
         prices = sorted({f["price"] for f in flights if f.get("price")})
+        if not prices:
+            # 有行但全无价（r401）：`min(())` 抛 ValueError，异常穿过
+            # `_fetch_one` 后被外层记成 error 且**不带任何证据**——实测
+            # 2026-10-27 09:30 两条 SHA→HAK 就长这样：H5 empty、
+            # API「ok 但 0 行、note 却是无票文案」，读者无法判断到底
+            # 是没票、被拦、还是解析挂了。按"有行无价"这一事实记账。
+            self.last_soft_reject = {
+                "kind": "no_price",
+                "note": "httpx 解析出 %d 行但均无价格，未落价" % len(flights)}
+            self.logger.warning(
+                "[qunar] httpx 明细行 %d 条但无任何价格，拒落价",
+                len(flights))
+            return None
         self.logger.info("[qunar] httpx 明细价格列表: %s", prices)
         return float(min(prices)), flights
 

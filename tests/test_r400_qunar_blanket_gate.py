@@ -106,3 +106,54 @@ def test_no_evidence_is_error_not_empty():
         assert st.get("H5") == "error", c.paths
     finally:
         QunarCrawler.login_suspect = False
+
+
+# ── r401：有行无价不得抛 min() 空序列 ──────────────────────────────────
+
+def test_priceless_rows_do_not_crash():
+    """有明细行但全部无价格时，`min(prices)` 曾抛 ValueError。
+
+    实测 2026-10-27 09:30 两条 SHA→HAK 就落在这个洞里：H5 记 empty、
+    API 记「ok 但 0 行、note 却是无票文案」——账本自相矛盾，读者无法
+    判断是没票、被拦、还是解析挂了。
+    """
+    import core.net
+    import types
+
+    c = _c()
+    c._load_token = lambda: {"headers": {}, "body_template": {}, "cookies": {}}
+    c._parse_response_flights = lambda t: [{"code": "MU5101", "price": 0},
+                                           {"code": "MU5102"}]
+
+    class _R:
+        status_code = 200
+        headers = {}
+        text = '{"ret":true,"data":"x"}'
+
+    _orig = core.net.post
+    core.net.post = lambda *a, **k: _R()
+    try:
+        out = c._fetch_via_httpx("SHA", "HAK", "2027-01-29")
+    finally:
+        core.net.post = _orig
+    assert out is None, out
+    assert c.last_soft_reject.get("kind") == "no_price", c.last_soft_reject
+
+
+def test_ok_status_always_has_rows():
+    """不变式：状态记 ok 时 rows 必须 >0（0 行的 ok 是自相矛盾）。"""
+    c = _c()
+
+    def _httpx(*a, **k):
+        c.last_soft_reject = {"kind": "no_price", "note": "有行无价"}
+        return None
+
+    c._fetch_via_browser = lambda *a, **k: None
+    c._fetch_via_httpx = _httpx
+    c._fetch_one("SHA", "HAK", "2027-01-29")
+    for p in c.paths:
+        # 核心不变式：没有拿到数据就不能记 ok
+        if p["status"] == "ok":
+            assert p["rows"] > 0, p
+        # 且实现路径上"有行无价"要自述其因，不能落回无票/登录话术
+        assert "无符合条件的航班" not in p["detail"] or p["status"] == "empty", p
