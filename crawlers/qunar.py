@@ -587,6 +587,10 @@ class QunarCrawler(BaseCrawler):
         # empty 的语义是"站点明确说没票"，被污染后一个真登录墙会被说成
         # 无票——既藏了"该重登"，也让 0 行看起来合理。
         self._last_no_result = False
+        self._last_no_evidence = False
+        # 门拒证据同样逐日期/逐路径复位（r400）：不重置会像 r398 的
+        # no_result 一样把上一条路径的判定漏到这条头上。
+        self.last_soft_reject = {}
         got = self._fetch_via_browser(from_city, to_city, date)
         _sig = getattr(self, "_last_challenge", None)
         # 账本记的是"这条路径打了哪个地址"（r396）：H5 与 API 用的不是
@@ -602,16 +606,26 @@ class QunarCrawler(BaseCrawler):
         # 另有 login_suspect（可能来自上一轮/另一域），也不得覆盖成 login，
         # 否则会误触发登录冷却与重登提示。
         _nores = bool(getattr(self, "_last_no_result", False))
+        # 什么都拿回来（r400）：无响应、无正文、无任何证据。这不能算
+        # "真无票"，按 error 记，让人去看现场。
+        _noev = bool(getattr(self, "_last_no_evidence", False))
+        _soft_h5 = dict(getattr(self, "last_soft_reject", None) or {})
         _h5_status = ("ok" if got else (_sig.status if _sig else
                        ("empty" if _nores else
-                        ("login" if QunarCrawler.login_suspect else "empty"))))
+                        ("soft_reject" if _soft_h5 else
+                         ("error" if _noev else
+                          ("login" if QunarCrawler.login_suspect
+                           else "empty"))))))
         self.path_note(
             "H5", _h5_status,
             rows=len(got[1]) if got else 0, date=date, url=_h5_url,
             detail=(_sig.detail if _sig else
-                    ("原站返回无符合条件的航班（可能受指纹 SDK/风控环境影响）"
-                     if getattr(self, "_last_no_result", False)
-                     else "touch.qunar.com H5 列表")))
+                    (_soft_h5.get("note") if _soft_h5 else
+                     ("原站返回无符合条件的航班（可能受指纹 SDK/风控环境影响）"
+                      if _nores else
+                      ("H5 未拿到任何证据（无响应/空正文/无风控信号），"
+                       "按错误记录，不代表无票" if _noev
+                       else "touch.qunar.com H5 列表")))))
         if got is not None:
             self.logger.info("[qunar] H5 浏览器命中（完整明细）")
             return got
@@ -1592,6 +1606,14 @@ class QunarCrawler(BaseCrawler):
             # 所以：既不记 empty（会谎报"真无票"，与已采到的价自相矛盾），
             # 也不记 login（会催人重登一个 H5 明明在出数的会话），按
             # soft_reject「门拒、预热可解」记——事实如此，处置也对。
+            _blank = self._blanket_gate_text(text)
+            if _blank:
+                self.last_soft_reject = {"kind": "blanket_gate",
+                                         "note": _blank}
+                self.logger.info(
+                    "[qunar] httpx 整体门拒 code=3（跨航线同文案）——"
+                    "按门拒记录，不当无票")
+                return None
             if self._no_result_text(text):
                 self.last_soft_reject = {
                     "kind": "token_gate",
@@ -1610,6 +1632,40 @@ class QunarCrawler(BaseCrawler):
         prices = sorted({f["price"] for f in flights if f.get("price")})
         self.logger.info("[qunar] httpx 明细价格列表: %s", prices)
         return float(min(prices)), flights
+
+    @staticmethod
+    def _blanket_gate_text(text: str):
+        """整体门拒识别（r400）：返回门拒文案或空串。
+
+        实测（2026-10-27 08:0x，同一会话连打四条航线）：
+
+        ```
+        SHA→BKK(ret 有票，2h 前刚从同渠道采到 ¥662)  code=3
+        SHA→HKG                                      code=3
+        SHA→NRT                                      code=3
+        SHA→TYO                                      code=3
+        四条回应一字不差：{"ret":false,"code":3,
+                          "msg":"当前搜索无航线，请更换城市重新搜索"}
+        ```
+
+        真"查了没票"不会四条全无、更不会与刚采到的价矛盾。`code=3` +
+        这句文案是**通道级门拒**（换航线、换城市名都不变），不是航线属性，
+        也不是"今天真没航班"。
+
+        记成 empty 会让读者相信"确实没票"而停止关注；记成 login 会催人
+        重登一个正在出数的会话。按 soft_reject（门拒、预热可解、可自愈）
+        记才是事实。
+        """
+        try:
+            obj = json.loads(text)
+        except Exception:
+            return ""
+        if not isinstance(obj, dict):
+            return ""
+        msg = str(obj.get("msg") or "")
+        if obj.get("code") == 3 and "无航线" in msg:
+            return msg[:80]
+        return ""
 
     @staticmethod
     def _no_result_text(text: str) -> bool:
@@ -1771,7 +1827,17 @@ class QunarCrawler(BaseCrawler):
 
             # 无明细时先认风控/登录证据，避免把验证页当空结果。
             if not flights:
+                _body_text = ""
                 for t in snap["response_texts"]:
+                    _blank = self._blanket_gate_text(t)
+                    if _blank:
+                        # 通道级门拒（r400）：不是无票，也不是登录墙
+                        self.last_soft_reject = {
+                            "kind": "blanket_gate", "note": _blank}
+                        self.logger.info(
+                            "[qunar] H5 整体门拒 code=3（跨航线同文案）——"
+                            "按门拒记录，不当无票")
+                        continue
                     if self._no_result_text(t):
                         self._last_no_result = True
                         continue
@@ -1792,6 +1858,21 @@ class QunarCrawler(BaseCrawler):
                         self._last_challenge = _sig
                         if _sig.status == "login":
                             QunarCrawler.login_suspect = True
+                # 无证据的空（r400）：一没拦到响应、二页面正文是空的、
+                # 三没有任何风控/无票证据。这既不是"站点说没票"，也不是
+                # 明确的登录墙/人机验证——它只是"这一趟什么也没拿回来"
+                # （导航失败、白屏、超时后页面还在转）。此前它落进
+                # `login_suspect ? login : empty` 的 else 分支被记成 empty，
+                # 即向读者宣告"今天确实没有航班"。
+                # 实测（SHA→HKG 2026-11-16）：H5 返回 None、body 空、
+                # 无 challenge，被记 empty。真无票的概率不该由"没证据"
+                # 来支撑——按 error 记（基础设施层没拿到东西），让人去看
+                # 现场而不是相信一个凭空的"无票"。
+                if (getattr(self, "_last_challenge", None) is None
+                        and not getattr(self, "_last_no_result", False)
+                        and not snap["response_texts"]
+                        and not _body_text):
+                    self._last_no_evidence = True
 
             # 导出 cookies
             try:
