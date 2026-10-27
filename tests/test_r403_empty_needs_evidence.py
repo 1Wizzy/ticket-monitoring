@@ -27,6 +27,12 @@ CRAWLERS = os.path.join(os.path.dirname(os.path.dirname(
 
 # 这些措辞描述的是"我们没拿到/没解析出"，不是"站点说没票"
 PSEUDO_EMPTY_MARKERS = ("请求无响应", "未解析到", "没拿到", "无证据")
+# 正则版：允许短语中间夹词（"H5 无 listingsearch 响应" 曾漏网，r405）
+PSEUDO_EMPTY_PATTERNS = (
+    re.compile(r"无.{0,24}响应"),
+    re.compile(r"未(解析|拿到|获取)"),
+    re.compile(r"没有(拿到|收到|获取)"),
+)
 
 
 def _sources():
@@ -40,6 +46,8 @@ def test_no_pseudo_empty_wording():
     """不得把"没拿到/没解析出"的文案写成 empty 状态。
 
     只看**代码行**（去掉注释），否则解释这条规则本身的注释会被误报。
+    同时用**正则**匹配短语中间夹词的形态——「H5 无 listingsearch 响应」
+    曾因字面标记只覆盖「请求无响应」而漏网（r405）。
     """
     bad = []
     for fn, src in _sources():
@@ -53,6 +61,10 @@ def test_no_pseudo_empty_wording():
             for mk in PSEUDO_EMPTY_MARKERS:
                 if mk in ctx:
                     bad.append((fn, line_no, mk, code.strip()[:60]))
+            for pat in PSEUDO_EMPTY_PATTERNS:
+                m = pat.search(ctx)
+                if m:
+                    bad.append((fn, line_no, m.group(0), code.strip()[:60]))
     assert not bad, bad
 
 

@@ -260,9 +260,15 @@ class FliggyH5Crawler(BaseCrawler):
                                detail=str(e)[:140],
                                ms=int((time.time() - t0) * 1000))
                 continue
+            # 末位兜底不是 empty（r405）：走到这里说明既没拿到行，也没有
+            # 登录/验证页证据。detail 会写成「H5 无 listingsearch 响应」，
+            # 即"连响应都没等到"——那是没拿到东西，不是"站点说没票"。
+            # 记 empty 会让读者相信真没票而停止关注（r398b/r400/r401/
+            # r402/r403 同一类）；记 error 才可查、可重试。
             status = ("ok" if rows else
                       ("login" if getattr(self, "_last_login", False) else
-                       ("blocked" if getattr(self, "_last_blocked", False) else "empty")))
+                       ("blocked" if getattr(self, "_last_blocked", False)
+                        else "error")))
             detail = ("淘宝 H5 listingsearch" if rows else
                       ("H5 登录墙" if status == "login" else
                        ("H5 验证页" if status == "blocked" else

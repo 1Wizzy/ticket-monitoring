@@ -844,11 +844,16 @@ class TongchengCrawler(BaseCrawler):
                             "[tongcheng][intl] %s 日历响应缺 data 对象"
                             "（body %dB）", date, len(body))
                     else:
+                        # 日历确实回了、只是该日无报价（r405）：这是"那天
+                        # 没有可报价的航班"，属真正的 empty。但旧文案写
+                        # 「未拿到该日报价」，读起来像"我们没取到"——同一
+                        # 句话被理解成失败，会让读者去查一个没坏的东西。
+                        # 改成陈述事实：渠道回了，该日无价。
                         self.path_note("日历", "empty", date=date,
-                                       detail="国际日历未拿到该日报价")
+                                       detail="渠道日历该日无报价")
                         self.logger.warning(
-                            "[tongcheng][intl] %s 未拿到日历价（body %dB）",
-                            date, len(body))
+                            "[tongcheng][intl] 日历该日无报价（body %dB）",
+                            len(body))
                     self._sleep()
                     continue
                 self.path_note("日历", "calendar", rows=1, date=date,
