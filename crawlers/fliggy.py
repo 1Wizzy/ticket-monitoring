@@ -219,8 +219,16 @@ class FliggyCrawler(BaseCrawler):
             _status = ("ok" if flights else
                        ("blocked" if _blocked else
                         ("login" if _login else "empty")))
+            # 成功也记地址（r409）：_fetch_pc 内部用的页面就是 _last_page，
+            # 取不到就留空（宁缺勿错，不编造）。
+            _pg = getattr(self, "_last_page", None)
+            try:
+                _pg_url = str(getattr(_pg, "url", "") or "") if _pg else ""
+            except Exception:
+                _pg_url = ""
             self.path_note("PC", _status,
                            rows=len(flights), date=date,
+                           url=_pg_url,
                            detail=("人机验证页，需在渠道登录窗口完成验证"
                                    if _blocked else
                                    ("登录墙/请登录" if _login else

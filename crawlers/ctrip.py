@@ -223,6 +223,7 @@ class CtripCrawler(BaseCrawler):
                             date, price, len(flights), n_d, len(flights) - n_d)
                         self.path_note(
                             "H5", "ok", rows=len(flights), date=date,
+                            url=str(getattr(page, "url", "") or ""),
                             detail="m.ctrip.com H5 列表",
                             ms=int((time.time() - t_h5) * 1000))
                     else:
@@ -499,6 +500,7 @@ class CtripCrawler(BaseCrawler):
                         continue
                     CtripCrawler.login_suspect = False
                     self.path_note("PC", "ok", rows=len(flights), date=date,
+                                   url=str(getattr(page, "url", "") or ""),
                                    detail="flights.ctrip.com %s列表" % label,
                                    ms=int((time.time() - t_pc) * 1000))
                     best = min(flights, key=lambda f: f["price"])

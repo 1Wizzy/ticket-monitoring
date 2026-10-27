@@ -1093,6 +1093,7 @@ class TuniuCrawler(BaseCrawler):
             best = min(flights, key=lambda f: f["price"]) if flights else None
             if best is not None:
                 self.path_note("H5/API", "ok", rows=len(flights), date=date,
+                               url=self.INTL_QF_API,
                                detail="国际列表接口",
                                ms=int((time.time() - t_h5) * 1000))
                 results.append(FlightPrice(
@@ -1213,6 +1214,7 @@ class TuniuCrawler(BaseCrawler):
             flights = self._offers_to_flights(offers)
             if best is not None and best.get("price"):
                 self.path_note("H5/API", "ok", rows=len(flights), date=date,
+                               url=self.LIST_API,
                                detail="m.tuniu.com 列表接口",
                                ms=int((time.time() - t_h5) * 1000))
                 results.append(FlightPrice(

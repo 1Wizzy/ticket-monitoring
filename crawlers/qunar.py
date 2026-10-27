@@ -2684,7 +2684,15 @@ class QunarCrawler(BaseCrawler):
             if flights:
                 # 出数即证明会话可用：清该航线 1999 计数（连续语义复位）
                 self._qn1999_streak.pop("%s|%s|%s" % (fc, tc, date), None)
+                # 成功也记地址（r409）：与 r407 同律，这次是国际列表页，
+                # 带 depCity/arrCity/goDate——复现时参数一目了然。
                 self.path_note("H5", "ok", rows=len(flights), date=date,
+                               url=self.INTL_URL_TPL.format(
+                                   from_name=urllib.parse.quote(
+                                       self._intl_city_name(fc)),
+                                   to_name=urllib.parse.quote(
+                                       self._intl_city_name(tc)),
+                                   date=date),
                                detail="touch.qunar.com 国际列表")
                 self._stamp_intl(flights, fc, tc)
                 # R53 详情增强合并：interdetail 四维落最低行（_dkey=
