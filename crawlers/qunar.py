@@ -2607,6 +2607,16 @@ class QunarCrawler(BaseCrawler):
                     self.path_note("H5", "login", date=date,
                                    detail="国际列表 1999/8 连续 %d 次"
                                           "未放行（疑会话失效）" % _n)
+                    # 撤掉本轮早先那条 soft_reject（r408）：升级成 login 时
+                    # 若把"单次间歇放行（免登录冷却）"留在账上，同一次查询
+                    # 就同时写着"单次、不用管"和"连续 2 次、请重登"——两条
+                    # 互斥结论并列。实测 2026-10-27 10:39:22 同一
+                    # attempt_id 正是如此。只撤本轮同日那条，不碰历史。
+                    _kept = [p for p in self.paths[:-1]
+                             if not (p.get("path") == "H5"
+                                     and p.get("date") == date
+                                     and p.get("status") == "soft_reject")]
+                    self.paths = _kept + [self.paths[-1]]
                     self.logger.warning(
                         "[qunar][intl] %s 1999/8 连续 %d 次未放行——疑会话"
                         "失效，请在配置页「渠道登录」重登 qunar", date, _n)
