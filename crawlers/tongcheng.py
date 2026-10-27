@@ -239,7 +239,14 @@ class TongchengCrawler(BaseCrawler):
                          tc: str, date: str, price: float) -> FlightPrice:
         """窗历行：元素形态与 ts_calendar 行同构，唯一差别是
         source=tc_window_calendar（可溯源到具体通路）+ 无 tax 拆分
-        （窗历只给含税总价，不臆造票面/税额）。"""
+        （窗历只给含税总价，不臆造票面/税额）。
+
+        **粒度为城市**（r399 实证）：按机场码打这个接口，LHR 与 LGW 返回
+        逐日同价、NRT 与 HND 同价——它给的是城市最低价，不是该机场的价。
+        行仍按配置的机场码存（用户按机场关注），但必须带上 `cityLevel`
+        戳，否则「SHA→LHR ¥2492」会被读成希思罗的票价，而它其实可能
+        落在盖特威克。多机场城市尤其明显，单机场城市无差别。
+        """
         element = {
             "price": price,
             "name": "日历最低价",
@@ -251,6 +258,9 @@ class TongchengCrawler(BaseCrawler):
             "currency": "CNY",
             "source": "tc_window_calendar",
             "cityCodes": f"{fc}-{tc}",
+            # 机场码与城市码不同 → 这一行是城市级最低价
+            "cityLevel": (fc != str(from_city).upper()
+                          or tc != str(to_city).upper()),
         }
         return FlightPrice(
             platform=self.name,
