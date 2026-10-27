@@ -157,3 +157,70 @@ def test_ok_status_always_has_rows():
             assert p["rows"] > 0, p
         # 且实现路径上"有行无价"要自述其因，不能落回无票/登录话术
         assert "无符合条件的航班" not in p["detail"] or p["status"] == "empty", p
+
+
+# ── r404：门拒不得误触发退避重试与"会话失效" ───────────────────────────
+
+def test_blanket_gate_skips_backoff_retry():
+    """整体门拒时同轮不再阶梯退避连打（重试注定同果，白打请求）。"""
+    c = _c()
+    QunarCrawler.login_suspect = False
+    QunarCrawler._cooldown_until = 0.0
+    calls = {"n": 0}
+
+    def _inner(fc, tc, dates):
+        calls["n"] += 1
+        c.last_soft_reject = {"kind": "blanket_gate", "note": "当前搜索无航线"}
+        return []
+
+    c._fetch_inner = _inner
+    try:
+        res = c.fetch("SHA", "HKG", ["2026-11-16"])
+        assert res == []
+        assert calls["n"] == 1, "门拒后不应再退避重试，实际 %d 次" % calls["n"]
+    finally:
+        QunarCrawler.login_suspect = False
+        QunarCrawler._cooldown_until = 0.0
+
+
+def test_blanket_gate_does_not_flag_session_invalid():
+    """门拒不是会话失效——否则界面会催人重登一个完好的会话。"""
+    c = _c()
+    QunarCrawler.login_suspect = False
+    QunarCrawler._cooldown_until = 0.0
+
+    def _inner(fc, tc, dates):
+        c.last_soft_reject = {"kind": "blanket_gate", "note": "当前搜索无航线"}
+        return []
+
+    c._fetch_inner = _inner
+    try:
+        c.fetch("SHA", "HKG", ["2026-11-16"])
+        assert QunarCrawler.login_suspect is False, "门拒不得置 login_suspect"
+    finally:
+        QunarCrawler.login_suspect = False
+        QunarCrawler._cooldown_until = 0.0
+
+
+def test_ordinary_empty_still_retries():
+    """普通无名空仍按原逻辑退避一次（别把修复做过头）。"""
+    c = _c()
+    QunarCrawler.login_suspect = False
+    QunarCrawler._cooldown_until = 0.0
+    c._MIN_GAP_S = 0
+    calls = {"n": 0}
+
+    def _inner(fc, tc, dates):
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            QunarCrawler.login_suspect = True   # 第二轮起走"跳过"分支
+        return []
+
+    c._fetch_inner = _inner
+    c._BACKOFF_S = (0,)
+    try:
+        c.fetch("SHA", "HAK", ["2026-11-16"])
+        assert calls["n"] >= 2, "普通空结果应至少重试一次，实际 %d" % calls["n"]
+    finally:
+        QunarCrawler.login_suspect = False
+        QunarCrawler._cooldown_until = 0.0

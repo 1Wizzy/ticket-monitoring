@@ -511,6 +511,17 @@ class QunarCrawler(BaseCrawler):
                     "（请在配置页「渠道登录」重新登录 qunar）")
                 return []
             back = self._BACKOFF_S[attempt]
+            # 整体门拒（r404）：通道级拒绝不是会话失效，也不值得在同轮
+            # 阶梯退避连打（实测四条航线一字不差同文案 → 重试注定同果，
+            # 只会白打 3 轮 × 每条日期）。更关键的是别置 login_suspect：
+            # 那会让界面显示「会话失效，建议重登」，把用户推去重登一个
+            # 完好的会话——与 r397 要分的"该重登 / 该重试"同一类错误。
+            _gate = dict(getattr(self, "last_soft_reject", None) or {})
+            if _gate.get("kind") == "blanket_gate":
+                self.logger.warning(
+                    "[qunar] 整体门拒在案（%s），跳过退避重试；"
+                    "不判会话失效", str(_gate.get("note"))[:40])
+                return []
             self.logger.warning("[qunar] 三路径空结果——qunar 已于 09-12 起对"
                                 "未登录会话软性返回空列表（低价日历仍出价）；"
                                 "请在配置页「渠道登录」重新登录 qunar。先按限流重试 %ds（第 %d 次）",
