@@ -229,7 +229,7 @@ class BaseCrawler:
 
     def path_note(self, path: str, status: str, rows: int = 0,
                   date: str = "", detail: str = "", ms: int = 0,
-                  http_status: int = 0):
+                  http_status: int = 0, url: str = ""):
         if status not in self.PATH_STATUS:
             status = "error"
         rec = {"path": str(path), "status": status,
@@ -241,6 +241,14 @@ class BaseCrawler:
                # 记录当时是 PC 还是 H5 身份：验证窗口必须复用同一条
                # 路径的 UA/视口，否则"换个身份去过验证"会制造新指纹。
                "mobile": bool(getattr(self, "use_mobile", False))}
+        # 请求 URL 入账（r396）：账本 request_url 列此前从没被写过
+        # （实测 601/601 全空），"这条路径到底打了哪个地址"只能靠
+        # 截图猜。由调用方显式传自己真实使用的 URL——不让本函数拿
+        # `_last_page` 兜底，那可能是上一条路径遗留的页面（同一轮里
+        # H5 浏览器失败后接 httpx，页面早已关闭），会把 A 路径的
+        # 地址记到 B 路径头上。
+        if url:
+            rec["url"] = str(url)[:500]
         if not hasattr(self, "paths"):
             self.path_reset()
         self.paths.append(rec)
@@ -248,16 +256,19 @@ class BaseCrawler:
         self.last_status = rec["status"]
         # 被拦/登录墙往往返回 200 页面而不是 403：只在响应监听里记现场
         # 会漏掉最常见的人机验证。path_note 是各渠道确认"这条路过不去"
-        # 的统一落点，在这里补页面 URL，截图仍由上下文收尾统一落盘。
+        # 的统一落点，在这里补页面 URL（调用方没显式给 url 时才用页面
+        # 兜底），截图仍由上下文收尾统一落盘。
         if rec["status"] in ("blocked", "login", "soft_reject"):
             try:
                 page = getattr(self, "_last_page", None)
-                url = str(getattr(page, "url", "") or "") if page else ""
-                if url and url != "about:blank":
+                purl = str(getattr(page, "url", "") or "") if page else ""
+                if purl and purl != "about:blank":
+                    if not rec.get("url"):
+                        rec["url"] = purl[:500]
                     if not self.last_block_url:
-                        self.last_block_url = url[:500]
+                        self.last_block_url = purl[:500]
                     if not self._scene_pending:
-                        self._scene_pending = url[:500]
+                        self._scene_pending = purl[:500]
             except Exception:
                 pass
         cb = getattr(self, "on_path", None)

@@ -584,6 +584,15 @@ class QunarCrawler(BaseCrawler):
         self._last_challenge = None
         got = self._fetch_via_browser(from_city, to_city, date)
         _sig = getattr(self, "_last_challenge", None)
+        # 账本记的是"这条路径打了哪个地址"（r396）：H5 与 API 用的不是
+        # 同一个 URL，出问题时必须能直接点开/复现，不靠截图猜。
+        _h5_url = self.URL_TPL.format(
+            from_name=urllib.parse.quote(
+                self.CITY_NAME.get(from_city.upper(), from_city)),
+            to_name=urllib.parse.quote(
+                self.CITY_NAME.get(to_city.upper(), to_city)),
+            date=date,
+        )
         # 原站"无符合条件的航班"是明确业务空，不是会话失效：即使本轮
         # 另有 login_suspect（可能来自上一轮/另一域），也不得覆盖成 login，
         # 否则会误触发登录冷却与重登提示。
@@ -593,7 +602,7 @@ class QunarCrawler(BaseCrawler):
                         ("login" if QunarCrawler.login_suspect else "empty"))))
         self.path_note(
             "H5", _h5_status,
-            rows=len(got[1]) if got else 0, date=date,
+            rows=len(got[1]) if got else 0, date=date, url=_h5_url,
             detail=(_sig.detail if _sig else
                     ("原站返回无符合条件的航班（可能受指纹 SDK/风控环境影响）"
                      if getattr(self, "_last_no_result", False)
@@ -630,6 +639,7 @@ class QunarCrawler(BaseCrawler):
         self.path_note(
             "API", _api_status,
             rows=len(got[1]) if got else 0, date=date,
+            url=str(getattr(self, "API_URL", "") or ""),
             detail=(_sig.detail if _sig else
                     ("原站返回无符合条件的航班（可能受指纹 SDK/风控环境影响）"
                      if getattr(self, "_last_no_result", False)

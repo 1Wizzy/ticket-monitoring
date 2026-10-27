@@ -1897,6 +1897,7 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                             note=_rec.get("detail", ""),
                             evidence_level="refill",
                             attempt_id=_attempt,
+                            request_url=str(_rec.get("url") or ""),
                             http_status=int(_rec.get("http") or 0))
                     except Exception:
                         pass
@@ -2122,6 +2123,7 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                         rows=_rec.get("rows", 0),
                         note=_rec.get("detail", ""),
                         evidence_level="probe", attempt_id=_attempt,
+                        request_url=str(_rec.get("url") or ""),
                         http_status=int(_rec.get("http") or 0))
                 except Exception:
                     pass
@@ -2601,6 +2603,7 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                     rec.get("status", ""), rows=rec.get("rows", 0),
                     note=rec.get("detail", ""), evidence_level="path",
                     attempt_id=_attempt,
+                    request_url=str(rec.get("url") or ""),
                     http_status=int(rec.get("http")
                                     or rec.get("httpStatus") or 0))
                 if rec is selected:
