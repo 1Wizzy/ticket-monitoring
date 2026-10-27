@@ -18,6 +18,8 @@ import math
 import re
 import threading
 import time
+
+from .models import CAL_PATH_FAMILY
 from collections import deque
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse
@@ -630,8 +632,9 @@ def advise(plat, ch=None, paths=None, now=None, node=None,
     # 日历族（日历/窗历）是同一类数据的不同通路：窗历（r384）上线后
     # 旧「日历」恒 444，此时不该一边显示窗历成功、一边喊日历劣化。
     # 但抑制只对「被替代的那条」成立——不能让窗历自己的低成功率也
-    # 被它自己掩掉（那会把 2/50 的窗历报成正常）。
-    _CAL_FAMILY = ("日历", "窗历")
+    # 被它自己掩掉（那会把 2/50 的窗历报成正常）。族表与复发账共用
+    # 同一份定义，避免两处各写一遍后漂移。
+    _CAL_FAMILY = CAL_PATH_FAMILY
 
     def _cal_family_ok(_sp, skip_name):
         for _n2, _v2 in (_sp or {}).items():

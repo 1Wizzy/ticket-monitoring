@@ -95,6 +95,22 @@ def test_fingerprint_is_single_source_and_stable():
     assert f1["locale"] == "zh-CN" and f1["timezone"] == "Asia/Shanghai"
 
 
+def test_fingerprint_is_identical_across_instances():
+    """重启后的新实例必须与旧实例同指纹（否则每次重启都是"新设备"）。
+
+    这是"指纹幂等"真正要防的形态：进程重启、实例重建都不能让设备
+    特征漂移，否则风控视角就是同一账号换机登录。
+    """
+    from crawlers.qunar import QunarCrawler
+    from crawlers.ctrip import CtripCrawler
+    import logging
+    lg = logging.getLogger("t_r394b")
+    a, b = QunarCrawler({}, lg), QunarCrawler({}, lg)
+    assert a.fingerprint() == b.fingerprint()
+    c1, c2 = CtripCrawler({}, lg), CtripCrawler({}, lg)
+    assert c1.fingerprint() == c2.fingerprint()
+
+
 def _is_use_mobile_assign(node, value=None):
     if not isinstance(node, ast.Assign):
         return False

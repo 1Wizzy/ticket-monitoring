@@ -12,6 +12,13 @@ def render_dir() -> str:
     return os.environ.get("TM_RENDER_DIR") or "data"
 
 
+# 「只出价、不证明细」的日历族通路名。同程国际 r384 由「日历」换成
+# 「窗历」——同一条业务通路的新入口名。任何按入口名做账的地方（路径
+# 统计的族抑制、复发账的恢复判定）都必须按族看，否则换名当刻旧账就
+# 永远配不上新成功。判据是通路语义（有无航班号/时刻），不是渠道。
+CAL_PATH_FAMILY = ("日历", "窗历")
+
+
 @dataclass
 class FlightPrice:
     platform: str           # ctrip / fliggy / tongcheng / qunar

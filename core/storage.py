@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from contextlib import contextmanager
 from typing import List, Optional
 
-from .models import FlightPrice
+from .models import CAL_PATH_FAMILY, FlightPrice
 
 
 SCHEMA = """
@@ -626,6 +626,28 @@ class PriceStorage:
                          "error"),
                 "evidence": _ev0,
             })
+        # 归类改写发生在 SQL 分组**之后**，所以同一个（渠道×入口×航线）
+        # 可能落下两组同类：改写前按 path_status 分成 login / empty 两组，
+        # 改写后两组都叫 empty，界面上就成了两条一模一样的行
+        # （实测 qunar API HAK→SHA「empty×4」与「empty×3」并列）。
+        # 改写后必须再合并一次：计数相加、首末时间取极值、证据取最新。
+        _merged = {}
+        for o in out:
+            _k = (o["platform"], o["path"], o["from_city"], o["to_city"],
+                  o["status"])
+            _prev = _merged.get(_k)
+            if _prev is None:
+                _merged[_k] = o
+                continue
+            _prev["count"] += o["count"]
+            if o["first_at"] and (not _prev["first_at"]
+                                  or o["first_at"] < _prev["first_at"]):
+                _prev["first_at"] = o["first_at"]
+            if o["last_at"] > _prev["last_at"]:
+                _prev["last_at"] = o["last_at"]
+                _prev["evidence"] = o["evidence"]
+        out = sorted(_merged.values(), key=lambda o: (-o["count"],
+                                                      o["last_at"]))
         # 失败后又成功 = 已恢复：复发账只说明"这毛病反复过"，不该在
         # 恢复后继续喊"需人工"。判据：同一渠道×入口×航线，最近一次
         # 真实成功行的 id 晚于最后一条**非成功且非空/非边界**的失败行。
@@ -634,23 +656,32 @@ class PriceStorage:
         # - empty/unsupported 不算"仍在失败"：真无票与能力边界本来就
         #   不是故障，否则"登录墙→修好→连续几轮真无票"会永远显示需人工。
         # - 用 id 而非时间：一轮多行常落在同一秒，秒级分不出先后。
+        # - **日历族按族匹配**（r395）：同程国际 r384 把通路从「日历」
+        #   换成「窗历」（新入口名），按字面 entry_path 精确匹配时，旧
+        #   「日历」的失败组永远等不到「窗历」的成功——4 条国际航线会
+        #   永久挂「需人工」，而数据其实每轮都在。族内只认同一业务通路
+        #   （日历/窗历都是"只出价不证明细"），不让 H5 成功去顶日历的账。
         with self._conn() as c:
             for o in out:
                 plat, path = o["platform"], o["path"]
+                _paths = (list(CAL_PATH_FAMILY) if path in CAL_PATH_FAMILY
+                          else [path])
+                _ph = ",".join("?" * len(_paths))
                 fr = str(o.get("from_city") or "")
                 to = str(o.get("to_city") or "")
                 try:
                     row = c.execute(
                         "SELECT id, fetched_at FROM fetch_paths WHERE "
-                        "platform=? AND entry_path=? AND from_city=? AND "
-                        "to_city=? AND path_status IN ('ok','calendar') "
-                        "ORDER BY id DESC LIMIT 1",
-                        (plat, path, fr, to)).fetchone()
+                        "platform=? AND entry_path IN (%s) AND from_city=? "
+                        "AND to_city=? AND path_status IN ('ok','calendar') "
+                        "ORDER BY id DESC LIMIT 1" % _ph,
+                        (plat, *_paths, fr, to)).fetchone()
                     bad = c.execute(
                         "SELECT MAX(id) FROM fetch_paths WHERE platform=? "
-                        "AND entry_path=? AND from_city=? AND to_city=? "
-                        "AND path_status NOT IN ('ok','calendar','empty',"
-                        "'unsupported')", (plat, path, fr, to)).fetchone()
+                        "AND entry_path IN (%s) AND from_city=? AND "
+                        "to_city=? AND path_status NOT IN "
+                        "('ok','calendar','empty','unsupported')" % _ph,
+                        (plat, *_paths, fr, to)).fetchone()
                 except Exception:
                     row, bad = None, None
                 last_ok = str((row or ["", ""])[1] or "")
