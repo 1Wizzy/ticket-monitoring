@@ -639,20 +639,25 @@ class QunarCrawler(BaseCrawler):
         # 判出的 "no-result"。实测库里有 18 行 `API/login` 却写着
         # 「原站返回无符合条件的航班」——那是 H5 的判定漏到了 API 头上。
         self._last_no_result = False
+        self.last_soft_reject = {}
         got = self._fetch_via_httpx(from_city, to_city, date)
         _sig = getattr(self, "_last_challenge", None)
         _nores = bool(getattr(self, "_last_no_result", False))
+        _soft = dict(getattr(self, "last_soft_reject", None) or {})
         _api_status = ("ok" if got else (_sig.status if _sig else
                         ("empty" if _nores else
-                         ("login" if QunarCrawler.login_suspect else "empty"))))
+                         ("soft_reject" if _soft else
+                          ("login" if QunarCrawler.login_suspect
+                           else "empty")))))
         self.path_note(
             "API", _api_status,
             rows=len(got[1]) if got else 0, date=date,
             url=str(getattr(self, "API_URL", "") or ""),
             detail=(_sig.detail if _sig else
-                    ("原站返回无符合条件的航班（可能受指纹 SDK/风控环境影响）"
-                     if getattr(self, "_last_no_result", False)
-                     else "touchInnerList token 直连")))
+                    (_soft.get("note") if _soft else
+                     ("原站返回无符合条件的航班（可能受指纹 SDK/风控环境影响）"
+                      if getattr(self, "_last_no_result", False)
+                      else "touchInnerList token 直连"))))
         if _sig:
             self._query_challenge = _sig
         return got
@@ -1578,13 +1583,21 @@ class QunarCrawler(BaseCrawler):
 
         flights = self._parse_response_flights(text)
         if not flights:
-            # 原站明确"没有符合条件的航班"（1999 + 该措辞）是真无票，
-            # 不是登录墙也不是解析失败（r398）：此前这条路径从不认这个
-            # 信号，于是明确无票被归成 login —— 既催人重登一个没坏的
-            # 会话，也把真无票藏起来。只认显式措辞，不猜。
+            # 1999「没有查询到符合条件的航班」在 httpx 这条路上**不可信**
+            # （r398b）：实测同一 token 连打四条已知有票的航线（SHA→BKK
+            # 窗历/浏览器价 ¥662、SHA→HAK、HAK→SHA、SHA→NRT），四条的
+            # 回应一字不差都是 code=-1 + 该措辞 + data=null。真无票不会
+            # 恰好四条全无、且恰与我们别处拿到的价矛盾——这是 token 直连
+            # 形态被整体门拒，措辞只是门拒文案。
+            # 所以：既不记 empty（会谎报"真无票"，与已采到的价自相矛盾），
+            # 也不记 login（会催人重登一个 H5 明明在出数的会话），按
+            # soft_reject「门拒、预热可解」记——事实如此，处置也对。
             if self._no_result_text(text):
-                self._last_no_result = True
-                self.logger.info("[qunar] httpx 明确无符合条件的航班")
+                self.last_soft_reject = {
+                    "kind": "token_gate",
+                    "note": "httpx 直连整体门拒（1999 文案不可信）"}
+                self.logger.info(
+                    "[qunar] httpx 1999 文案不可信（跨航线同文案）——按门拒记录")
                 return None
             # 碎片响应仅价格无明细：裸价曾直入阈值告警并污染去抖基准
             # （0.5x 幻觉价守卫依赖明细，此路径完全裸奔）——整单拒收走重试。

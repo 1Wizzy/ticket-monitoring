@@ -76,16 +76,54 @@ def test_api_does_not_inherit_h5_verdict():
     """H5 判完无票后，API 必须自己重新判，不能继承。"""
     c = _crawler()
     c._last_no_result = True          # H5 刚判完
-    got = []
+    seen = []
 
     def _httpx(fc, tc, d):
         # 记录进入 API 时标志是否已被清
-        got.append(bool(getattr(c, "_last_no_result", False)))
-        c._last_no_result = True      # API 自己判出无票
+        seen.append(bool(getattr(c, "_last_no_result", False)))
+        c.last_soft_reject = {"kind": "token_gate", "note": "门拒"}
         return None
 
     c._fetch_via_browser = lambda *a, **k: None
     c._fetch_via_httpx = _httpx
     c._fetch_one("SHA", "BKK", "2026-11-16")
-    assert got == [False], "API 起点必须已清标志，实际=%r" % got
-    assert _status(c, "API") == ["empty"], c.paths
+    assert seen == [False], "API 起点必须已清标志，实际=%r" % seen
+    # 不继承 H5 的 empty，也不冒充 login
+    assert _status(c, "API") == ["soft_reject"], c.paths
+
+
+def test_blanket_1999_is_soft_not_empty():
+    """httpx 的 1999「没有航班」是门拒文案，不得记 empty。
+
+    实证：同一 token 连打四条已知有票的航线（SHA→BKK 别处采到 ¥662、
+    SHA→HAK、HAK→SHA、SHA→NRT），四条回应一字不差都是
+    code=-1 +「没有查询到符合条件的航班」+ data=null。
+    真无票不会恰好四条全无、还与已采到的价矛盾。
+    把它记成 empty = 谎报「真无票」，比记错登录更违反数据诚实。
+    """
+    import core.net as _net  # noqa: F401
+
+    class _Resp:
+        status_code = 200
+        headers = {}
+        text = json.dumps({
+            "bstatus": {"code": 1999, "msg": "没有查询到符合条件的航班"},
+            "code": -1, "data": None,
+            "msg": "没有查询到符合条件的航班", "ret": False,
+        }, ensure_ascii=False)
+
+    c = _crawler()
+    c._load_token = lambda: {"headers": {}, "body_template": {},
+                             "cookies": {}, "updated_at": 0}
+    c.last_soft_reject = {}
+    import core.net
+    _orig = core.net.post
+    core.net.post = lambda *a, **k: _Resp()
+    try:
+        out = c._fetch_via_httpx("SHA", "BKK", "2026-11-16")
+    finally:
+        core.net.post = _orig
+    assert out is None
+    assert c.last_soft_reject.get("kind") == "token_gate", c.last_soft_reject
+    assert getattr(c, "_last_no_result", False) is False, \
+        "门拒文案不得被当成真无票"
