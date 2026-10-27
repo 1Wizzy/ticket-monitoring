@@ -524,10 +524,11 @@ class PriceStorage:
             if aid:
                 q = queries.setdefault((plat, aid), {
                     "scope": scope, "ok": False, "detail": False,
-                    "calendar": False})
+                    "calendar": False, "paths": set()})
                 q["ok"] = q["ok"] or st in ("ok", "calendar")
                 q["detail"] = q["detail"] or st == "ok"
                 q["calendar"] = q["calendar"] or st == "calendar"
+                q["paths"].add(path)
 
         for (plat, _aid), q in queries.items():
             node = out.get(plat) or {}
@@ -543,10 +544,92 @@ class PriceStorage:
                 elif q["calendar"]:
                     target["query_calendar_only"] += 1
 
+        # 「在用路径」口径（r406）：退役的旧通路不该拖低渠道健康度。
+        #
+        # 背景：同程 r384 把国际通路从「日历」换成「窗历」后，旧「日历」
+        # 恒 444 但 24h 窗口里仍留着 35 次历史查询（全部失败）。渠道查询
+        # 成功率因此显示 63.5%，而**在用的两条路（窗历 54/54、H5 7/7）
+        # 都是 100%**——一个已经不存在的入口，把一条健康的渠道说成了
+        # 三分之二坏。
+        #
+        # 判据（只用时间先后 + 是否还有产出，不做语义猜测）：
+        #   路径 P 已淘汰 ⇔ ① 窗口内 **一次都没成功**；
+        #                  ② 存在另一条路 Q，Q 的最后尝试晚于 P；
+        #                  ③ Q 在窗口内有过成功（确实接住了活）。
+        #
+        # ① 是关键：只要 P 还在出数，无论 Q 多新，P 都没退役。
+        # 第一版漏了这条，把**携程 PC（24h 成功 129 次）**误判成淘汰——
+        # 它只是最近一次尝试比 H5 早几分钟而已。
+        def _retired_paths(paths):
+            obs = {}
+            for name, v in (paths or {}).items():
+                la = str(v.get("last_at") or "")
+                if not la:
+                    continue
+                obs[name] = (la, int(v.get("ok") or 0) > 0)
+            dead = set()
+            for name, (la, ok_a) in obs.items():
+                if ok_a:
+                    continue                      # ① 还在出数 → 不退役
+                for other, (lb, ok_b) in obs.items():
+                    if other != name and ok_b and lb > la:   # ②③
+                        dead.add(name)
+                        break
+            return dead
+
+        def _live(node):
+            """按在用路径重算查询口径：只计"至少走过一条在用路径"的查询。
+
+            一次查询可能同时留下多条路径的记录（H5 失败→API 兜底）。
+            若该次查询走到的路径**全部**已淘汰，这次查询整体不计；否则
+            算作一次在用查询（成功与否按原判定）。
+            """
+            dead = _retired_paths(node.get("paths") or {})
+            if not dead:
+                return None
+            qa = qo = qd = qc = 0
+            for (_p, _aid), q in _queries_by_plat.get(id(node), []):
+                live_hit = bool(set(q["paths"]) - dead)
+                if not live_hit:
+                    continue
+                qa += 1
+                if q["ok"]:
+                    qo += 1
+                if q["detail"]:
+                    qd += 1
+                elif q["calendar"]:
+                    qc += 1
+            return {"query_attempts": qa, "query_ok": qo,
+                    "query_detail_ok": qd, "query_calendar_only": qc,
+                    "query_rate": (round(qo / qa, 4) if qa else None)}
+
+        _queries_by_plat = {}
+        for (plat, aid), q in queries.items():
+            node = out.get(plat)
+            if node is None:
+                continue
+            _queries_by_plat.setdefault(id(node), []).append(
+                ((plat, aid), q))
+            sc = (node.get("scopes") or {}).get(q["scope"])
+            if sc is not None:
+                _queries_by_plat.setdefault(id(sc), []).append(
+                    ((plat, aid), q))
+
         for node in out.values():
             finish(node)
             for sc in (node.get("scopes") or {}).values():
                 finish(sc)
+            # 在用口径挂在节点上，供 UI/建议优先采用；原口径保留可对照。
+            for target in [node] + list((node.get("scopes") or {}).values()):
+                dead = _retired_paths(target.get("paths") or {})
+                target["retired_paths"] = sorted(dead)
+                live = _live(target) if dead else None
+                target["query_rate_live"] = (
+                    (live or {}).get("query_rate")
+                    if live else target.get("query_rate"))
+                target["query_attempts_live"] = (
+                    (live or {}).get("query_attempts")
+                    if live else target.get("query_attempts"))
         return out
 
     def failure_recurrence(self, hours=24, min_count=3):
