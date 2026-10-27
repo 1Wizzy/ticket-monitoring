@@ -551,7 +551,18 @@ class TongchengCrawler(BaseCrawler):
                     "，同轮复用窗口 %s" % win["span"] if win["cached"]
                     else "")
                 for d in sorted(covered):
+                    # 成功路径也要留地址（r407）：此前只有被拦状态才记 URL，
+                    # 出数时 request_url 恒空——事后无法复现"同一请求当时
+                    # 返回了什么"。注意窗历的真实端点是 special.py 里的
+                    # POST 地址（wx.17u.cn/cheapflights/bffapi/…），
+                    # 不是 INTL_CALENDAR_API（那是已被签名门拒的 ts/calendar），
+                    # 记错地址比不记更糟。
+                    try:
+                        from crawlers.special import _TC_CAL_URL as _CAL_URL
+                    except Exception:
+                        _CAL_URL = ""
                     self.path_note("窗历", "calendar", rows=1, date=d,
+                                   url=_CAL_URL,
                                    detail="同程低价日历 90 天窗口"
                                           "（含税总价）", http_status=200)
                 results.extend(
@@ -671,6 +682,7 @@ class TongchengCrawler(BaseCrawler):
                         type(self).login_suspect = False
                         self.path_note(
                             "H5列表", "ok", rows=len(flights), date=date,
+                            url=str(getattr(page, "url", "") or ""),
                             detail="同程国际 H5 列表明细",
                             ms=int((time.time() - t_list) * 1000))
                         results.append(FlightPrice(

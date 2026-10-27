@@ -1959,3 +1959,35 @@ r403 的守卫用**字面短语**匹配（「请求无响应」「未解析到�
 **为什么不直接删掉旧「日历」的账**：历史数据是"这条通路当时确实这样"
 的事实，删了就失去了"什么时候换的路、换之前坏了多久"的追溯。正确做法
 是**分口径呈现**，而不是篡改历史。
+
+### 16.17 成功路径也在留地址了，且必须是"真的那个"（r407）
+
+r396 补 URL 时只覆盖了被拦/登录/软拒（走页面兜底）。出数时 `request_url`
+仍然恒为空——真实库最近一条窗历成功记录：
+
+```
+entry_path=窗历  path_status=calendar  rows=1  request_url=（空）
+```
+
+于是"这条成功记录当时打的是哪个端点、哪些参数"无法回答，复现与对照断了。
+
+**修法**：给同程两条成功路径补地址——
+
+| 路径 | 记的地址 |
+|---|---|
+| 窗历 | `special._TC_CAL_URL` = `wx.17u.cn/cheapflights/bffapi/cheapflightapi/lowestprice/queryCalendarLowestPrice` |
+| H5列表 | 页面实际 URL（`page.url`） |
+
+**容易踩的坑**：同程文件里有两个"日历"地址——
+
+- `INTL_CALENDAR_API` = `www.ly.com/miflightapi/ts/calendar`：**已被签名
+  门拒，恒 444**（r384 定案）；
+- `_TC_CAL_URL` = `wx.17u.cn/...queryCalendarLowestPrice`：现在真正在用的。
+
+顺手记错的话，排查的人会拿着一个"根本不会成功"的地址去复现成功记录，
+比不记更浪费时间。守卫 `test_recorded_url_is_the_one_actually_called`
+专门断言：记录的必须是 `_TC_CAL_URL`，代码里不得出现 `INTL_CALENDAR_API`
+（看代码行、跳过注释——注释里提到它是在解释"为什么不用它"）。
+
+**"可溯源"的完整定义**：不是"失败时能查"，而是**每一条账都能回答
+"这次请求到底发了什么"**。只覆盖失败等于只覆盖了一半。
