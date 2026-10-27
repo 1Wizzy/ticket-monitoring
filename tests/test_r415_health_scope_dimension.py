@@ -88,3 +88,21 @@ def test_ui_renders_scope_badge():
     assert "hscope" in src
     assert "by_scope" in src
     assert "'国内 '" in src or "国内 " in src
+
+
+# ── r416：通路维度（PC/H5/日历/窗历）也必须露出 ──────────────────────
+
+def test_health_payload_carries_paths():
+    """健康载荷要带分通路成功率与退役标记，否则面板只有一个厂商数。"""
+    src = _src("webui.py")
+    i = src.index("def _health_decorate")
+    block = src[i:i + 2200]
+    assert "path_stats" in block
+    assert "retired_paths" in block or "retired" in block
+
+
+def test_ui_renders_path_badge():
+    """界面要把通路成功率与「退役」标出来。"""
+    src = _src("webui.py")
+    assert "hpath" in src
+    assert "退役" in src
