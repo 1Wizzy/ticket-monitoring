@@ -471,17 +471,24 @@ class CtripCrawler(BaseCrawler):
                             r"whaleguard|验证码|安全验证|访问验证", _body))
                         if not captured:
                             # 一包未到=采集没拿到响应（排队/慢网/风控拦在
-                            # 请求前），不是“解析器读不懂”；两者混标会
-                            # 把可重试的慢速误当渠道无数据。
+                            # 请求前），不是"解析器读不懂"。
+                            # r402：这也不该记 empty——empty 的语义是
+                            # "站点明确说没票、无需操作"，而"一个包都没到"
+                            # 是本机/链路层没拿到东西（实测 10-26 13:47
+                            # SHA→BKK 记成 empty，同日期 10:03 却采到 221
+                            # 行）。记 error，让人去看现场。
                             _detail = ("风控验证页" if _blocked
                                        else "国际列表请求无响应")
-                            _status = "blocked" if _blocked else "empty"
+                            _status = "blocked" if _blocked else "error"
                         else:
+                            # 收到包但解析不出航班：可能是真无票，也可能
+                            # 是改版打穿了选择器。没有"明确无票"措辞时不
+                            # 断言无票——记 error（可查），login 仍优先。
                             _detail = ("风控验证页" if _blocked
                                        else "国际列表未解析到航班")
                             _status = ("blocked" if _blocked
                                        else ("login" if need_login
-                                             else "empty"))
+                                             else "error"))
                         self.logger.warning(
                             "[ctrip][intl] %s PC 列表未解析到航班（%s）",
                             date, _detail)
