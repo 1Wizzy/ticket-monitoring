@@ -30,6 +30,9 @@ PAGE_LOGIN = {
     ("qunar", "h5", "domestic"): "登录后出价",
     ("qunar", "h5", "intl"): "登录后出价",
     ("tuniu", "pc", "intl"): "登录",
+    # 同程 H5 国际实测（2026-10-27）：带参进 m.ly.com/tiflight/book1.html
+    # 会 302 到 passport/login.html，登录后才出航班卡片。
+    ("tongcheng", "h5", "intl"): "登录",
 }
 SPECIAL_PAGE_LOGIN = {
     ("fliggy", "h5"): "淘宝账号",
@@ -41,6 +44,7 @@ PAGE_LOGIN_REQUIRED = {
     ("fliggy", "h5", "domestic"), ("fliggy", "h5", "intl"),
     ("qunar", "h5", "domestic"), ("qunar", "h5", "intl"),
     ("tuniu", "pc", "intl"),
+    ("tongcheng", "h5", "intl"),
 }
 SPECIAL_LOGIN_REQUIRED = {
     ("fliggy", "h5"), ("qunar", "h5"),
@@ -63,7 +67,7 @@ ENTRY = {
         ("pc", "intl"): ("https://flights.ctrip.com/online/channel/international",
                          "PC 国际搜索"),
         ("h5", "intl"): ("https://m.ctrip.com/html5/flight/",
-                         "H5 机票搜索（页内切国际）"),
+                         "H5 机票搜索（与国内同页，页内切国际）"),
     },
     "qunar": {
         ("pc", "domestic"): ("https://flight.qunar.com/site/",
@@ -73,7 +77,7 @@ ENTRY = {
         ("pc", "intl"): ("https://flight.qunar.com/site/",
                          "PC 国际搜索（官网）"),
         ("h5", "intl"): ("https://touch.qunar.com/h5/flight/",
-                         "H5 机票搜索（页内切国际）"),
+                         "H5 机票搜索（与国内同页，页内切国际）"),
     },
     "fliggy": {
         ("pc", "domestic"): ("https://www.fliggy.com/jipiao/",
@@ -81,13 +85,13 @@ ENTRY = {
         ("h5", "domestic"): ("https://market.m.taobao.com/app/trip/"
                              "rx-traffic-search/pages/index"
                              "?biz=flight&defaultBiz=flight",
-                             "H5 机票搜索（页内切国际）"),
+                             "H5 机票搜索（进入即淘宝登录）"),
         ("pc", "intl"): ("https://www.fliggy.com/jipiao/",
-                         "PC 机票搜索（页内切国际）"),
+                         "PC 机票搜索（与国内同页，页内切国际）"),
         ("h5", "intl"): ("https://market.m.taobao.com/app/trip/"
                          "rx-traffic-search/pages/index"
                          "?biz=flight&defaultBiz=flight",
-                         "H5 机票搜索（页内切国际）"),
+                         "H5 机票搜索（进入即淘宝登录，页内切国际）"),
     },
     "tongcheng": {
         ("pc", "domestic"): ("https://www.ly.com/flights/home",
@@ -95,8 +99,8 @@ ENTRY = {
         ("h5", "domestic"): ("https://m.ly.com/ft/touch/index",
                              "H5 机票搜索"),
         ("pc", "intl"): ("https://www.ly.com/iflight/", "PC 国际搜索"),
-        ("h5", "intl"): ("https://m.ly.com/ft/touch/index",
-                         "H5 机票搜索（页内切国际）"),
+        ("h5", "intl"): ("https://m.ly.com/tiflight/book1.html",
+                         "H5 国际搜索（需登录，登录后出明细）"),
     },
     "tuniu": {
         ("pc", "domestic"): ("https://flight.tuniu.com/", "PC 机票搜索"),

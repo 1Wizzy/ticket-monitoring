@@ -64,21 +64,26 @@ def test_channel_links_lose_their_card_frame():
 
 
 def test_login_rows_are_single_column_table_rows_at_all_widths():
+    """单列行 × 三列（名字|说明|操作），窄档折两行。
+
+    实现从"按 grid-row 硬编码行号"改为 grid-template-areas：硬编码在
+    飞猪那种多一段说明的渠道上会多占一行（实测行高 88 vs 109 参差），
+    areas 让每一行自洽。意图不变——仍是单列行信息表、操作独立成列。
+    """
     for s in (
         "#loginRows .lggrid{display:grid;grid-template-columns:1fr!important;gap:0!important}",
-        "#loginRows .lgcard{display:grid;grid-template-columns:170px minmax(0,1fr) auto!important;",
-        "#loginRows .lgcard>.lgname+.lgsection+.lgsection{grid-row:2}",
-        "#loginRows .lgcard>.lgsection+.lgslots{grid-column:2;grid-row:2}",
-        "#loginRows .lgcard>.btn2{grid-column:3;grid-row:1/span 2;",
-        "#loginRows .lgcard>.lgname+.lgsection{grid-column:1/-1;grid-row:2}",
-        "#loginRows .lgcard>.lgname+.lgsection+.lgsection{grid-column:1/-1;grid-row:3}",
-        "#loginRows .lgcard>.lgsection+.lgslots{grid-column:1/-1;grid-row:3}",
+        "#loginRows .lgcard{display:grid;grid-template-columns:170px minmax(0,1fr) 96px!important;",
+        'grid-template-areas:"name info act"!important;',
+        "#loginRows .lgcard>.lgname{grid-area:name}",
+        "#loginRows .lgcard>.lgsection{grid-area:info;",
+        "#loginRows .lgcard>.lgslots{grid-area:info;min-width:0}",
+        "#loginRows .lgcard>.btn2,#loginRows .lgcard>.lgact{grid-area:act;",
         "#loginRows .lgcard:hover{background:transparent!important;box-shadow:none!important}",
     ):
         assert s in STYLE, s
-    # 复合选择器 (0,2,0) 恒压通用 .lgslots (0,1,0)，行号不会被 row:1 覆盖
-    assert STYLE.count("#loginRows .lgcard>.lgsection+.lgslots{grid-column:2;grid-row:2}") >= 1
-    assert STYLE.count("#loginRows .lgcard>.lgsection+.lgslots{grid-column:1/-1;grid-row:3}") >= 1
+    # 操作列定宽 + 右对齐：五行按钮右缘必须严格对齐（此前差 14px）
+    assert "96px!important" in STYLE
+    assert "justify-self:end" in STYLE
 
 
 def test_controls_keep_boundaries_without_card_shadows():

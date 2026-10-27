@@ -27,8 +27,14 @@ def test_entry_mode_has_all_twenty_cells():
                for x in c.values())
     assert "flight.qunar.com/site/" in c[("qunar", "pc", "domestic")]["url"]
     assert "market.m.taobao.com" in c[("fliggy", "h5", "domestic")]["url"]
-    assert "m.ly.com/ft/touch/index" in c[("tongcheng", "h5", "intl")]["url"]
-    assert "页内切国际" in c[("tongcheng", "h5", "intl")]["note"]
+    # r413：同程 H5 国际此前配的是**国内页** ft/touch/index（实测正文
+    # 「国内 国际 往返 特价机票」、默认上海→北京），点国际入口落国内页。
+    # 真实国际入口是 tiflight/book1.html（带参会 302 passport 登录）。
+    assert "m.ly.com/tiflight/book1.html" in c[("tongcheng", "h5", "intl")]["url"]
+    assert "需登录" in c[("tongcheng", "h5", "intl")]["note"]
+    # 飞猪 H5 没有国内入口，进入即淘宝登录——文案必须这么说
+    assert "淘宝登录" in c[("fliggy", "h5", "domestic")]["note"]
+    assert "淘宝登录" in c[("fliggy", "h5", "intl")]["note"]
     assert "flight.tuniu.com/intel" in c[("tuniu", "pc", "intl")]["url"]
     # 固定入口优先落到可输入航线/日期的搜索页，而不是首页。
     assert "/html5/flight/" in c[("ctrip", "h5", "domestic")]["url"]
