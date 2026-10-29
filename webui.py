@@ -17845,7 +17845,14 @@ async function loadPacing(force){
     const _ef=(ef.state==='improved'||ef.state==='recovered')?'干预有效'
      :(ef.state==='pending'?'干预待观察':(ef.state==='provisional'?'干预待复验'
      :(ef.state==='no_effect'?'干预无效':(ef.state==='regressed'?'先好后坏':'部分改善'))));
-    ev=(ev?ev+' · ':'')+_ef;
+    const _eh=String(ef.hint||'');
+    /* 渠道全貌必须上屏（r631）：后端 effect_verdict 给的是带数字的完整
+       判断（如「国际域 48%→53%；同期渠道整体 44%→84%」），而这里原先
+       只取 state，界面上只剩「部分改善」四个字。ev 走 esc() 纯文本，
+       不能塞 HTML，故只把最后那句「同期渠道整体…」摘出来拼进文本；
+       其余说明仍由行 title（adv.hint）承载。 */
+    const _m=/(同期渠道整体[^；]*)/.exec(_eh);
+    ev=(ev?ev+' · ':'')+_ef+(_m?(' · '+_m[1]):'');
    }
    /* 速览左半：分域 → 分通路（退役通路明确标「退役」，不静默消失）。
       分域样本各自独立、不互相冲抵：国内好、国际被登录墙拦住时，混成
