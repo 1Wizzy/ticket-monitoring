@@ -18227,7 +18227,7 @@ function buildForm(){if(!CFG)return;let h='',gh='';
  const glcell=(lab,id,onch,val,sub,type,unit,ph)=>'<div class="glcell"><div class="glab">'+lab+'</div>'
   +(type==='check'
     ?'<label style="display:block;margin-top:10px;font-size:13px;user-select:none;cursor:pointer">'
-     +'<input type="checkbox" class="switch" id="'+id+'"'+(val?' checked':'')+' onchange="'+onch+'">'
+     +'<input type="checkbox" class="switch" id="'+id+'"'+(val?' checked':'')+' onchange="'+esc(onch)+'">'
      +'<span class="gsub" style="display:block" id="'+id+'Txt">'+sub+'</span></label>'
     :'<div style="position:relative">'
      +'<input'+((type==='text'||type==='ro')?' type="text"':' type="number"')+' id="'+id+'" value="'+val+'"'
@@ -18236,7 +18236,7 @@ function buildForm(){if(!CFG)return;let h='',gh='';
      +(type==='text'?' style="font-size:13px;font-weight:500"':'')
      +(unit?' style="width:100%;padding-right:40px"':'')
      +((type!=='text'&&type!=='ro')?' oninput="glbCheck(this)"':'')
-     +' onchange="'+onch+'">'
+     +' onchange="'+esc(onch)+'">'
      +(unit?'<span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);'
        +'color:var(--mut);font-size:11px;pointer-events:none">'+unit+'</span>':'')
      +'</div><div class="gsub">'+sub+'</div>'
