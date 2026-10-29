@@ -78,6 +78,7 @@ def _make(dumps=None, runtime_ok=True, why="ready", with_device=True):
                            "app_boot_wait_s": 0},
                           logging.getLogger("t"))
     c._runtime = rt
+    c._skip_route = True   # 导航是 UI 交互，另有真机验证；单测只测解析
     return c, rt, dev
 
 

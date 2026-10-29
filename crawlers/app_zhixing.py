@@ -50,6 +50,8 @@ class AppZhixingCrawler(AppCrawler):
     name = "app_zhixing"
     package = _APP_PKG
     label = _APP_LABEL
+    # 测试用：跳过 UI 导航（真实采集必须为 False，否则会把上次的航线当结果）
+    _skip_route = False
 
     # ---------- 对外 ----------
     def login_url(self) -> str:
@@ -83,11 +85,16 @@ class AppZhixingCrawler(AppCrawler):
         import time
 
         started = time.time()
-        if not dev.app_start(_APP_PKG):
-            self.path_note("app-launch", "error", detail="app_start failed")
+        # 必须先按配置设航线：App 会停在上次的查询页，不设就会把
+        # 「上一次的航线」当成这次的结果（实机踩过：配置 SHA→BJS，
+        # App 还停在上海→北京，数据看起来"正常"但根本不是这一条）。
+        ok, detail = self._set_route(dev, from_city, to_city, dates)
+        if not ok:
+            self.path_note("app-route", "blocked", detail=detail,
+                           ms=int((time.time() - started) * 1000))
+            self.logger.warning("[%s] 设置航线失败：%s", self.name, detail)
             return []
-        # 冷启动要等首页绘制完；实测约 8–12s
-        time.sleep(self._boot_wait())
+
         xml = dev.dump()
         if not xml:
             self.path_note("app-dump", "timeout",
@@ -161,3 +168,36 @@ class AppZhixingCrawler(AppCrawler):
     def _boot_wait(self) -> float:
         """冷启动后等待首页的时间；测试里会被压到 0。"""
         return float(self.config.get("app_boot_wait_s", 10) or 0)
+
+    def _set_route(self, dev, from_city: str, to_city: str,
+                   dates: List[str]):
+        """按配置设置 App 内的航线与日期。"""
+        if self._skip_route:
+            return True, "skipped"
+        try:
+            from .app_zhixing_nav import set_flight_route
+            from core.citydata import CODE_NAME
+        except Exception as e:
+            return False, f"导航模块不可用：{type(e).__name__}"
+
+        def _name(code: str) -> str:
+            """三字码 → App 里显示的中文城市名。
+
+            配置里常用机场码（PEK/NRT），而 App 的城市是城市级（北京/东京）；
+            先过项目的 airport_city_code 归一，再取中文名。查不到就原样
+            传下去——宁可让它显式失败，也不要瞎猜一个城市。
+            """
+            c = (code or "").upper()
+            try:
+                from core.intl import airport_city_code
+                c = (airport_city_code(c) or c).upper()
+            except Exception:
+                pass
+            nm = CODE_NAME.get(c) or ""
+            for suf in ("市", "自治州", "地区"):
+                nm = nm.replace(suf, "")
+            return nm or code
+
+        target_date = dates[0] if dates else ""
+        return set_flight_route(dev, _name(from_city), _name(to_city),
+                                target_date, log=self.logger)
