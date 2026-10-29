@@ -117,3 +117,68 @@ def test_app_start_uses_monkey(monkeypatch):
     monkeypatch.setattr(subprocess, "run", fake)
     assert _dev().app_start("cn.suanya.zhixing") is True
     assert "monkey" in seen["cmd"]
+
+
+# ---- r630：dump 必须拿「这一屏」，不能拿旧文件冒充 ----
+def test_dump_writes_to_shell_writable_path(monkeypatch):
+    """/sdcard 是 media_rw 挂载，shell 删不掉旧文件；必须写 /data/local/tmp。"""
+    seen = []
+    xml = b'<?xml version="1.0"?><hierarchy rotation="0"></hierarchy>'
+
+    def fake(cmd, **k):
+        seen.append(list(cmd))
+        if "cat" in cmd:
+            return R(out=xml)
+        return R(out=b"UI hierchary dumped to: /data/local/tmp/tm_ui.xml")
+
+    monkeypatch.setattr(subprocess, "run", fake)
+    assert "<hierarchy" in _dev().dump()
+    dumped = [c for c in seen if "uiautomator" in c]
+    assert dumped, "没有调用 uiautomator dump"
+    assert any("/data/local/tmp/" in a for a in dumped[0]), \
+        "dump 仍写 /sdcard（旧文件删不掉，会读到上一屏）"
+
+
+def test_dump_clears_previous_file_first(monkeypatch):
+    """必须先删旧文件，否则读到的是上次的内容。"""
+    seen = []
+
+    def fake(cmd, **k):
+        seen.append(list(cmd))
+        if "cat" in cmd:
+            return R(out=b"<hierarchy></hierarchy>")
+        return R(out=b"UI hierchary dumped to: x")
+
+    monkeypatch.setattr(subprocess, "run", fake)
+    _dev().dump()
+    first_cmds = [c for c in seen[:3]]
+    assert any("rm" in c for c in first_cmds), \
+        "dump 前没有 rm 旧文件：%s" % first_cmds
+
+
+def test_dump_returns_empty_when_file_is_stale(monkeypatch):
+    """uiautomator 谎报成功但文件是 0 字节/不存在时，必须返回空而不是旧页面。"""
+    def fake(cmd, **k):
+        if "cat" in cmd:
+            return R(out=b"", err=b"No such file or directory", rc=1)
+        return R(out=b"UI hierchary dumped to: x")
+
+    monkeypatch.setattr(subprocess, "run", fake)
+    assert _dev().dump(retries=1) == ""
+
+
+def test_dump_kills_stuck_uiautomator(monkeypatch):
+    """卡死的 uiautomator 要 pkill 掉再重试，否则整条采集线永久空转。"""
+    seen = []
+
+    def fake(cmd, **k):
+        seen.append(list(cmd))
+        if "cat" in cmd:
+            return R(out=b"")
+        if "pkill" in cmd:
+            return R()
+        return R(out=b"UI hierchary dumped to: x")
+
+    monkeypatch.setattr(subprocess, "run", fake)
+    _dev().dump(retries=1)
+    assert any("pkill" in c for c in seen), "没有尝试重启卡死的 uiautomator"

@@ -21,7 +21,9 @@ _OFFLINE_MARKS = ("device offline", "device not found", "no devices",
                   "device '", "unauthorized")
 
 # UI dump 落到设备内的固定路径，避免每次随机名堆积
-_DUMP_PATH = "/sdcard/tm_ui.xml"
+# UI dump 落点：/sdcard 是 media_rw 挂载，shell 删不掉旧文件（实测 rm 返回空
+# 但 ls 文件仍在），只能换成 shell 自己的可写目录才能保证「读到的是这一屏」。
+_DUMP_TMP_PATH = "/data/local/tmp/tm_ui.xml"
 
 
 def _run(cmd, timeout, binary=False):
@@ -91,15 +93,29 @@ class AdbDevice:
 
     # ---------- 观测 ----------
     def dump(self, retries: int = 2) -> str:
-        """UI 层级 XML；拿不到返回空串（不缓存上一轮结果）。"""
+        """UI 层级 XML；拿不到返回空串（不缓存上一轮结果）。
+
+        必须校验**新鲜度与归属**。实测（MuMu Android 12）两种失效：
+          ① `/sdcard/tm_ui.xml` 属 media_rw，shell 删不掉，旧文件一直在；
+          ② uiautomator 服务卡死时照样打印 "dumped to"，但文件是 0 字节
+             或未被改写。
+        两种情况下读到的都是**上一屏**——按它点击等于在旧界面上盲操作，
+        比拿不到更危险。所以这里写到 shell 自己可写的 /data/local/tmp，
+        并且要求「文件存在 + 大小 > 0 + 内容带 <hierarchy>」，连续失败
+        就重启 uiautomator 再试一次。
+        """
         for attempt in range(retries + 1):
-            self._sh("shell", "uiautomator", "dump", _DUMP_PATH,
-                     timeout=max(self.timeout, 60))
-            xml = self._sh("shell", "cat", _DUMP_PATH) or ""
-            if "<hierarchy" in xml:
-                return xml
+            self._sh("shell", "rm", "-f", _DUMP_TMP_PATH)
+            out = self._sh("shell", "uiautomator", "dump", _DUMP_TMP_PATH,
+                           timeout=max(self.timeout, 60)) or ""
+            if "dumped to" in out:
+                xml = self._sh("shell", "cat", _DUMP_TMP_PATH) or ""
+                if "<hierarchy" in xml:
+                    return xml
+            # 卡死自愈：pkill 掉僵住的 uiautomator，下一轮重新拉服务
             if attempt < retries:
-                time.sleep(0.4)
+                self._sh("shell", "pkill", "-f", "uiautomator")
+                time.sleep(1.0)
         if not self.last_error:
             self.last_error = "dump failed"
         return ""

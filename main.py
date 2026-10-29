@@ -3356,6 +3356,20 @@ def main():
                                 "重建", new_pxy or "直连")
         except Exception as e:
             logger.warning("[热重载] 代理热更新失败: %s", e)
+        # Android 通道变化 → 同律清缓存（r629：配置页刚勾上智行 App 时
+        # 缓存里已有该渠道实例，它是按启动时「android 为空」建的，会一直
+        # 报 runtime not ready: disabled，看起来就是「勾了也不跑」）
+        try:
+            new_and = dict(cfg.get("android") or {})
+            if new_and != rt.get("android", new_and):
+                rt["android"] = new_and
+                if rt.get("clear_crawlers"):
+                    rt["clear_crawlers"]()
+                    logger.info("[热重载] Android 通道配置已变更（%s），"
+                                "爬虫实例下轮重建",
+                                "启用" if new_and.get("enabled") else "关闭")
+        except Exception as e:
+            logger.warning("[热重载] Android 通道热更新失败: %s", e)
         # 控制台端口变化 → 原地重绑（响应送回后异步切换）
         try:
             new_port = int((cfg.get("web") or {}).get("port", 8765) or 8765)
@@ -3460,6 +3474,8 @@ def main():
             # 采集代理启动态初值（热重载 diff 基准，r319）
             rt["proxy"] = str((cfg.get("crawler") or {}).get(
                 "proxy", "") or "").strip()
+            # Android 通道启动态初值（热重载 diff 基准，r629）
+            rt["android"] = dict(cfg.get("android") or {})
         except Exception as e:
             logger.warning("控制台启动异常: %s", e)
 
