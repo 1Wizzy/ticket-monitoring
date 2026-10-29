@@ -13705,6 +13705,12 @@ async function diagProbe(p){
  await probeNow(p);
  try{renderHealthDiag()}catch(e){}
 }
+/* App 渠道中文名：'智行 App' / '美团 App'。**必须在任何引用之前声明**——
+   const 有 TDZ，`typeof X!=='undefined'` 也救不了：引用点若在声明之前，
+   整页脚本抛 `Cannot access 'APP_PLAT_NAME' before initialization`，
+   S 永不初始化、全站不可用。r614 曾把它写进 renderHealth 体内（缩进 0
+   看不出来），结果健康卡之外的三处读它全是 ReferenceError。 */
+const APP_PLAT_NAME={app_zhixing:'智行 App',app_meituan:'美团 App'};
 function renderHealth(j){
  /* 已有时间线时错误体保陈旧（与 catch 分支「healthcard 可见=保陈旧不
     闪错」政策对齐）：瞬态 500 曾把整条格带掀成错误文案，下一轮询才自愈 */
@@ -13731,7 +13737,10 @@ function renderHealth(j){
   return;}
  if(_he)_he.style.display='none';
  $('healthcard').style.display='';
- const CN={'qunar':'去哪儿','fliggy':'飞猪','ctrip':'携程','tongcheng':'同程','tuniu':'途牛'};
+ /* App 渠道名与登录卡同源（r614）：这张表原先只有 5 家浏览器渠道，
+    智行 App 在健康卡里被拼成 `aapp_zhixing`（首字兜底 + 原始 id）。 */
+ const CN=Object.assign({'qunar':'去哪儿','fliggy':'飞猪','ctrip':'携程','tongcheng':'同程','tuniu':'途牛'},
+  APP_PLAT_NAME);
  const SM={'ok':'成功','part':'部分成功','fail':'失败','maint':'维护模式','empty':'空结果'};
  let h='';
  /* 渠道顺序单源：曾用 Object.keys().sort() 的字母序（ctrip→fliggy→qunar），
@@ -13854,8 +13863,26 @@ function renderHealth(j){
   }
  }catch(e){}
  if(rc)rc.textContent=(S&&S.demo?'DEMO · 合成健康 · ':'')+'近 24h 共 ' + j.rounds.length + ' 轮 · ';
- renderHealthLoginAction();renderHealthDiag();
+ /* 已启用但整轮未出现的渠道（r604）：健康卡的行来自日志里**出现过**的
+    渠道，配了却没被扫的渠道整行都不渲染——用户勾了它，卡片上却找不到它，
+    读作「这个渠道不存在」。格带图例本来就有「未扫描」格型，这里补一行
+    说明，让「配了但没跑」与「跑了但没数据」分得开。 */
+ try{
+  /* 渠道来源是后端下发的 `enabled_platforms`（用户在「用户与航线」勾过的
+     并集）。不能用前端 CFG：健康页不加载配置表单，CFG 此时是 null
+     （实测 cfgPlats=[] → 这段永不出现在页面上）。 */
+  const _cfgP=(j.enabled_platforms||[]).slice();
+  const _seen=Object.keys(j.stats||{});
+  const _miss=_cfgP.filter(p=>_seen.indexOf(p)<0);
+  if(_miss.length&&_cfgP.length){
+   h+='<div class="hmiss" title="这些渠道已在「用户与航线」勾选，但近 24h '
+     +'日志里没有它们的扫描轮次——多半是本轮被并发上限/节奏挤掉，'
+     +'或采集进程根本没跑到它们">未扫描：'
+     +_miss.map(p=>esc(CN[p]||p)).join('、')
+     +'（已勾选，但近 24h 无扫描记录）</div>';}
+ }catch(e){}
  $('hbody').innerHTML=h;
+ renderHealthLoginAction();renderHealthDiag();
  /* 健康格在手机上滚动显示最新一轮：默认滚到右端，避免最新 15h 藏在屏外 */
  if(window.innerWidth<=760){document.querySelectorAll('#hbody .hcells').forEach(x=>{try{x.scrollLeft=x.scrollWidth}catch(e){}})}
  /* 滚动暗示+弹性实判定（_hfit 单源）：可滚才挂右缘渐隐类——静态
@@ -13951,7 +13978,10 @@ async function showLog(el){let p=null,ts=null;if(el&&el.dataset){p=el.dataset.p;
  _openPvMask();}catch(e){if(_sq===_PV_SEQ)toast('请求失败','err');}finally{if(_sq===_PV_SEQ)_PV_PENDING=false;}}
 /* ===== 运行脉冲：/api/pulse（每轮每渠道行数/耗时，签派台脉搏） ===== */
 let PU=null,PU_ETAG='';
-const PCN={'qunar':'去哪儿','fliggy':'飞猪','ctrip':'携程','tongcheng':'同程','tuniu':'途牛'};
+/* 渠道名表与健康卡/节流面板同源（r615）：第三张只列 5 家的表会让
+   智行 App 在概览脉冲条 tooltip 里显示原始 id。 */
+const PCN=Object.assign({'qunar':'去哪儿','fliggy':'飞猪','ctrip':'携程','tongcheng':'同程','tuniu':'途牛'},
+ (typeof APP_PLAT_NAME!=='undefined')?APP_PLAT_NAME:{});
 async function pulse(){try{const r=await fetch('/api/pulse',{headers:PU_ETAG?{'If-None-Match':PU_ETAG}:{}});
   if(r.status===304)return;
   const _et=r.headers.get('ETag');if(_et)PU_ETAG=_et;
@@ -15788,6 +15818,135 @@ function lgFliggyModalHTML(){
   +'<div class="lglanes">'+lane(pc,'PC 飞猪账号')+lane(h5,'H5 淘宝账号')+'</div></div>';
 }
 let LG_LASTFOCUS=null;
+/* ── App 渠道登录画面（r604）──────────────────────────────────
+   目标：「像 Chrome 登录一样丝滑」——不离开浏览器就能看画面、点、输。
+   实现：250ms 拉帧（服务端内容哈希去重，静止时几乎全是 304），
+   点击按原始分辨率回传，服务端再换算。
+   不用 <canvas>：<img> 足够，且避免每帧重绘开销。 */
+let APP_LOGIN={plat:null,timer:null,smooth:false};
+function appPlatName(p){
+ /* 延时回调可能在声明块之外执行（整页脚本已结束），此时裸引用会抛
+    「APP_PLAT_NAME is not defined」。与另三处 CN/PCN 表同一守卫写法。 */
+ const M=(typeof APP_PLAT_NAME!=='undefined')?APP_PLAT_NAME:{};
+ return M[p]||p}
+function appLoginOpen(plat){
+ const m=$('lgModal'),k=$('lgMask');if(!m||!k)return;
+ APP_LOGIN.plat=plat;LG_LASTFOCUS=document.activeElement;
+ m.innerHTML='<div class="lgmodal-h"><b>'+he(appPlatName(plat))+' 登录</b>'
+  +'<span>直接在画面里操作</span>'
+  +'<button type="button" class="x" onclick="appLoginClose()" aria-label="关闭">✕</button></div>'
+  +'<div class="lgmodal-b">'
+  +'<div class="lgmodal-note">在下面的手机画面里点击、输入手机号与验证码；完成后点「我已登录完成」。</div>'
+  +'<div class="appscr" id="appScr"><div class="appscr-wait" id="appWait">正在启动 App…</div>'
+  +'<img id="appImg" alt="App 实时画面" style="display:none">'
+  +'<div class="appscr-hit" id="appHit" title="点击操作"></div></div>'
+  +'<div class="appscr-bar"><span class="grow" id="appTip">准备中</span>'
+  +'<button class="btn2" id="appTextBtn" onclick="appLoginText()">输入文字</button>'
+  +'<button class="btn2" onclick="appLoginKey(\'KEYCODE_DEL\')">退格</button>'
+  +'<button class="btn2" onclick="appLoginFinish(this)">我已登录完成</button></div>'
+  +'</div>';
+ m.classList.add('open');k.classList.add('open');
+ if(typeof srxLockBody==='function')srxLockBody();
+ appLoginStart(plat);
+}
+function appLoginClose(){
+ appLoginStop();
+ const m=$('lgModal'),k=$('lgMask');
+ if(m){m.classList.remove('open')}
+ if(k){k.classList.remove('open')}
+ if(typeof srxUnlockBody==='function')srxUnlockBody();
+ APP_LOGIN.plat=null;
+ if(LG_LASTFOCUS&&LG_LASTFOCUS.focus)try{LG_LASTFOCUS.focus()}catch(e){}
+}
+function appLoginStop(){
+ if(APP_LOGIN.timer){clearTimeout(APP_LOGIN.timer);APP_LOGIN.timer=null}
+}
+function appLoginTip(t){const e=$('appTip');if(e)e.textContent=t}
+function appLoginStart(plat){
+ fetch('/api/app-login',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({plat:plat})})
+  .then(r=>r.json()).then(j=>{
+   if(!j.ok){appLoginTip('启动失败：'+(j.err||'未知原因'));return}
+   appLoginTip('已启动，正在取画面…');
+   appLoginLoop(plat);
+  }).catch(e=>appLoginTip('启动失败：'+e));
+}
+function appLoginLoop(plat){
+ if(APP_LOGIN.plat!==plat)return;
+ const img=$('appImg'),wait=$('appWait');
+ fetch('/api/app-login/frame?plat='+encodeURIComponent(plat),{cache:'no-store'})
+  .then(r=>{
+   if(r.status===304)return null;              /* 画面没变：复用当前帧 */
+   if(!r.ok)throw new Error('HTTP '+r.status);
+   return r.blob();
+  })
+  .then(blob=>{
+   if(blob&&img){
+    if(APP_LOGIN.url)URL.revokeObjectURL(APP_LOGIN.url);
+    APP_LOGIN.url=URL.createObjectURL(blob);
+    img.src=APP_LOGIN.url;
+    img.style.display='block';
+    if(wait)wait.style.display='none';
+    /* 取到首帧就把提示换掉：停在「正在取画面…」会让用户以为卡住了 */
+    APP_LOGIN.got=1;
+    appLoginTip('画面已连接 · 点画面即可操作');
+   }
+  })
+  .catch(()=>{})
+  .finally(()=>{
+   if(APP_LOGIN.plat===plat)APP_LOGIN.timer=setTimeout(()=>appLoginLoop(plat),250);
+  });
+}
+function appLoginTap(ev){
+ const plat=APP_LOGIN.plat,img=$('appImg');if(!plat||!img)return;
+ const r=img.getBoundingClientRect();
+ /* 只在图像实际渲染区域内响应：contain 会留黑边，点黑边不该算数 */
+ const nw=img.naturalWidth||r.width,nh=img.naturalHeight||r.height;
+ if(!nw||!nh)return;
+ const scale=Math.min(r.width/nw,r.height/nh);
+ const dw=nw*scale,dh=nh*scale;
+ const ox=r.left+(r.width-dw)/2,oy=r.top+(r.height-dh)/2;
+ const fx=ev.clientX-ox,fy=ev.clientY-oy;
+ if(fx<0||fy<0||fx>dw||fy>dh)return;
+ const x=Math.round(fx/scale),y=Math.round(fy/scale);
+ fetch('/api/app-login/tap',{method:'POST',
+   headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({plat:plat,x:x,y:y})})
+  .then(r=>r.json()).then(j=>{if(!j.ok)appLoginTip(j.err||'点击失败')})
+  .catch(()=>{});
+}
+function appLoginText(){
+ const plat=APP_LOGIN.plat;if(!plat)return;
+ const t=prompt('输入要填进手机的内容（手机号 / 验证码）：');
+ if(t===null||t==='')return;
+ fetch('/api/app-login/input',{method:'POST',
+   headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({plat:plat,text:t})})
+  .then(r=>r.json()).then(j=>{appLoginTip(j.ok?'已输入':'输入失败：'+(j.err||''))})
+  .catch(()=>{});
+}
+function appLoginKey(key){
+ const plat=APP_LOGIN.plat;if(!plat)return;
+ fetch('/api/app-login/key',{method:'POST',
+   headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({plat:plat,key:key})}).catch(()=>{});
+}
+function appLoginFinish(btn){
+ const plat=APP_LOGIN.plat;if(!plat)return;
+ if(btn){btn.disabled=true;btn.textContent='正在保存…'}
+ fetch('/api/app-login/finish',{method:'POST',
+   headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({plat:plat})})
+  .then(r=>r.json()).then(j=>{
+   appLoginTip(j.ok?('完成：'+(j.detail||'')):('未完成：'+(j.err||'')));
+   if(j.ok)setTimeout(()=>{appLoginClose();if(typeof refreshChannelState==='function')refreshChannelState(true)},1200);
+   else if(btn){btn.disabled=false;btn.textContent='我已登录完成'}
+  }).catch(e=>{appLoginTip('失败：'+e);
+   if(btn){btn.disabled=false;btn.textContent='我已登录完成'}});
+}
+document.addEventListener('click',e=>{
+ const hit=e.target&&e.target.id==='appHit';if(hit)appLoginTap(e);
+},true);
 function lgRefreshFliggy(){const m=$('lgModal');if(!m||!m.classList.contains('open'))return;m.innerHTML=lgFliggyModalHTML()}
 function lgOpenFliggy(){
  const m=$('lgModal'),k=$('lgMask');if(!m||!k)return;
@@ -16059,9 +16218,9 @@ async function loginStart(p,b,slot){
   const j=await r.json();
   if(j.ok){const nm=key==='fliggy_h5'?'飞猪 H5（淘宝）':(key==='fliggy'?'飞猪 PC':(LOGIN_CN[p]||p));
    toast('🔐 '+nm+' 登录窗口已弹出——请在窗口完成登录，回这里点「我已登录完成」','ok');}
-  else toast(j.kind==='no_gui'
-    ?('⚠ 这台服务没有图形界面，弹不出登录窗口。请在桌面环境运行后登录，或把 user_data 拷过来；详情见「渠道登录」每张卡的说明。')
-    :(heFriendly(j.err)||'启动失败'),'err');
+  else if(j.kind==='no_gui')toast('⚠ 这台服务没有图形界面，弹不出登录窗口。请在桌面环境运行后登录，或把 user_data 拷过来；详情见「渠道登录」每张卡的说明。','err');
+  else if(j.kind==='window_failed')toast('⚠ '+(j.err||'登录窗口没能打开')+'（可在「渠道健康 → 诊断卡 → 自检」确认浏览器是否可用）','err');
+  else toast(heFriendly(j.err)||'启动失败','err');
  }catch(e){toast('请求失败','err');}
  b.classList.remove('busy');setTimeout(loadLogin,400);}
 async function loginFinish(plat,b,slot){if(b&&b.classList.contains('busy'))return;
@@ -17374,7 +17533,10 @@ async function loadPacing(force){
   const j=await (await fetch('/api/pacing',{cache:'no-store'})).json();
   _paceSnapAt=Date.now();
   if(!j.ok){box.innerHTML='<div class="pace-empty">读取失败：'+esc(j.err||'未知错误')+'</div>';return;}
-  const CN={qunar:'去哪儿',fliggy:'飞猪',ctrip:'携程',tongcheng:'同程',tuniu:'途牛'};
+  /* App 渠道名与登录卡同源（r614）：与健康卡那张表同一个理由——
+     只列 5 家浏览器渠道会让智行 App 在节流面板上显示原始 id。 */
+  const CN=Object.assign({qunar:'去哪儿',fliggy:'飞猪',ctrip:'携程',tongcheng:'同程',tuniu:'途牛'},
+   (typeof APP_PLAT_NAME!=='undefined')?APP_PLAT_NAME:{});
   const q=j.quiet||{},lr=j.last_round||{},ch=j.channels||{},cf=j.cfg||{};
   /* 干预成效（{plat: {has,before,after,after_n,action,regressed}}）：原本只在
      点开「溯源」后才看得到。最高准则是「让用户做能提高成功率的操作」——
@@ -17997,7 +18159,11 @@ async function showTrace(p){
     +(_effSc?('<br><span style="color:var(--mut)">本次干预针对：'+esc(_effSc)+'</span>'):'')
     +'</div>'):'';
   const tr=(eff.trend||[]).map(t=>((t.rate==null)?'—':(Math.round(t.rate*100)+'%'))).join(' · ');
-  const trLine=tr?('<div style="margin-top:2px;font-size:11px;color:var(--mut)">干预后每 30 分钟：'+esc(tr)+(eff.regressed?' <span style="color:var(--red)">（最近回落）</span>':'')+'</div>'):'';
+  /* 域标签（r618）：趋势与上面的前后对比现在同一边界。不标出来的话，
+     「本次干预针对：国际域」下面一串百分比仍会被读成渠道级。 */
+  const _trScope=(eff.scope==='dom'||eff.scope==='intl')
+    ?((eff.scope==='intl'?'国际':'国内')+'域') : '渠道';
+  const trLine=tr?('<div style="margin-top:2px;font-size:11px;color:var(--mut)">干预后每 30 分钟（'+_trScope+'）：'+esc(tr)+(eff.regressed?' <span style="color:var(--red)">（最近回落）</span>':'')+'</div>'):'';
   out.innerHTML=effLine+trLine+'<div style="margin-top:6px;font-size:11px;color:var(--mut)">'+esc(p)+' 最近尝试（时间 · 入口 · 状态 · 证据）</div>'+(rows||'<div style="color:var(--mut)">无记录</div>')
    +'<div style="margin-top:6px;font-size:11px;color:var(--mut)">'+esc(p)+' 干预记录（时间 · 动作 · 结果 · 耗时）</div>'+(ivs||'<div style="color:var(--mut)">暂无干预</div>');
  }catch(e){out.textContent='溯源失败：'+e;}
@@ -24360,7 +24526,11 @@ def _start_login(plat: str, slot: str = "") -> dict:
             _State.login_errors[key] = _msg
             return {"ok": False, "err": _msg, "kind": "no_gui"}
         evt = threading.Event()
-        session = {"evt": evt, "done": threading.Event(), "saving": False,
+        # ready（r620）：线程里「登录页真的载入完成」才置位。接口据此
+        # 区分「窗口开了」与「根本没开成」，不再一律回报「已弹出」。
+        ready = threading.Event()
+        session = {"evt": evt, "done": threading.Event(),
+                   "ready": ready, "saving": False,
                    "saved": False, "error": ""}
         _State.login_errors.pop(key, None)
         _State.login_sessions[key] = session
@@ -24375,8 +24545,13 @@ def _start_login(plat: str, slot: str = "") -> dict:
             # 锁键用平台名（采集侧 channel_slot(c.name)）；用 profile_name
             # 会和采集侧的键分叉。测试替身没有 .name 时回退到槽位平台。
             _lock_key = str(meta.get("plat") or key)
+            # 排队标记（r620）：采集正占着这把锁时，这里是**正常等待**，
+            # 不是「窗口打不开」。等待方据此不判失败，也不会误报原因。
+            session["queued"] = True
             with channel_slot(_lock_key):
-                confirmed = crawler._login_window(evt, 0, timeout_s=600)
+                session["queued"] = False
+                confirmed = crawler._login_window(
+                    evt, 0, timeout_s=600, ready_evt=session.get("ready"))
             if not confirmed and not evt.is_set():
                 raise RuntimeError("登录窗口已关闭，尚未确认完成")
             session["saved"] = True
@@ -24447,7 +24622,17 @@ def _start_login(plat: str, slot: str = "") -> dict:
                                  args=(key,), daemon=True,
                                  name="slot-verify").start()
         except Exception as e:
-            session["error"] = "会话保存未完成，请重试登录；详见本机日志"
+            # 原因分层（r620）：ready 未置位 = 窗口根本没开成，把真实异常
+            # 带给点击者（这是 #10 的核心：不能只说「详见日志」）；
+            # 开过之后才失败（关窗未确认 / 保存出错）仍用中文安全摘要，
+            # 不把内部堆栈甩到界面上。
+            _was_open = bool(session.get("ready") is not None
+                             and session["ready"].is_set())
+            if _was_open:
+                session["error"] = "会话保存未完成，请重试登录；详见本机日志"
+            else:
+                session["error"] = "登录窗口没能打开：%s" % (
+                    (str(e)[:160] or type(e).__name__),)
             _State.login_errors[key] = session["error"]
             _State.login_pending.pop(key, None)
             _State.logger.warning("[登录] %s 登录窗口异常: %s", key, e)
@@ -24458,6 +24643,26 @@ def _start_login(plat: str, slot: str = "") -> dict:
             session["done"].set()
 
     threading.Thread(target=_run, daemon=True).start()
+    # 「已弹出」必须是事实（r620 · GitHub #10）：起线程 ≠ 窗口打开，
+    # Playwright 起不来时那一步永远到不了。这里等 ready（最多 45 秒，
+    # goto 自带 40 秒超时），拿到才回报成功；线程先失败就如实回报原因。
+    _deadline = _t.time() + 45
+    _ok_ready = ready.wait(0.5)
+    while not _ok_ready and _t.time() < _deadline:
+        if session.get("done").is_set():
+            break            # 线程已结束（失败或关窗），不再等
+        _ok_ready = ready.wait(0.5)
+    if not _ok_ready:
+        with _State.lock:
+            _err = str(session.get("error") or "")
+            if _State.login_sessions.get(key) is session:
+                _State.login_sessions.pop(key, None)
+        _msg = (_err or "登录窗口未能在 45 秒内打开（可能是缺少浏览器内核、"
+                "显示服务不可用，或该渠道 profile 正被采集占用）；"
+                "详见本机日志 logs/monitor.log")
+        _State.login_errors[key] = _msg
+        _State.logger.warning("[登录] %s 登录窗口未能打开：%s", key, _msg)
+        return {"ok": False, "err": _msg, "kind": "window_failed"}
     _State.logger.info("[登录] 已弹出 %s 登录窗口", key)
     return {"ok": True, "plat": meta["plat"], "slot": key}
 
