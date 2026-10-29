@@ -100,6 +100,17 @@ class AppZhixingCrawler(AppCrawler):
             self.logger.warning("[%s] 设置航线失败：%s", self.name, detail)
             return []
 
+        # 长窗口日历的入口在**首页的日期行**，一旦点了「机票查询」进了
+        # 列表页就没有日历图标了（实测：列表页只有 8 天日期条、无日历
+        # 入口）。所以必须在导航完成后、任何进一步跳转之前读弹层。
+        long_xml = self._try_long_calendar(dev)
+        if long_xml:
+            out = self._emit_from_dialog_by_xml(
+                long_xml, from_city, to_city, dates,
+                int((time.time() - started) * 1000))
+            if out:
+                return out
+
         xml = dev.dump()
         if not xml:
             self.path_note("app-dump", "timeout",
@@ -141,15 +152,22 @@ class AppZhixingCrawler(AppCrawler):
 
         # 主动打开「选择日期」弹层再读一次：弹层是跨月长窗口日历，
         # 首页条只有 8 天。打开失败不影响结果，回落到首页条解析。
-        long_xml = self._try_long_calendar(dev)
-        if long_xml:
-            out = self._emit_calendar(long_xml, from_city, to_city, dates,
-                                      int((time.time() - started) * 1000))
-            if out:
-                return out
-
         return self._emit_calendar(xml, from_city, to_city, dates,
                                    int((time.time() - started) * 1000))
+
+    def _emit_from_dialog_by_xml(self, xml: str, from_city: str, to_city: str,
+                                 dates: List[str], ms: int):
+        """从长窗口日历页 XML 产出；不是日历页时返回 []。"""
+        from .app_zhixing_calendar import (has_calendar_dialog,
+                                           parse_date_dialog)
+        if not has_calendar_dialog(xml):
+            return []
+        rows = parse_date_dialog(xml)
+        if not rows:
+            self.path_note("app-calendar-dialog", "parse_error",
+                           detail="日历弹层未解析出格子", ms=ms)
+            return []
+        return self._emit_from_dialog(rows, from_city, to_city, dates, ms)
 
     def _try_long_calendar(self, dev) -> str:
         """打开日期弹层并取页面；失败返回空串（不抛）。"""
@@ -340,5 +358,7 @@ class AppZhixingCrawler(AppCrawler):
             return nm or code
 
         target_date = dates[0] if dates else ""
+        # 停在首页：下一步要读「选择日期」长窗口日历，进列表页就没入口了
         return set_flight_route(dev, _name(from_city), _name(to_city),
-                                target_date, log=self.logger)
+                                target_date, log=self.logger,
+                                stop_before_search=True)

@@ -113,7 +113,12 @@ def close_date_dialog(dev) -> bool:
 
 
 def set_flight_route(dev, from_name: str, to_name: str, date_ymd: str,
-                     log=None) -> tuple:
+                     log=None, stop_before_search: bool = False) -> tuple:
+    """设好起降与日期；stop_before_search=True 时停在首页不点查询。
+
+    停在首页是为了先读「选择日期」长窗口日历——一旦点了「机票查询」
+    进到列表页，日历入口就没了（实测列表页只有 8 天日期条）。
+    """
     """在智行首页设置航线与日期并发起查询。返回 (ok, detail)。"""
 
     def say(msg):
@@ -174,6 +179,12 @@ def set_flight_route(dev, from_name: str, to_name: str, date_ymd: str,
     if not ok:
         # 日期设不上不算致命：日历条覆盖范围有限，仍可用当前日期查询
         say(f"[warn] {detail}")
+
+    if stop_before_search:
+        # 关掉日期弹层（_pick_date 可能会打开它），留在首页
+        close_date_dialog(dev)
+        time.sleep(1)
+        return True, "已设好航线（停在首页）"
 
     xml = dev.dump()
     ns = nodes(xml)
