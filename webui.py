@@ -17278,12 +17278,17 @@ async function pathPreview(kind,inp,verbose){
  }catch(e){if(pv)pv.innerHTML='<span class="warn">校验请求失败（服务不可达）</span>';}}
 /* 冷却剩余时长（r632）：原先一律「分:秒」，而 breaker.cap_s 上限是 24 小时，
    于是长冷却显示成 `1440:00` / `480:00` / `120:00`——不是任何人读得懂的格式，
-   用户判断不出「还要等 40 分钟还是 8 小时」。≥1 小时改「N 小时 M 分」，
-   1 小时内仍是「分:秒」（短冷却按秒读更精确）。 */
+   用户判断不出「还要等 40 分钟还是 8 小时」。
+   而且 `15:00` 这种写法在冷却语境里还会被读成**时刻**（15 点整），
+   18303 行就为此绕开本函数改用「N 分钟」。这里统一带单位，消除歧义：
+   ≥1 小时「N 小时 M 分」；≥1 分钟「N 分 S 秒」（整分省略秒）；更短「N 秒」。
+   没有测试或文档依赖旧的 `m:ss` 形状（已 grep 确认）。 */
 function _paceLeft(s){s=Math.max(0,parseInt(s)||0);
  if(s>=3600){const h=Math.floor(s/3600),m=Math.floor(s%3600/60);
   return h+' 小时'+(m?(' '+m+' 分'):'');}
- return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
+ const m2=Math.floor(s/60),r2=s%60;
+ if(m2)return m2+' 分'+(r2?(' '+r2+' 秒'):'');
+ return r2+' 秒';}
 /* "YYYY-MM-DD HH:MM:SS" → 距今多少分钟（本地时区，与后端 _age_min 同口径）。
    解析失败返回 null，调用方回落显示原始时间戳，不臆造时长。 */
 function _minsAgo(ts){

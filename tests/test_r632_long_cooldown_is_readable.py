@@ -95,13 +95,20 @@ def test_long_cooldown_is_readable():
         "8 小时冷却没有按「N 小时」呈现：%s" % joined[:200])
 
 
-def test_short_cooldown_keeps_minute_second():
-    """1 小时以内仍用「分:秒」——短冷却按秒读更精确。"""
+def test_short_cooldown_has_units_not_clock_shape():
+    """短冷却也要带单位：`15:00` 会被读成时刻（15 点整）。
+
+    r632 第二版：不仅 ≥1 小时，<1 小时也一律带单位。
+    18303 行的注释记录过这个歧义——那里宁可绕开本函数改写成
+    「N 分钟」，说明 `m:ss` 在冷却语境里确实误导。
+    """
     src = open(os.path.join(ROOT, "webui.py"), encoding="utf-8",
                newline="").read()
     i = src.index("function _paceLeft(s){")
-    seg = src[i:i + 400]
+    seg = src[i:i + 500]
     assert "3600" in seg and "' 小时'" in seg, (
-        "冷却格式化没有按 1 小时分档：%s" % seg[:200])
-    assert "padStart(2,'0')" in seg, (
-        "短冷却的「分:秒」格式被去掉了：%s" % seg[:200])
+        "冷却格式化没有按 1 小时分档：%s" % seg[:220])
+    assert "' 分'" in seg and "' 秒'" in seg, (
+        "分钟/秒档没有单位词：%s" % seg[:220])
+    assert "padStart(2,'0')" not in seg, (
+        "仍在拼 `m:ss` 时钟形状（会被读成时刻）：%s" % seg[:220])
