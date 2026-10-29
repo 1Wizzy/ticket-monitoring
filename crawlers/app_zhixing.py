@@ -106,12 +106,20 @@ class AppZhixingCrawler(AppCrawler):
         # 必须先按配置设航线：App 会停在上次的查询页，不设就会把
         # 「上一次的航线」当成这次的结果（实机踩过：配置 SHA→BJS，
         # App 还停在上海→北京，数据看起来"正常"但根本不是这一条）。
-        ok, detail = self._set_route(dev, from_city, to_city, dates)
-        if not ok:
-            self.path_note("app-route", "blocked", detail=detail,
-                           ms=int((time.time() - started) * 1000))
-            self.logger.warning("[%s] 设置航线失败：%s", self.name, detail)
-            return []
+        # 但航线没变时跳过：实测 set_flight_route 占整轮 86%（34.4s/40s），
+        # 其中大半是重启 App + 重设同一对城市，纯属白跑。
+        same = self._route_unchanged(dev, from_city, to_city)
+        if same:
+            self.logger.info("[%s] 航线未变（%s→%s），跳过重设",
+                             self.name, from_city, to_city)
+        else:
+            ok, detail = self._set_route(dev, from_city, to_city, dates)
+            if not ok:
+                self.path_note("app-route", "blocked", detail=detail,
+                               ms=int((time.time() - started) * 1000))
+                self.logger.warning("[%s] 设置航线失败：%s", self.name, detail)
+                return []
+            self._remember_route(from_city, to_city)
 
         # 长窗口日历的入口在**首页的日期行**，一旦点了「机票查询」进了
         # 列表页就没有日历图标了（实测：列表页只有 8 天日期条、无日历
@@ -122,6 +130,8 @@ class AppZhixingCrawler(AppCrawler):
                 long_xml, from_city, to_city, dates,
                 int((time.time() - started) * 1000))
             if out:
+                # 收尾把 App 留在首页，下一轮才能走"航线未变"快路径
+                self._park_at_home(dev)
                 return out
 
         xml = dev.dump()
@@ -167,6 +177,24 @@ class AppZhixingCrawler(AppCrawler):
         # 首页条只有 8 天。打开失败不影响结果，回落到首页条解析。
         return self._emit_calendar(xml, from_city, to_city, dates,
                                    int((time.time() - started) * 1000))
+
+    def _park_at_home(self, dev):
+        """把 App 留在首页，方便下一轮跳过重设航线。
+
+        实测：读完长窗口后 App 停在「选择日期」透明 Activity，下一轮
+        首页判据为假 → 又要重启 App + 重设城市，白花 35s（占整轮 86%）。
+        收尾时退回到首页，下一轮就能走"航线未变"的快路径。
+        """
+        try:
+            for _ in range(3):
+                xml = dev.dump()
+                if "机票查询" in xml and "Search_Calendar_Dialog" not in xml:
+                    return True
+                dev.keyevent("KEYCODE_BACK")
+                time.sleep(1.5)
+        except Exception:
+            pass
+        return False
 
     def _emit_from_dialog_by_xml(self, xml: str, from_city: str, to_city: str,
                                  dates: List[str], ms: int):
@@ -341,6 +369,31 @@ class AppZhixingCrawler(AppCrawler):
         """冷启动后等待首页的时间；测试里会被压到 0。"""
         return float(self.config.get("app_boot_wait_s", 10) or 0)
 
+    def _remember_route(self, from_city: str, to_city: str):
+        """记下本轮设过的航线（仅供日志/诊断；判据始终以界面为准）。"""
+        self._last_route = (from_city, to_city)
+
+    def _route_unchanged(self, dev, from_city: str, to_city: str) -> bool:
+        """App 当前是否已经停在目标航线上（按界面文案判，不靠记忆）。
+
+        为什么按界面判而不是记在上次调用里：App 可能被用户手动改过、
+        被系统回收后恢复成别的航线；只有屏幕上的字才是事实。
+        """
+        try:
+            from .app_zhixing_nav import _city_row, nodes
+            xml = dev.dump()
+            if not xml or "机票查询" not in xml:
+                return False
+            ns = nodes(xml)
+            cur_from = _city_row(ns, "from")
+            cur_to = _city_row(ns, "to")
+            if cur_from is None or cur_to is None:
+                return False
+            return (cur_from.text == self._city_name(from_city)
+                    and cur_to.text == self._city_name(to_city))
+        except Exception:
+            return False   # 判不了就当"需要重设"，宁慢勿错
+
     def _set_route(self, dev, from_city: str, to_city: str,
                    dates: List[str]):
         """按配置设置 App 内的航线与日期。"""
@@ -348,30 +401,35 @@ class AppZhixingCrawler(AppCrawler):
             return True, "skipped"
         try:
             from .app_zhixing_nav import set_flight_route
-            from core.citydata import CODE_NAME
         except Exception as e:
             return False, f"导航模块不可用：{type(e).__name__}"
 
-        def _name(code: str) -> str:
-            """三字码 → App 里显示的中文城市名。
-
-            配置里常用机场码（PEK/NRT），而 App 的城市是城市级（北京/东京）；
-            先过项目的 airport_city_code 归一，再取中文名。查不到就原样
-            传下去——宁可让它显式失败，也不要瞎猜一个城市。
-            """
-            c = (code or "").upper()
-            try:
-                from core.intl import airport_city_code
-                c = (airport_city_code(c) or c).upper()
-            except Exception:
-                pass
-            nm = CODE_NAME.get(c) or ""
-            for suf in ("市", "自治州", "地区"):
-                nm = nm.replace(suf, "")
-            return nm or code
-
         target_date = dates[0] if dates else ""
         # 停在首页：下一步要读「选择日期」长窗口日历，进列表页就没入口了
-        return set_flight_route(dev, _name(from_city), _name(to_city),
+        return set_flight_route(dev, self._city_name(from_city),
+                                self._city_name(to_city),
                                 target_date, log=self.logger,
                                 stop_before_search=True)
+
+    @staticmethod
+    def _city_name(code: str) -> str:
+        """三字码 → App 里显示的中文城市名。
+
+        配置里常用机场码（PEK/NRT），而 App 的城市是城市级（北京/东京）；
+        先过项目的 airport_city_code 归一，再取中文名。查不到就原样
+        传下去——宁可让它显式失败，也不要瞎猜一个城市。
+        """
+        try:
+            from core.citydata import CODE_NAME
+        except Exception:
+            return code
+        c = (code or "").upper()
+        try:
+            from core.intl import airport_city_code
+            c = (airport_city_code(c) or c).upper()
+        except Exception:
+            pass
+        nm = CODE_NAME.get(c) or ""
+        for suf in ("市", "自治州", "地区"):
+            nm = nm.replace(suf, "")
+        return nm or code
