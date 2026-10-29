@@ -909,7 +909,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest \
   （bucket / rate / n）与 `regressed`。先好后坏（曾有 ≥70% 窗口、最近
   窗口 <40%）直接判 `regressed`，一致性不成立，建议复查会话/入口。
   - 实现位置（2026-10-27 核对）：`core/storage.py::intervention_effect`，
-    分桶 `strftime('%s', ...) / 1800`（30 分钟），**最多 16 个桶**（`LIMIT 16`，约 8 小时）；
+    分桶 `strftime('%s', ...) / 1800`（30 分钟），**最多 16 个桶**（`trend[:16]`，约 8 小时；r618 起分域切片在取数后做，桶上限由切片截断承担，**不是** SQL 的 `LIMIT 16`）；
     判定 `any(rate>=0.7) and last<0.4`，与上文 70%/40% 一致。
   - 超出 8 小时的回落不会进入 `trend`——时间更早的"先好后坏"要靠 24h 的 before/after 口径判断。
 - **样本门槛**：干预后 <3 个样本只报 `provisional`（待复验），

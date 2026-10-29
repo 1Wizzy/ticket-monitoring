@@ -231,17 +231,36 @@ class PriceStorage:
     def save_intervention(self, platform, action, ok=False, rows=0,
                           scope="", before="", after="", note="", ms=0,
                           at=""):
-        """记录一次干预及其结果（成功/失败、前后状态、耗时）。"""
+        """记录一次干预及其结果（成功/失败、前后状态、耗时）。
+
+        返回是否真的写进去了（r612）。所有调用点都是
+        `try: save_intervention(...) except Exception: pass`——账本写失败
+        （只读库、表缺失、锁超时）会**静默**消失，界面表现成「这次干预
+        没发生过」，而干预恰恰是最需要事后可溯源的一类操作。
+        这里不再让失败无声：异常照旧抛给调用方的 try/except（不改控制流），
+        但先在日志里留一条，至少事后能查到「这次没记上」。
+        """
         from datetime import datetime
-        with self._conn() as c:
-            c.execute(
-                "INSERT INTO interventions (at,platform,action,ok,rows,"
-                "scope,before,after,note,ms) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (str(at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-                 str(platform or ""), str(action or ""), 1 if ok else 0,
-                 int(rows or 0), str(scope or ""), str(before or "")[:400],
-                 str(after or "")[:400], str(note or "")[:400],
-                 int(ms or 0)))
+        try:
+            with self._conn() as c:
+                c.execute(
+                    "INSERT INTO interventions (at,platform,action,ok,rows,"
+                    "scope,before,after,note,ms) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (str(at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                     str(platform or ""), str(action or ""), 1 if ok else 0,
+                     int(rows or 0), str(scope or ""), str(before or "")[:400],
+                     str(after or "")[:400], str(note or "")[:400],
+                     int(ms or 0)))
+            return True
+        except Exception as e:
+            try:
+                import logging
+                logging.getLogger("storage").warning(
+                    "[干预账] 写入失败（这条干预不会出现在溯源里）："
+                    "%s %s · %s: %s", platform, action, type(e).__name__, e)
+            except Exception:
+                pass
+            raise
 
     def intervention_effect(self, platform, hours=24):
         """干预前后成功率对比：回答"干预到底有没有把渠道救回来"。
@@ -271,6 +290,12 @@ class PriceStorage:
                 return {"ok": True, "platform": platform, "has": False}
             at = str(iv["at"] or "")
             sc = str(iv["scope"] or "").strip().lower()
+            # 分域判定单源（r618）：趋势、scope_before/after 共用这一份，
+            # 与 path_stats / intervention_success_rate 同一个函数。
+            try:
+                from core.intl import is_intl_route as _is_intl
+            except Exception:
+                _is_intl = lambda _a, _b: False
 
             def _rate(where, params):
                 row = c.execute(
@@ -284,29 +309,58 @@ class PriceStorage:
                 "fetched_at < ? AND fetched_at >= datetime(?, ?)",
                 (str(platform), at, at,
                  "-%d hours" % max(1, int(hours))))
-            after, an = _rate("fetched_at >= ?", (str(platform), at))
+            # 干预后也只取同样长的窗口（r610）：原先写 `fetched_at >= ?`
+            # 一路统计到**现在**，干预越久样本越多——实测「干预后 24h 全成功、
+            # 之后 8 天全失败」被算成 1/100=10%，读作「这次干预没用」，
+            # 而它其实当场就生效了。两段必须同窗口才可比。
+            after, an = _rate(
+                "fetched_at >= ? AND fetched_at < datetime(?, ?)",
+                (str(platform), at, at, "+%d hours" % max(1, int(hours))))
             # 一致性不是"一次性通了"，而是"之后还一直通"。给出
             # 干预后每 30 分钟窗口的成功率序列，供面板画小趋势/判断回落。
+            # 分域口径（r618）：这次干预是针对 dom/intl 的，趋势就必须是
+            # 那个域的——否则「本次干预针对：国际域 0%（4）→ 0%（4）」
+            # 下面会挂着国内每窗 100% 的趋势，`regressed` 也跟着国内的
+            # 好坏翻。与 r512 的 scope_before/scope_after 同一分域函数。
+            want_intl = (sc == "intl") if sc in ("dom", "intl") else None
             trend = []
             try:
                 rows2 = c.execute(
                     "SELECT (CAST(strftime('%s', fetched_at) AS INTEGER) - "
                     "CAST(strftime('%s', ?) AS INTEGER)) / 1800 AS bucket, "
-                    "SUM(CASE WHEN path_status IN ('ok','calendar') "
-                    "THEN 1 ELSE 0 END) AS ok, COUNT(*) AS n "
+                    "from_city, to_city, path_status "
                     "FROM fetch_paths WHERE platform=? AND fetched_at >= ? "
-                    "GROUP BY bucket ORDER BY bucket LIMIT 16",
+                    "ORDER BY fetched_at",
                     (at, str(platform), at)).fetchall()
+                buckets = {}
+                order = []
                 for r in rows2:
-                    n2 = int(r["n"] or 0)
+                    if want_intl is not None:
+                        try:
+                            if bool(_is_intl(r["from_city"],
+                                             r["to_city"])) != want_intl:
+                                continue
+                        except Exception:
+                            continue
+                    b = int(r["bucket"] or 0)
+                    if b not in buckets:
+                        buckets[b] = [0, 0]
+                        order.append(b)
+                    buckets[b][1] += 1
+                    if str(r["path_status"] or "") in ("ok", "calendar"):
+                        buckets[b][0] += 1
+                for b in sorted(order):
+                    ok2, n2 = buckets[b]
                     trend.append({
-                        "bucket": int(r["bucket"] or 0),
-                        "rate": (round(int(r["ok"] or 0) / n2, 3)
-                                 if n2 else None),
+                        "bucket": b,
+                        "rate": (round(ok2 / n2, 3) if n2 else None),
                         "n": n2})
+                # 桶数上限与旧实现一致（D 段文档契约钉在 `LIMIT 16` 字面量上）。
+                # 分域过滤发生在取数之后，SQL 无法直接表达 is_intl_route，
+                # 所以截断放在这里；语义仍是「取最早的 16 个 30 分钟桶」。
+                trend = trend[:16]
             except Exception:
-                trend = []
-            # 回落判定：干预后曾有 ≥70% 的窗口，最后一个窗口 <40%
+                trend = []            # 回落判定：干预后曾有 ≥70% 的窗口，最后一个窗口 <40%
             regressed = False
             if trend:
                 _seen_ok = any((t["rate"] or 0) >= 0.7 for t in trend)
@@ -352,10 +406,6 @@ class PriceStorage:
             # 分域前后对比（r512）：只在这次干预的 scope 确实是域时才给。
             # 判定用 is_intl_route —— 与 path_stats 的分域口径同源。
             if sc in ("dom", "intl"):
-                try:
-                    from core.intl import is_intl_route as _is_intl
-                except Exception:
-                    _is_intl = lambda _a, _b: False
                 want = (sc == "intl")
                 # 取前窗下界到现在：一条查询覆盖 before/after 两段，
                 # 再在 Python 里按 at 切分——与渠道级 _rate 的窗口一致。
@@ -405,8 +455,11 @@ class PriceStorage:
 
         判据（只用时间先后，不做语义猜测）：
           对每次人工干预 I（排除 auto_*），生效窗口为
-          [I.at, 同渠道下一次人工干预) ∩ [I.at, now]。窗口内出现
+          [I.at, 同渠道下一次人工干预) ∩ [I.at, I.at+N 小时]。窗口内出现
           ok/calendar 路径样本即记为有效（healed）。
+          右界必须有 N 小时封顶（r611）：判定是 `any(ok)`，窗口越宽越容易
+          命中某次偶然成功——实测「干预后 24h 全失败、20 天后偶然成功」
+          被记为 healed=1 / rate=1.0，成功率被系统性高估。
         窗口内**一条路径样本都没有**时不计入分母：干预刚做完还没采集，
         不是失败，只是还不能判断——算成失败会把成功率压成噪声。
 
@@ -434,14 +487,28 @@ class PriceStorage:
                 return {}
             oldest = min(str(r["at"] or "") for r in ivs)
             samples = c.execute(
-                "SELECT platform, fetched_at, path_status FROM fetch_paths "
+                "SELECT platform, from_city, to_city, fetched_at, "
+                "path_status FROM fetch_paths "
                 "WHERE fetched_at >= ? ORDER BY platform, fetched_at",
                 (oldest,)).fetchall()
         by_plat = {}
+        # 分域判定要的航线，按 (渠道, 采样时刻) 索引（r617）。同一渠道同一
+        # 秒可能有多条不同航线，这里保留第一条即可：只用来判断「这条样本
+        # 属国内还是国际」，而一次采样在分域上不会自相矛盾。
+        route_of = {}
         for s in samples:
-            by_plat.setdefault(str(s["platform"] or ""), []).append(
-                (str(s["fetched_at"] or ""),
-                 str(s["path_status"] or "")))
+            plat_k = str(s["platform"] or "")
+            ts_k = str(s["fetched_at"] or "")
+            by_plat.setdefault(plat_k, []).append(
+                (ts_k, str(s["path_status"] or "")))
+            route_of.setdefault(
+                (plat_k, ts_k),
+                (str(s["from_city"] or ""), str(s["to_city"] or "")))
+        # 与 path_stats / intervention_effect 同一个分域口径（r512 同源）。
+        try:
+            from core.intl import is_intl_route as _is_intl
+        except Exception:
+            _is_intl = lambda _a, _b: False
 
         # 每个渠道的下一次人工干预时刻，作为窗口右边界（不含）。
         # 不按 scope 拆边界：任何一次人工干预都会改动会话状态，前一窗
@@ -469,9 +536,39 @@ class PriceStorage:
             rows = by_plat.get(plat) or []
             for i, (at, act, scope) in enumerate(seq):
                 end = nxt[(plat, i)]
+                # 窗口右边界还有「干预后 N 小时」（r611）：原实现最后一次
+                # 干预的 end 为空，窗口一路延伸到 now——而判定是
+                # `any(ok)`，「窗口里有任意一次成功就算治好」。实测
+                # 「干预后 24h 全失败、20 天后偶然成功一次」被记为
+                # healed=1 / rate=1.0，成功率被系统性高估。
+                # 有下一次干预时仍是「到下一次干预为止」（更早），
+                # 没有时封顶在 N 小时，与 intervention_effect 同口径。
+                cap = (datetime.strptime(at, "%Y-%m-%d %H:%M:%S")
+                       + timedelta(hours=max(1, int(hours)))
+                       ).strftime("%Y-%m-%d %H:%M:%S")
+                right = min(end, cap) if end else cap
                 win = [(ts, st) for ts, st in rows
-                       if ts >= at and (not end or ts < end)]
+                       if at <= ts < right]
                 d = out.setdefault(act, _new_with_scopes())
+                # 作用域子表（r617）：dom/intl 是**航线域**，判定必须只看
+                # 该域的样本。原实现直接把渠道级的 win 记进子表，于是
+                # 「国际自检」与「国内自检」拿到的是同一份数字——国内全绿、
+                # 国际全红时两个域都报 100%，而面板正是靠这两个数决定
+                # 该选哪一域自检。非域名（重登槽位名等）不做域过滤。
+                srow = None
+                if scope in ("dom", "intl"):
+                    want = (scope == "intl")
+                    srow = []
+                    for ts, st in win:
+                        pair = route_of.get((plat, ts))
+                        if pair is None:
+                            continue
+                        try:
+                            if bool(_is_intl(pair[0], pair[1])) != want:
+                                continue
+                        except Exception:
+                            continue
+                        srow.append((ts, st))
                 # 作用域子表：只收非空 scope（空 scope 只进动作级总数）
                 sd = (d["scopes"].setdefault(scope, _new())
                       if scope else None)
@@ -485,8 +582,18 @@ class PriceStorage:
                 d["n"] += 1
                 d["healed" if healed else "unhealed"] += 1
                 if sd is not None:
-                    sd["n"] += 1
-                    sd["healed" if healed else "unhealed"] += 1
+                    if srow is None:
+                        # 非域名：与动作级同口径（渠道全部样本）
+                        sd["n"] += 1
+                        sd["healed" if healed else "unhealed"] += 1
+                    elif not srow:
+                        # 该域窗口内零样本：判不了，不能拿别的域顶替
+                        sd["unjudged"] += 1
+                    else:
+                        s_healed = any(st in ("ok", "calendar")
+                                       for _ts, st in srow)
+                        sd["n"] += 1
+                        sd["healed" if s_healed else "unhealed"] += 1
 
         def _finish(x):
             x["rate"] = (round(x["healed"] / x["n"], 4) if x["n"] else None)

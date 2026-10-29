@@ -35,13 +35,20 @@ def _at(minutes_ago):
         "%Y-%m-%d %H:%M:%S")
 
 
-def _row(ps, plat, status, at):
+def _row(ps, plat, status, at, pair=("BKK", "CAN")):
+    """写一条路径样本。航线可指定（r617）：分域判定按真实航线切片，
+    原先这里恒写国际航线，于是「国内自检」窗口里也躺着国际样本——
+    在 r617 之前没人发现，因为子表根本不看航线。"""
     with ps._conn() as c:
         c.execute(
             "INSERT INTO fetch_paths (fetched_at,platform,from_city,"
             "to_city,depart_date,entry_path,path_status) "
-            "VALUES (?,'%s','BKK','CAN','2026-11-05','H5',?)" % plat,
-            (at, status))
+            "VALUES (?,?,?,?,'2026-11-05','H5',?)",
+            (at, plat, pair[0], pair[1], status))
+
+
+def _row_dom(ps, plat, status, at):
+    return _row(ps, plat, status, at, pair=("SHA", "PEK"))
 
 
 def test_scope_breakdown_splits_one_action_into_per_domain_numbers():
@@ -54,7 +61,7 @@ def test_scope_breakdown_splits_one_action_into_per_domain_numbers():
     for i, ok in enumerate([True, True]):
         at = _at(300 - i * 60)
         ps.save_intervention("ctrip", "probe", ok=True, scope="dom", at=at)
-        _row(ps, "ctrip", "ok" if ok else "login", at)
+        _row_dom(ps, "ctrip", "ok" if ok else "login", at)
 
     r = ps.intervention_success_rate()
     sc = r["probe"]["scopes"]
@@ -81,7 +88,7 @@ def test_judged_and_unjudged_split_per_scope_too():
     """判不了也要分域：国际自检没采集样本时，不能说成「国内自检判不了」。"""
     ps = _ps()
     ps.save_intervention("ctrip", "probe", ok=True, scope="dom", at=_at(300))
-    _row(ps, "ctrip", "ok", _at(290))
+    _row_dom(ps, "ctrip", "ok", _at(290))
     ps.save_intervention("ctrip", "probe", ok=True, scope="intl", at=_at(20))
     r = ps.intervention_success_rate()
     sc = r["probe"]["scopes"]
@@ -97,7 +104,7 @@ def test_window_still_ends_at_any_manual_intervention():
     ps.save_intervention("ctrip", "probe", ok=True, scope="intl", at=_at(200))
     _row(ps, "ctrip", "login", _at(190))     # 国际窗口内的失败
     ps.save_intervention("ctrip", "probe", ok=True, scope="dom", at=_at(100))
-    _row(ps, "ctrip", "ok", _at(95))         # 落在国内窗口
+    _row_dom(ps, "ctrip", "ok", _at(95))     # 落在国内窗口（国内航线）
     r = ps.intervention_success_rate()
     sc = r["probe"]["scopes"]
     assert sc["intl"]["n"] == 1 and sc["intl"]["unhealed"] == 1, sc
@@ -105,20 +112,33 @@ def test_window_still_ends_at_any_manual_intervention():
 
 
 def test_scope_subtable_never_widens_the_action_denominator():
-    """分域是拆分视图，不是新增样本：两者之和恒等于动作级 n。"""
+    """分域是拆分视图，不是新增样本：分域的**样本总数**不得超过动作级。
+
+    r617 起分域按真实航线切片（原来只是把渠道级的 win 抄一份），
+    所以「没有该域样本」的干预会落到 unjudged 而不是 n：分域 n 之和
+    ≤ 动作级 n 才是正确关系；相等只在每次干预窗口里都恰好有该域样本时成立。
+    不变量要的是「拆分不放大」，不是「必须刚好相等」。
+    """
     ps = _ps()
     for scope, oks in (("intl", [True, False]), ("dom", [True])):
         for i, ok in enumerate(oks):
             at = _at(500 - i * 100)
             ps.save_intervention("ctrip", "probe", ok=True, scope=scope, at=at)
-            _row(ps, "ctrip", "ok" if ok else "error", at)
+            (_row_dom if scope == "dom" else _row)(
+                ps, "ctrip", "ok" if ok else "error", at)
     ps.save_intervention("ctrip", "warmup", ok=True, scope="", at=_at(50))
     _row(ps, "ctrip", "ok", _at(40))
     r = ps.intervention_success_rate()
     d = r["probe"]
-    assert sum(v["n"] for v in d["scopes"].values()) == d["n"], \
-        "分域之和与动作级 n 不一致：%r" % (d,)
-    assert sum(v["healed"] for v in d["scopes"].values()) == d["healed"], d
+    sc = d["scopes"]
+    assert sum(v["n"] for v in sc.values()) <= d["n"], \
+        "分域把样本放大了（之和大于动作级 n）：%r" % (d,)
+    assert sum(v["healed"] for v in sc.values()) <= d["healed"], d
+    # 该花的样本一条都不能少：每次干预要么判了、要么记为待判
+    for k, v in sc.items():
+        assert v["n"] + v["unjudged"] >= 1, "分域 %s 整条丢了：%r" % (k, v)
+    assert (ps.intervention_success_rate()["probe"]["n"]
+            == d["n"]), "动作级口径被分域影响了"
 
 
 def test_panel_renders_the_breakdown_and_keeps_it_reachable_when_truncated():
