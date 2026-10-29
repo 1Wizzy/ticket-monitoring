@@ -935,15 +935,24 @@ class BaseCrawler:
         finally:
             self.use_mobile = bak
 
-    def _login_window(self, done_evt, idx: int = 0, timeout_s: float = 0):
+    def _login_window(self, done_evt, idx: int = 0, timeout_s: float = 0,
+                      ready_evt=None):
         """并行登录窗口：开登录页保持打开，done_evt 置位后关闭。
 
         返回 True=用户点击了「我已登录完成」；False=窗口被直接关闭
         （cookie 已周期快照，但未确认完成，调用方不得宣称登录成功）。
         idx 用于阶梯排布窗口位置避免叠死；timeout_s=0 表示不超时
-        （命令行 --login 由用户决定），Web 登录传 600 秒。"""
+        （命令行 --login 由用户决定），Web 登录传 600 秒。
+
+        ready_evt（r620 · GitHub #10）：窗口**真的打开且登录页载入完成**
+        之后置位。调用方（webui 的 /api/login）原先在线程启动后立刻回
+        「已弹出」，但 Playwright 起不来（缺浏览器内核 / 显示服务异常 /
+        profile 被占）时那一步永远到不了——用户等一个不存在的窗口，
+        换八个浏览器都没用（issue 原话）。失败时本方法不置位，异常照常
+        冒泡，由调用方把「没开成」如实回给点击者。
+        """
         url = self.login_url()
-        self.logger.info("[%s] 登录窗口已打开：%s", self.name, url)
+        self.logger.info("[%s] 正在打开登录窗口：%s", self.name, url)
         self._session_snap_ok = False
         bak = self.use_mobile
         if self.login_desktop and not self.login_mobile:
@@ -953,6 +962,10 @@ class BaseCrawler:
                               window_idx=idx, save_session="login") as ctx:
                 page = self.new_page(ctx)
                 page.goto(url, wait_until="domcontentloaded", timeout=40000)
+                if ready_evt is not None:
+                    # 到这里才是「窗口真的开了」；之前任何一步失败都不置位
+                    ready_evt.set()
+                self.logger.info("[%s] 登录窗口已打开：%s", self.name, url)
                 import time as _t
                 started_at = _t.time()
                 deadline = (started_at + timeout_s) if timeout_s else 0.0
