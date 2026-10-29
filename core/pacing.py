@@ -617,6 +617,34 @@ def shadow_path_preference(paths, min_samples=5, low=0.3):
     return {"prefer": ranked[:2], "avoid": avoid}
 
 
+def _with_channel(hint, effect, lead):
+    """分域结论后补一句渠道全貌（r630）。
+
+    实测 qunar：国际域 48%→53%（几乎没动）而渠道整体 44%→84%（大好）。
+    只给前者，读者会一直折腾国际；两句一起给才判断得出「该换域」。
+    渠道级与域级等价时（非域 scope、或数字相同）不追加，避免噪音。
+    """
+    if not lead:
+        return hint
+    cb, ca = effect.get("before"), effect.get("after")
+    if cb is None or ca is None:
+        return hint
+    dsb, dsa = effect.get("scope_before"), effect.get("scope_after")
+    if cb == dsb and ca == dsa:
+        return hint
+    rel = ("同期渠道整体 %.0f%% → %.0f%%"
+           % (cb * 100, ca * 100))
+    # 只有「该域确实没跟上」时才解释「整体已可用」；域本身已达标
+    # （如 tongcheng 30%→100%）时说这句会自相矛盾。
+    dsa_v = dsa if dsa is not None else 0.0
+    dsb_v = dsb if dsb is not None else 0.0
+    if ca >= 0.7 and dsa_v < 0.7:
+        rel += "（整体已可用，是这个域没跟上——可换域或先观察）"
+    elif ca > cb and ca - cb > 0.1 and dsa_v - dsb_v < 0.1:
+        rel += "（改善主要来自别的域）"
+    return hint + "；" + rel
+
+
 def effect_verdict(effect):
     """把干预前后对比翻译成一句可执行结论（供建议引擎/面板复用）。
 
@@ -663,16 +691,22 @@ def effect_verdict(effect):
         return "unknown_before", ("%s干预后成功率 %.0f%%（%d 次）；干预前窗口"
                                   "无样本，无法对比" % (_lead, a * 100, _an)), "ok"
     if a >= 0.7 and a > b:
-        return "improved", ("%s干预有效：%.0f%% → %.0f%%"
-                            % (_lead, b * 100, a * 100)), "ok"
+        return ("improved", _with_channel(("%s干预有效：%.0f%% → %.0f%%"
+                                  % (_lead, b * 100, a * 100)),
+                                 e, _lead), "ok")
     if a >= 0.7:
-        return "recovered", ("%s干预后已回到 %.0f%%（干预前 %.0f%%）"
-                             % (_lead, a * 100, b * 100)), "ok"
+        return ("recovered", _with_channel(("%s干预后已回到 %.0f%%（干预前 %.0f%%）"
+                                   % (_lead, a * 100, b * 100)),
+                                  e, _lead), "ok")
     if a > b:
-        return "partial", ("%s有改善但仍偏低：%.0f%% → %.0f%%，建议再自检一次"
-                           % (_lead, b * 100, a * 100)), "wait"
-    return "no_effect", ("%s干预未见改善：%.0f%% → %.0f%%，换路径/重登后再试"
-                         % (_lead, b * 100, a * 100)), "act"
+        return ("partial", _with_channel(("%s有改善但仍偏低：%.0f%% → %.0f%%，"
+                                          "建议再自检一次"
+                                          % (_lead, b * 100, a * 100)),
+                                         e, _lead), "wait")
+    return ("no_effect", _with_channel(("%s干预未见改善：%.0f%% → %.0f%%，"
+                                       "换路径/重登后再试"
+                                       % (_lead, b * 100, a * 100)),
+                                      e, _lead), "act")
 
 
 def advise(plat, ch=None, paths=None, now=None, node=None,
