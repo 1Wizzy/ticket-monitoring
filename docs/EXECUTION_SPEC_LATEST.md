@@ -1265,6 +1265,346 @@
   实测 1280/900/420 三档：4 行齐全、无截断、无横向溢出。
   **契约教训**：第一版用 `'"session_max_days"' in seg` 子串匹配，把键改名成
   `"session_max_days_X"` 后**负控全绿**——现改为解析出键集合做精确成员判断。
+- **悬浮窗压缩的探针证据与真渲染门禁**（r599；r524 已记同一条的 CSS 侧）：
+  uitest `v297 图表点按显示明细` 在 390 档长期红，实测 `right 401 > vw 390`、
+  体形 53×158。查下去不是钳位算术错，而是 **absolute 盒子默认 shrink-to-fit**：
+  可用宽度＝包含块右缘的剩余空间。探针直接量同一段文字：`left=0` 时 143×49，
+  `left=400` 时 53×158——宽度被位置决定，而落位函数又读到这个**假宽度**去钳位，
+  把 left 固定回同一处，自我维持。
+  **只改钳位算术治不好**：负控把右界强行改成 `vw-8`，浮窗照样折叠。
+  静态断言也抓不住：回退 CSS 后 `test_all_three_tooltips_cap_their_width_and_shrink_to_fit`
+  只变红在声明缺失上，改由别的规则覆盖时仍绿。所以补一条真渲染门禁
+  （`test_r599_tip_width_not_shrunk_by_anchor.py`）：**贴到只剩 12px 可用宽**再换内容，
+  宽度不得低于宽松态、不得折成竖条。第一版按「贴到刚好不塌」的位置测，
+  **负控漏网**（回退 CSS 后仍绿）——测量位置本身必须压到真实失败态。
+- **配置页不允许存在无法配置的项**（r523，用户明确要求）：r521 那块「仅可在
+  config.yaml 中修改」的**只读说明被整体撤掉**，改成真正的编辑控件；补齐了
+  原先只能改文件的 9 组键：`crawler.session_max_days` / `max_concurrency` /
+  `mobile_user_agent` / `tls_impersonate` / `debug_dir` / `login_desktop` /
+  `breaker.login_cooldown_s` / `cadence.<5 渠道>` / `schedule.near_days`。
+  每一项都补齐三段：**回读**（`/api/config` GET）→ **控件**（`GLB.<k>=…`）→
+  **落盘**（POST 写入 cfg 再 `safe_dump`）；缺任何一段都等于「配不上」，
+  契约逐段断言。这些键都不是启动级（启动级只有 4 路径 + host + run_on_start），
+  因此**保存即热生效**，不需要重启。
+  **一个差点写错的语义**：`cadence` 的真实含义是「该渠道单独的最小采集间隔
+  （**整数分钟**，0..10080）」，后端 `int()` 取整；我最初把控件写成「节奏倍率」
+  并允许小数，实测 `{'qunar':1.5}` 落盘后被解析成 `1`——控件显示与实际生效值
+  对不上。现控件与写入端都改成 `parseInt` / `int()` + 10080 上限，与
+  `core/pacing.py` 同口径；契约专门钉「控件侧不得用 parseFloat」。
+  实测：往返一致（`cadence.qunar=45→45`、`near_days=5`、
+  `login_cooldown_s=1200`、`max_concurrency=3`）；10 个控件在 1280/900/420
+  三档全部渲染、无横向溢出、只读说明块已不存在。
+- **`crawler.proxy_map` 也必须能在配置页配**（r600）：r523 按「逐键清点」补齐时
+  漏了它——`crawlers/base.py` 真生效（一家被限流不牵连另一家，是提高渠道成功率的
+  关键旋钮），`config.example.yaml` 也有说明，但配置页既无控件也不显示值。
+  现补齐三段：GET 回读 `globals.proxy_map` → 5 个 `glbPm_<渠道>` 控件（「渠道出口」
+  独立小节）→ POST 落盘。写入统一走 `_proxy_map_clean()`：与全局 proxy 同一条
+  `^https?://[^\s/]+:\d+$` 校验，**空值不落键**（否则「跟随全局」与「显式直连」
+  两种语义混在一起）。不校验的代价特别难归因：漏 scheme 的 `127.0.0.1:7897`
+  会让该渠道 httpx 抛 InvalidURL，表象是「这一家渠道全红」。
+  门禁 `test_r600_proxy_map_configurable.py`（含清洗函数真调用 + 负控：去掉正则即红）。
+  **教训**：清点「能否配置」不能只看配置页有没有那句只读说明——按
+  `config.example.yaml` 的叶子键逐个反查控件才找得到这类静默缺口。
+- **「没有无法配置的项」要做成不变式，不是一张名单**（r601）：r523 补了 9 键、
+  r600 补了 `proxy_map`、r601 又补出 `users.routes.alert_threshold`
+  （`core/alerter.py` 真读，`route.alert_threshold > 0` 才走旧总阈值提醒；
+  示例配置留着兼容注释，页面却既不显示也不可改）——三轮都是「发现了再
+  补名单」，名单外的下一个键继续静默缺席。现改为从 `config.example.yaml`
+  **枚举 83 个叶子键**逐个要求落点，门禁
+  `test_r601_every_config_key_reachable.py`。豁免表必须附可验证的承载方式
+  （理由里提到的入口要真在源码里），防止缺口藏进豁免。
+  **落点判据踩过两次假绿**：①只查「键名带引号出现在源码里」，
+  而 `setRoute` 的同步白名单正好有一句 `k==='alert_threshold'`——删掉编辑
+  控件仍全绿；②只查「键名作为事件处理器实参」，把 `glbBbs`/`glbCad_`+p
+  这类控件 id 承载的当成缺口（误报 11 项）。现判据＝写回表达式 ∪ 事件绑定
+  ∪ glcell 实参 ∪ 动态表 ∪ 控件 id 承载。
+  **控件位置也有一次真错**：第一版把旧总阈值塞进「筛选与时段约束」折叠区，
+  源码断言全绿但页面上量到 **0×0**（`display:none`）——用户根本看不到。
+  现控件放在「心理价」常驻行（与直飞/中转阈值同排），并补一条真渲染门禁：
+  控件要量到尺寸、标签含「总阈值」、输入后 `CFG[…].alert_threshold` 真的变。
+  实测 88×34、输入 1234 → `alert_threshold="1234"`、`routeKeys` 里已含该键
+  （保存载荷就是 CFG，故必落盘）。
+- **分通路必须能定位「为什么掉」**（r602）：渠道健康的通路维（r415）原先只给
+  成功率（`H5 80% · PC 100%`）。同样的 20%，是「登录墙」还是「软拒」决定用户
+  该做什么——前者重登能解，后者只能等自愈。真实账本（2026-10-29 实测
+  `data/prices.db`）确有这个形态：`qunar H5 ok 131 / login 70 / soft_reject 8`、
+  `qunar API ok 5 / login 20`。后端 `core/storage.py` 早已把 login/soft 分开计数，
+  **缺的是展示**——现只在计数 >0 时附注 `（需登录 7 · 软拒 1）`，正常通路不加噪声。
+  实测渲染：`H5 20%（需登录 7 · 软拒 1） · H5/API 50%（需登录 2） · PC 100%`；
+  390/320/1280/1600 四档 + 三通路全带两类失败的最坏内容均 `scrollWidth ≤
+  clientWidth`、`.hscope` 右沿未越卡界。门禁
+  `test_r602_path_failure_class_visible.py`（含真渲染 + 负控：去掉附注即红）。
+  **同一账本两处渲染必须同口径**：节流面板速览的通路行（`pws.push`）也是
+  只报百分比。只改健康卡，同屏就会出现「健康卡说需登录 7、节流面板只说
+  20%」的两种说法——正是用户反复提的「不要让两个面板互相矛盾」。现两处
+  共用同一套 `login`/`soft` 附注规则；契约用**精确拼装片段**分别断言两处
+  都在（`_fx.push('需登录 '+_v.login)` / `_pf.push('需登录 '+w.login)`）。
+  宽口径 `w.count("'需登录 '+")==2` 会因徽标 caption 里那处也计数而**假绿**
+  （负控实测 3≠2），已改为按表达式定位。
+- **r601 的通用不变式当场抓到了新缺口**（r603）：并行会话新增
+  `core/android/config.py`（智行/美团 App 只能走真机，无可用 Web 入口），
+  7 个字段齐全且逐个钳制，但配置页**一个控件都没有**。门禁直接报出
+  `['android.install_dir','android.vm_index','android.boot_timeout_s',
+  'android.action_timeout_s','android.snapshot']`——这正是把「无不可配置项」
+  做成不变式（而不是人工名单）的价值：新键加进来就会当场变红。
+  **注意 `enabled`/`provider` 当时被宽口径漏过**——它们与别处同名字面量
+  重名，靠「键名出现在源码里」判不出来。现 7 个字段全部补齐并逐个断言。
+  控件范围与后端钳制**逐项一致**（`vm_index 0..64`、`boot 10..600`、
+  `action 5..900`）：界面能填出后端会悄悄改掉的值，本身就是「配了不生效」。
+  实测渲染 1280/390 两档 7 个控件全部可见、无横向溢出；写回 `vm_index=3`、
+  `boot_timeout_s=999 → 600`（钳到后端上限）、`install_dir` 均落到 `GLB.android`。
+  门禁 `test_r603_android_config_editable.py`（负控：删掉配置区块即红）。
+- **配了却没被扫的渠道不能整行消失**（r604）：健康卡的行来自日志里**出现过**的
+  渠道（`core/health.py` 的 `_flush` 只遍历本轮 events）。`max_concurrency`
+  限制同轮并发，一轮常只有 2–3 家被扫到，其余几家就这样静默消失——用户勾了它，
+  翻遍健康卡找不到，读作「这个渠道不存在」。后端补下发 `enabled_platforms`
+  （配置里勾过的并集），前端在格带下补一行「未扫描：…（已勾选，但近 24h 无
+  扫描记录）」。**不能读前端 CFG**：健康页不加载配置表单，`CFG` 此时是 null
+  （实测 `cfgPlats=[]`，那段代码永不生效）。门禁
+  `test_r604_unscanned_channels_visible.py`。
+  渲染判据也要小心：健康面板在未激活的 mon 子标签下整块 `display:none`，
+  量宽度/查祖先只能测出「视图没切过去」；改判 `hbody` 的渲染产物里是否含该文本。
+- **`_State` 的类属性被写进函数体 = 静默失效**（r604b，门禁实测发现）：
+  合并时 `login_sessions` / `login_errors` / `login_saved_cb` / `login_pending`
+  四行落在了 `_app_login_ctx()` 的 `return {...}` **之后**——`return` 之后的
+  代码不可达，四个类属性从未定义。13 条 `test_channel_status` 在 setup 阶段
+  就 `AttributeError`。这不是「报错」而是**静默失效**：重复点登录不被拦、
+  刚登完就被建议重登、保存失败不落账、登录后不清采集器缓存（新 cookie 不生效）。
+  已把四行移回 `_State` 类体，并加常驻守卫
+  `test_r604b_state_attrs_not_dead_code.py`：真 `import` 后 `hasattr` 检查，
+  外加「`_app_login_ctx` 的 return 之后不得再有代码」守成因。
+  该守卫第一版把多行 `return {...}` 的续行当成「return 之后的代码」而假红，
+  现按括号配平跳过续行。
+- **隐式夹取必须当场回写并说明**（r605）：健康保护有两条真实约束，后端
+  `core/pacing.py` 的 `parse` 与前端 onchange 都会施加：
+  `health_slow_ratio ≤ health_ok_ratio`（降频线 ≤ 合格线）、
+  `health_slowest_factor ≥ health_slow_factor`（重降频 ≥ 轻降频）。
+  规则本身没问题（两边一致），问题是**夹了不说**：输入框留着用户键入的
+  原值（实测键入 0.9），`GLB` 与落盘都是 0.7——「我配了 0.9，实际跑 0.7」，
+  不报错也不提示。`glcell` 早就留了 `.verr` 出错位，但全站从未使用。
+  现加 `glbClamp(el,id,applied,reason)`：回写真实生效值 + 显示原因，6 秒收起。
+  **`.glcell .verr{display:none}` 会压过空串**：必须显式给 `block`，否则
+  回写发生了、解释永远看不见（实测 `display` 仍是 `none`）。
+  实测：键入 0.9 → 输入框回到 0.7、`GLB.health_slow_ratio=0.7`、
+  提示「降频线不能高于合格线（0.7），已按合格线生效」可见。
+  门禁 `test_r605_config_clamp_is_visible.py`（负控：去掉回写即红，且渲染
+  断言实测用户看到的是 0.9）。
+- **配置页每个数字输入都要有范围校验**（r606）：`glcell` 对**所有**数字输入
+  都挂了 `oninput="glbCheck(this)"`，但 `glbCheck` 按 `GLB_RANGES` 查表，
+  查不到就静默放行。实测全局参数面板 31 个数字控件里只有 5 个在表内，
+  其余 26 个键入越界值时——输入框留着原值、onchange 把他夹掉、保存的是夹后值。
+  现按各自 onchange 的实际边界逐项登记，动态 id（`glbCad_*`）走
+  `GLB_RANGES_DYN` 前缀规则，`glbRangeOf()` 作为唯一解析入口，**保存侧也用它**
+  （否则「输入标红、保存放行」两套结论）。
+  **比率/倍数类必须 `parseFloat`**：`parseInt('0.05')===0` 会让合法值永远判越界
+  （表里用 `dec:1` 标记）。
+  **抄边界不能凭印象**：`per_minute` 后端下界是 **0**（0=不限），我照 onchange
+  手抄成 1 —— 默认值 0 立刻被判越界、**保存被拦**（`test_save_demo_readonly_gate`
+  与特价保存两条同时红）。边界不是文案，加 `test_declared_zero_is_valid_*`
+  与 `test_table_bounds_match_backend_clamps` 守「后端允许 0 的项下界必须是 0」。
+  实测：31 个控件零缺口；比率越界（5）标红、合法小数（0.8）不误报、
+  整数越界（1）标红、动态 id（99999）标红。
+- **门禁自己也崩过一次**（r606）：`tools/test_all.py` 打印失败项时遇到
+  用例文本里的 `❌`，GBK 控制台抛 `UnicodeEncodeError`，**整轮结果作废**
+  （退出码既不是 0 也不是 1，跑测方只看到 traceback）。已加
+  `sys.stdout/stderr.reconfigure(errors="replace")`——输出只是给人看的，
+- **登录页的「必须登录」要一行写清，不能逐格重复**（r608 / r608b）：
+  ① 页面顶部说明还写着「同程/途牛建议」，与 r414「五渠道全部必须登录」冲突；
+  ② 飞猪双端走的是自带 DOM（`lgShortStatus`），绕过共享的 `slotBody`，
+  把 `requirement` 整个丢了——同页四家写「必须登录」、飞猪两端只有
+  「PC 未登录 / H5 未登录」，读者会以为飞猪不用登录。
+  统一走 `slotBody` 后，半格只有 **145px**（单渠道格 324px），三段拼不下折成
+  两行，飞猪卡 69px、其余 52px——r412 的几何守卫当场报 `[52, 69] @900px`。
+  终态：半格（`slotBody(s,1)`）只放状态，「必须登录」提到**卡片头**
+  `.lgreq`（弱色 10px 小字，每卡一次）；五行实测全部 52px，r412 五档全绿。
+  **测量环境必须与门禁同源**：先用 `--demo` 探针测全是 52px（demo 账号名更长），
+  而 r412 用真实模式（直接实例化 `webui._Handler`）才复现折行——
+  demo 量不出这个缺陷。
+- **「每个采集器都能记 error」要判能力**（r609）：`app_zhixing.py` 被判缺牌，
+  但它继承 `AppBaseCrawler`、统一走 `safe_fetch()`，异常在那里就记成
+  `app-error`。判据改为「自带 或 基类提供」，且基类判据必须**落在
+  `safe_fetch` 的函数体里**——查整个文件会假绿（`PATH_STATUS` 元组和
+  `path_note` 的默认兜底都含 `"error"`，删掉那两行后断言照样通过；
+  负控第三次才真红）。
+- **干预前后必须用同样长的窗口比**（r610）：`intervention_effect()` 的 before 取
+  「干预前 N 小时」，而 after 原写 `fetched_at >= at`——**一路统计到现在**。
+  实测：干预当场生效（之后 24h 内 10/10 成功），8 天后渠道因别的原因恶化，
+  那 90 条失败仍落进 after → **1/100 = 10%**，面板写「干预未见改善」；
+  用户看到「上次干预无效」，而它其实救回来过。修法：after 也加
+  `AND fetched_at < datetime(at,'+N hours')`，两段等长闭合。
+  **不收走回落观测**：`trend`（30 分钟分桶）与 `regressed` 看的是干预之后全程，
+  回答「后来有没有回落」；after 回答「这 N 小时里救回来没有」——两件事。
+  契约 `test_r610_intervention_window_symmetry.py` 把 improved / no_effect /
+  regressed 三种情形都钉住（负控：恢复无界 after 后，样本数与成功率两条真红：
+  `40 <= 20`、`30 <= 5`）。
+- **「治好」判定必须封顶**（r611）：`intervention_success_rate()` 判
+  `healed = any(win)`——窗口里只要有**任意一条**成功就算救回来了。而窗口
+  右界原先只有「同渠道下一次人工干预」，对**最后一次**干预它为空，
+  窗口一路延伸到 `now`。窗口越宽越容易命中偶然成功，指标必然高估。
+  实测：干预后 24h 内 10 次全失败 → 20 天后因别的原因偶然成功一次 →
+  旧实现 `healed=1 / rate=1.0`，读作「这次干预 100% 有效」。
+  修法：右界再加 `I.at + N 小时` 封顶（有下一次干预时取更早者），
+  与 `intervention_effect` 同口径。
+  **副作用是诚实的**：更老的干预因落在窗口外而不再出现在结果里
+  （`n=None` = 该动作没有可判样本），不是「0 次成功」；面板本来就按
+  `unjudged` / 「样本不足」分开表述。
+  门禁 `test_r611_intervention_heal_window_capped.py`（负控：去掉封顶后
+  三条真红，其中 `warmup: healed=1` 正是被冒充的形态）。
+  **与 r610 同族**：那边是均值被远期稀释，这边是存在性被远期放大——
+  凡带 `any()` 的「命中即成功」，窗口必须双侧闭合。
+- **「分域成功率」的分子分母必须真的是那个域**（r617）：
+  `intervention_success_rate()` 的 `scopes` 子表（r511）本意是回答
+  「国际自检救回几次、国内自检救回几次」，面板也确实照着这话在展示：
+
+      近 7 天成功率 自检 88%（7/8）（国际 75% · 国内 100%）
+
+  但子表记的是**该渠道全部样本**，没有按航线分域过滤——两个域拿到同一份
+  数字。最坏的形态：窗口里国内 4 条全绿、国际 4 条全红，「国际自检」
+  会判成**治好**（国内的成功给它背了书），面板于是建议用户继续点国际自检。
+  这正是「可区分 / 可指定干预」被数据掏空的一类：数字看着分了域，
+  结论却是从另一个域借来的。
+  修法：`dom`/`intl` 两种 scope 按 `is_intl_route(from,to)` 切片——**与
+  `path_stats`、`intervention_effect` 同一个分域函数**，不另造一套；
+  该域窗口内零样本时记 `unjudged`（判不了，不是失败，更不拿别的域顶替）。
+  非域名 scope（重登的槽位名等）保持渠道级口径。
+  门禁 `test_r617_intervention_scope_is_scoped.py`（负控：关掉分域过滤后
+  两条真红，「国际 4 全败 + 国内 4 全胜」被判成国际治好）。
+  **连带修正**：r511 的样例把国际航线写进了国内自检的窗口里（`_row` 恒写
+  `BKK→CAN`），在 r617 之前没人发现，因为子表根本不看航线；同时它把
+  「分域之和恒等于动作级 n」当作不变量——分域切片后正确的式子是
+  **分域 n 之和 ≤ 动作级 n**（该域没样本时落在 unjudged），拆分不放大即可。
+  **通用判据**：凡「按某个维度拆开的指标」，都要问一句「这个维度的取值
+  真的参与了筛选吗」——只加一列 label、不参与 where，是最容易骗过
+  review 的假拆分。
+- **同一段读数里的趋势也得是同一边界的**（r618）：r512 给
+  `intervention_effect` 加了 `scope_before/scope_after`，但同一条
+  「干预后对比」下面挂的 `trend`（“干预后每 30 分钟：100% · 0% · …”）
+  和 `regressed`（“最近回落”）仍按**渠道全部样本**算。读者会同时看到：
+
+      本次干预针对：国际域 前 24h 0%（4） → 0%（4）
+      干预后每 30 分钟：100% · 100% · 100%     ← 这些是国内的绿灯
+
+  国际刚干预完一直不通，却挂着满屏 100% 和「最近回落」（那是国内某窗
+  回落带出来的）。修法：趋势同样按 `is_intl_route` 切到这次干预的域；
+  非域 scope 保持渠道级。**判定词义也顺带厘清**：该域从头到尾没好过是
+  「干预无效」，不是「先好后坏」——`regressed` 只在「曾经 ≥70% 且末窗
+  <40%」时为真，所以别把它当「现在很糟」的同义词读。
+  门禁 `test_r618_intervention_trend_follows_scope.py`（负控：`want_intl`
+  置空即两条真红）。
+  **同族三连**：r617 修分域成功率、r618 修分域趋势——两处都是「维度名
+  加上了，where 没跟上」。同类改动请成对检查：**凡出现「本次干预针对 X」
+  的同一块，它后面所有数字都必须是 X 的。**
+- **结论（不是数字）也必须按这次干预的域来判**（r619）：
+  `core.pacing.effect_verdict()` 只读渠道级 `before/after`，而 webui 用它
+  做了一件有副作用的事——verdict 一旦是 `improved/recovered`，就把渠道的
+  `path_degraded` 建议**改写成 `recovering`**：
+
+      if (_st0 in ("improved", "recovered") and advice.state in
+              ("path_degraded", "degraded")): advice.state = "recovering"
+
+  实测形态：国际自检后国际仍 0%，但渠道级因国内一直很好而 100% →
+  verdict 判「干预有效」→ 面板把「路径劣化、该处理」换成「恢复中、再观察」，
+  用户就此不再处理一个仍然全红的域。**数字难看只是表象，这里关掉的是
+  「可判断 + 可干预」**——比 r617/r618 更接近操作后果。
+  修法：scope 是 dom/intl 且有 `scope_*` 字段时，verdict 全程用该域数字，
+  hint 前缀写明「国际域 / 国内域」；该域零样本时说「该域还没有新样本」，
+  不拿渠道级顶替；非域名 scope 与无分域字段的老调用一字不变。
+  门禁 `test_r619_verdict_follows_intervention_scope.py`（负控：关掉分域
+  分支后三条真红）。
+  **四连同族**：r617 成功率、r618 趋势、r619 结论——同一个「分域」维度在
+  三层都要贯通；只修展示层不修结论层，面板照样会给出反向建议。
+- **「已弹出」必须是事实，不是「线程起来了」（GitHub #10 的后一半，r620）**：
+  #10 原修复只堵了「无图形环境」一种已知原因（`os.name=="posix"` 且无
+  `DISPLAY`/`WAYLAND_DISPLAY`）。但窗口开不出来还有很多种：缺 Playwright
+  浏览器内核、profile 被采集占用、显示服务异常、goto 超时。而原实现是：
+
+      threading.Thread(target=_run, daemon=True).start()
+      _State.logger.info("[登录] 已弹出 %s 登录窗口", key)
+      return {"ok": True, ...}
+
+  线程刚要开始跑就回报成功——正是 issue 里「点了没反应，换八个浏览器都没用」
+  的形态。**判据不能是「已知失败原因」清单，而是「窗口真的开了吗」这个事实。**
+  修法：`_login_window` 在 `page.goto` 成功后置位 `ready_evt`；接口等它
+  （45s 上限，goto 自带 40s 超时），拿到才回报成功；线程先失败/超时则回报
+  `kind="window_failed"` + **具体原因**（把真实异常带给点击者，不是"详见日志"），
+  并清掉 `login_sessions`（否则用户会被「窗口已打开」永久挡住）。
+  两个必须同时处理的细节：
+    - **排队不是失败**：线程先要拿 `channel_slot`，采集正在跑时那是正常等待；
+      `session["queued"]` 用来区分，等待方不误报「缺浏览器内核」。
+    - **日志时序**：「登录窗口已打开」必须由真正开窗那一侧写（`_login_window`
+      在 goto 之后），不能在起线程处先写成功句。
+  门禁 `test_r620_login_reports_only_real_window.py`（负控：把就绪等待改回
+  无条件成功，两条真红——回报成功、日志谎报「已弹出」）。
+  **通用判据**：凡是「异步启动 + 立刻回报成功」的接口（弹窗、子进程、后台任务），
+  都要问一句「成功的判据是启动了，还是到达了那个可观测状态」。
+- **文档里写的配置键必须真的存在**（r621）：#11 的回复与 README FAQ 都把监听
+  地址/端口写成 `network.host` / `network.port`，真实键是 `web.host` / `web.port`。
+  用户照改 yaml **改不生效且不报错**——比不告诉他更糟：他会以为已经放开了
+  局域网访问。
+  门禁 `test_r621_docs_config_keys_exist.py`：把 README/SPEC/HANDOFF 里所有
+  `` `段.键` `` 拿去和 `config.example.yaml` 对账（只校验示例里真实存在的顶层段，
+  避免把 `setup.py` 这类文件名误判；**注释态的可选键也算存在**——实测
+  `crawler.proxy` / `crawler.browser_dir` 都是以 `# key:` 形式给出的）。
+  负控：把 `web.host` 改回 `network.host` 即红。
+  **同类判据**：文档里的路径/键/命令，凡「照着做会静默失败」的，都值得一条对账门禁。
+- **干预账写不进去时不许装没事**（r612）：`save_intervention()` 原来
+  裸写库，失败就被上层 `except` 吞掉。干预照做、页面照显示「已触发」，
+  而溯源/成功率里**根本没有这条**——用户看到的「干预成功率」分母比实际
+  少，且无从察觉。这是「可溯源」被静默掏空的一种。
+  修法：写失败先打一条带上下文的 warning（`[干预账] 写入失败（这条干预
+  不会出现在溯源里）：<action> <plat> · <err>`）再 `raise`，让调用方
+  的失败路径照常把错误回给界面；成功返回 `True`。
+  门禁 `test_r612_intervention_write_failure_is_visible.py`。
+  **通用判据**：凡是「审计/账本类」的写入，失败必须同时有【日志】与
+  【向上抛】两件事——只记日志不抛 = 界面仍报成功；只抛不记日志 =
+  用户看不到为什么这条干预消失了。
+- **已注册渠道要在页面上勾得到、叫得出名字**（r613 / r614）：
+  `app_zhixing` 早在 `REGISTRY`、健康正则、告警映射里，用户 `platforms:` 里写上
+  就会被实例化——但配置页的渠道勾选来自 `PLATS`（只有 5 家浏览器渠道），
+  没有任何入口，只能改 yaml（r613 补 chip，并点明它依赖 Android 真机通道总开关）。
+  名字那头也漏了：健康卡与节流面板各有一张 `CN` 表只列 5 家，智行 App 被渲染成
+  **`aapp_zhixing`**（首字兜底 `a` + 原始 id）。两张表改为
+  `Object.assign({…5 家…}, APP_PLAT_NAME)`，与登录卡同源（r614）。
+  实测渲染：chip 6 个、点选真的进 `CFG.platforms`；健康卡显示「智行 App」、
+  不再含 `app_zhixing`。门禁 `test_r613_*` / `test_r614_*`。
+  **判据的坑**：chip 有两个来源（`PLATS` 动态表 + 显式追加），只查字面量会把
+  动态生成的 5 家误报成缺口（实测 fliggy/tongcheng/tuniu）；正确判据是
+  `REGISTRY` 每个键 ∈ (动态表 ∪ 显式 chip)。**新增渠道要同步三处**：
+  `REGISTRY`、健康/告警映射、配置页可勾选 + 名字表。
+- **名字表只剩一处抄写点，且必须在顶层**（r615 / r616）：
+  r614 修了两张 `CN` 表，但「5 家中文名」在前端还有第三份 `PCN`（概览脉冲条
+  tooltip），筛选 chip 又直接 `${he(p)}` 打原始 id —— 智行 App 在这两处仍是
+  `app_zhixing`。三处统一并 `APP_PLAT_NAME`（r615）。
+  **真正的坑在作用域，不在抄写次数**：r614 把 `const APP_PLAT_NAME=…` 写进了
+  `renderHealth()` 的函数体（**缩进 0，肉眼看像顶层**），而 `PCN`、节流面板
+  `CN`、`appPlatName()` 都在顶层读它。结果整页脚本只抛
+  `APP_PLAT_NAME is not defined`，`S` 永不初始化 —— **全站白屏**，
+  而当时 r613/r614/r615 共 11 条断言**全绿**（静态字符串检查，源码里那句
+  声明好端端地待着）。`typeof X!=='undefined'` 救不了 TDZ，也救不了
+  函数作用域：声明在函数里时，顶层 `typeof` 就是 `'undefined'`。
+  修法：声明提到顶层第一个引用之前。**判据必须上运行时**——
+  `test_r616_no_page_errors_across_views.py` 真开页面走遍
+  `mon(overview/specials/trend/watch/details/health) + search + cfg(login/users/globals)`
+  十个面，要求 `pageerror == 0`、`typeof S === 'object'`、
+  `typeof APP_PLAT_NAME === 'object'`；负控：把声明挪回 `renderHealth()` 体内
+  即整份红（实测 `apn == 'undefined'`）。
+  **教训**：静态断言测不到「这行代码在哪个作用域」。凡是「声明的可见范围」
+  这类属性，只有真加载页面才判得了。
+- **同一条通路只能有一个记账名**（r607）：`FliggyCrawler._h5_fallback()` 会临时
+  建一个 `FliggyH5Crawler` 取数再并路径，而后者**自己**就把路径记成 `H5`
+  （它先 `path_reset()` 再 `path_note("H5", …)`）；兜底却又拼了一层前缀：
+
+      self.paths.append(dict(rec, path="H5:" + str(rec.get("path") or "")))
+
+  于是同一条通路在账本里出现 `H5` 与 `H5:H5` 两个名字。后果都在用户可见面上：
+  健康卡分通路小标把同一条路显示成**两行**；`core/storage._retired_paths()` 按
+  **字面** entry_path 比对，两个名字互不认识，已退役的兜底仍拖着「在用」口径；
+  通路成功率被拆成两份样本，任一份都可能不足判定下限。
+  修法：名字由 H5 采集器单源决定，兜底**原样透传**；兜底自己的两条记账
+  （缺会话 / 异常）也统一走 `_FLIGGY_H5_PATH` 常量，不再留写死的字面量。
+  实测包装逻辑：`H5 → H5`、`H5:listingsearch → H5:listingsearch`、
+  `PC → H5:PC`（不会二次加前缀）。门禁 `test_r607_h5_path_has_one_name.py`
+  （含真跑包装 + 负控：恢复旧前缀即红，账本里出现 `H5:H5`）。
 - **网页重登必须入干预账**（r478）：`interventions` 原先只有
   warmup / verify / probe / reset / auto_trip 五种 action，网页重登
   （点「弹窗登录」→「我已登录完成」）一条都不写。而重登恰是对成功率影响最大的
