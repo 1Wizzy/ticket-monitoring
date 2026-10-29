@@ -211,3 +211,17 @@ web:
   # 详情页基址（钉钉「完整详情（点击直达）」的可达性取决于它）：
   # 手机要看请配本机局域网地址，如 http://192.168.1.8:8765
   # base_url: ""
+
+# ── App 渠道（可选）────────────────────────────────────────────
+# 无 Web 面、只能经 Android App 取数的渠道（如智行）需要本机跑一个
+# 安卓模拟器，由框架通过 adb 驱动。**默认关闭**：不启用时框架不 import、
+# 不检测设备、界面不显示，与没有这个功能完全一致。
+# 启用步骤见 docs/APP_CHANNELS.md；需 Windows + MuMu + VT。
+android:
+  enabled: false           # 总开关；false 时下面所有字段都不生效
+  provider: mumu           # 目前仅支持 mumu
+  install_dir: ""          # 空=自动探测 D:\Program Files\Netease\MuMu 等常见位置
+  vm_index: 0              # 多开实例序号
+  boot_timeout_s: 180      # 冷启动实测 24–36s，留足余量
+  action_timeout_s: 60     # 单条 adb 命令超时
+  snapshot: true           # 预留：登录态快照（P3）

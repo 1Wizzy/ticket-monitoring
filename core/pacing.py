@@ -25,6 +25,9 @@ from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse
 
 PLATFORMS = ("ctrip", "fliggy", "qunar", "tongcheng", "tuniu")
+# App 渠道（可选）：需要独立节奏 key，但**不属于**内置浏览器渠道集合。
+# 本地定义而非 import crawlers，避免 core → crawlers → core 的循环导入。
+APP_CHANNELS = ("app_zhixing",)
 
 _HHMM = re.compile(r"^(\d{1,2}):(\d{2})$")
 
@@ -182,10 +185,12 @@ def parse_pacing(cfg):
         crw.get("health_slowest_factor"), DEFAULTS["health_slowest_factor"],
         out["health_slow_factor"], 20.0, float)
     # 每渠道独立节奏（3 区扩展）：最小采集间隔，0=跟随全局 TTL
+    # App 渠道也要有 key：它们共用一台设备，节奏通常比浏览器更宽，
+    # 缺 key 会让调度层在取值时退化成"无节奏"。
     cad = crw.get("cadence") or {}
     _cad = {}
     if isinstance(cad, dict):
-        for _p in PLATFORMS:
+        for _p in PLATFORMS + APP_CHANNELS:
             try:
                 _v = int(cad.get(_p) or 0)
             except (TypeError, ValueError):

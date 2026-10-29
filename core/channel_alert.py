@@ -4,7 +4,8 @@
 纯函数，零 I/O：判定（该不该发）与措辞（发什么）分开，便于单测。
 """
 CN = {"ctrip": "携程", "qunar": "去哪儿", "fliggy": "飞猪",
-      "tongcheng": "同程", "tuniu": "途牛"}
+      "tongcheng": "同程", "tuniu": "途牛",
+      "app_zhixing": "智行 App"}
 
 
 def should_alert(streak, rounds, last_ts, now, cooldown_s):
