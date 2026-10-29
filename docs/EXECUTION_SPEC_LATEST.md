@@ -1530,6 +1530,22 @@
   而正确动作是让用户去重登。现在**结构化状态优先于说明文本**。
   门禁 `tests/test_r625_breaker_off_is_honest.py`（负控：去掉开关分支，
   三条真红——回报熔断、归因丢失、yaml 里的 `"false"` 不生效）。
+- **关掉的动件不能留下「等着它执行」的标记**（r626，与 r625 同族）：
+  `crawler.warmup.enabled: false` 可关，`_warm_once()` 也直接 return。
+  但 `ChannelBreaker.trip()` 的 soft 分支**无条件**置 `needs_warmup=True`，
+  而这个标志**只有 `note_warmup_ok()`（预热成功）才会清**——预热被关掉就
+  永远不会执行，于是标记永久挂着。两个后果：面板一直显示「需要预热」
+  而这个动作被用户关了；以及用户哪天重开预热，一个几小时前的软拒会立刻
+  触发一次「强制预热」（`_warm_once` 里 `forced = needs_warmup` 是绕过名单
+  的直接触发条件）。
+  修法：`Pacing.observe()` 在「软拒 + 预热已关」时不经 `trip()`，改用
+  `ChannelBreaker.mark_cause()` 只留归因；软拒 kind 照旧返回（那不是熔断语义），
+  登录墙也不受影响。
+  门禁 `tests/test_r626_warmup_off_leaves_no_sticky_flag.py`（5 条，
+  负控：去掉守卫 → 「留下粘滞标记」「重开后触发陈旧强制预热」两条真红）。
+  **通用判据（r625+r626 合并）**：关掉一个动件时，除了「判定短路」和
+  「副作用停止」，还要检查**有没有留下指向它的持久状态**（needs_* / 待办位），
+  否则那个状态永远等不到清除，还会在重新打开时被当成「当前事实」。
 - **「已弹出」必须是事实，不是「线程起来了」（GitHub #10 的后一半，r620）**：
   #10 原修复只堵了「无图形环境」一种已知原因（`os.name=="posix"` 且无
   `DISPLAY`/`WAYLAND_DISPLAY`）。但窗口开不出来还有很多种：缺 Playwright

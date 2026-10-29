@@ -18306,6 +18306,20 @@ function buildForm(){if(!CFG)return;let h='',gh='';
      ['并发上限', (GLB.max_concurrency>0?GLB.max_concurrency+' 个':'(自动)'), 'crawler.max_concurrency', '同时最多开几个采集任务；调低更稳、调高更快但更容易触发风控'],
      ['TLS 指纹', (GLB.tls_impersonate||'(默认)'), 'crawler.tls_impersonate', '飞猪等走 curl_cffi 的渠道使用的浏览器指纹'],
      ['登录窗口可见', (GLB.login_desktop?'桌面可见':'(无头)'), 'crawler.login_desktop', '弹登录窗时是否显示浏览器界面']])
+  +glsec('Android 真机通道 · 保存即热生效')
+  +'<div class="glgrid">'
+  /* Android 真机（r603）：智行/美团 App 没有可用的 Web 入口，只能走真机。
+     这一组键后端 `core/android/config.py` 早已真读（且对每个字段钳制），
+     配置页却一个控件都没有——按「配置页不允许存在任何无法配置的项」补齐。
+     取值范围与后端钳制逐项一致，避免界面能填出后端会悄悄改掉的值。 */
+  +glcell('启用 Android 通道','glbAndEn','GLB.android=Object.assign({},GLB.android||{},{enabled:this.checked})',!!(GLB.android||{}).enabled,'关闭时下面所有字段都不生效（后端只认这一项总开关）','check')
+  +glcell('虚拟机厂商','glbAndPv','GLB.android=Object.assign({},GLB.android||{},{provider:(this.value||"mumu").trim()})',esc((GLB.android||{}).provider||'mumu'),'目前仅支持 mumu（MuMu 模拟器）','text',null,'mumu')
+  +glcell('安装目录','glbAndDir','GLB.android=Object.assign({},GLB.android||{},{install_dir:(this.value||"").trim()})',esc((GLB.android||{}).install_dir||''),'留空 = 自动探测常见安装位置；配错目录会让整个通道起不来','text',null,'留空 = 自动探测')
+  +glcell('多开实例序号','glbAndVm','GLB.android=Object.assign({},GLB.android||{},{vm_index:Math.max(0,Math.min(64,parseInt(this.value)||0))})',esc((GLB.android||{}).vm_index||0),'MuMu 多开管理器的实例编号（0 起）；多开时对应不同 App 登录态','number',null,'0')
+  +glcell('冷启动超时','glbAndBoot','GLB.android=Object.assign({},GLB.android||{},{boot_timeout_s:Math.max(10,Math.min(600,parseInt(this.value)||180))})',esc((GLB.android||{}).boot_timeout_s||180),'10–600 · 模拟器冷启动到可操作的上限；实测 24–36 秒','number',null,'180')
+  +glcell('单命令超时','glbAndAct','GLB.android=Object.assign({},GLB.android||{},{action_timeout_s:Math.max(5,Math.min(900,parseInt(this.value)||60))})',esc((GLB.android||{}).action_timeout_s||60),'5–900 · 单条 adb 命令的超时上限','number',null,'60')
+  +glcell('登录态快照','glbAndSnap','GLB.android=Object.assign({},GLB.android||{},{snapshot:this.checked})',(GLB.android||{}).snapshot!==false,'预留：保存/恢复登录态快照，减少重复扫码','check')
+  +'</div>'
   +glsec('♻ 启动级 · 运行与存储 · 路径可迁移 · 保存后重启生效 <button class="btn2 secrestart" title="打开重启与迁移中心：查看差量、迁移预案并重启" onclick="openRestartCenter()">'+ic('rotate')+' 重启中心</button>')
   +'<div class="storehead"><span class="sh-t">配置文件</span><span class="sh-path" title="'+esc((RUNTIME&&RUNTIME.config_path)||'')+'">'+esc((RUNTIME&&RUNTIME.config_path)||'config.yaml')+'</span>'
   +'<span class="sh-acts">'
@@ -30291,6 +30305,9 @@ class _Handler(BaseHTTPRequestHandler):
                                 "login_desktop": bool(
                                     (cfg.get("crawler") or {}).get(
                                         "login_desktop", False)),
+                                # Android 真机通道（r603）：后端真读
+                                # （core/android/config.py），配置页同键可改。
+                                "android": dict(cfg.get("android") or {}),
                                 "run_on_start": bool(
                                     (cfg.get("schedule") or {}).get(
                                         "run_on_start", True)),
@@ -30543,6 +30560,30 @@ class _Handler(BaseHTTPRequestHandler):
                     if _px and not re.match(r"^https?://[^\s/]+:\d+$", _px):
                         _px = ""
                     _crw["proxy"] = _px
+                if isinstance(glb.get("android"), dict):
+                    _and = glb["android"]
+                    _a0 = dict(cfg.get("android") or {})
+                    if _and.get("enabled") is not None:
+                        _a0["enabled"] = bool(_and["enabled"])
+                    if _and.get("provider") is not None:
+                        _a0["provider"] = (str(_and["provider"]).strip()
+                                           or "mumu")[:40]
+                    if _and.get("install_dir") is not None:
+                        _a0["install_dir"] = str(
+                            _and["install_dir"]).strip()[:400]
+                    for _ak, _alo, _ahi, _ad in (
+                            ("vm_index", 0, 64, 0),
+                            ("boot_timeout_s", 10, 600, 180),
+                            ("action_timeout_s", 5, 900, 60)):
+                        if _and.get(_ak) is not None:
+                            try:
+                                _av = int(_and[_ak])
+                            except (TypeError, ValueError):
+                                _av = _ad
+                            _a0[_ak] = max(_alo, min(_ahi, _av))
+                    if _and.get("snapshot") is not None:
+                        _a0["snapshot"] = bool(_and["snapshot"])
+                    cfg["android"] = _a0
                 if glb.get("debug") is not None:
                     _crw["debug"] = bool(glb["debug"])
                 if glb.get("stealth") is not None:

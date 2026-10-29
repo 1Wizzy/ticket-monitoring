@@ -398,6 +398,16 @@ class ChannelBreaker:
             if login_cooldown_s is not None:
                 self.login_cooldown_s = max(0, int(login_cooldown_s))
 
+    def mark_cause(self, plat, kind):
+        """只记「这轮被什么拦的」，不改变任何节流动件（r626）。
+
+        用于「功能已被用户关掉」的场景：事实要留痕，但不该再要求一个
+        不会执行的动作（如 needs_warmup）。
+        """
+        with self._lock:
+            st = self._rec(str(plat))
+            st["reason"] = str(kind or "")
+
     def _rec(self, plat):
         return self._st.setdefault(str(plat), {
             "strikes": 0, "until": 0.0, "reason": "", "needs_login": False,
@@ -1238,6 +1248,18 @@ class Pacing:
             with self._lock:
                 self._cause[str(plat)] = kind
             return "", 0
+        if kind == "soft" and not self.cfg.get("warmup_enabled"):
+            # 预热开关关闭（r626）：不置 needs_warmup。那个标志只有
+            # note_warmup_ok()（预热成功）才会清，而预热被关掉就永远不执行
+            # ——标记会**永久挂着**；等用户哪天重开预热，一个几小时前的软拒
+            # 会立刻触发一次"强制预热"。事实照旧留痕（reason / _cause），
+            # 面板仍能说「这轮是软拒」，只是不再要求一个被关掉的动作。
+            # 不调 trip()：它的 soft 分支会置 needs_warmup，而预热被关掉
+            # 之后没有任何代码会清它。这里只留归因。
+            self._breaker.mark_cause(str(plat), "soft")
+            with self._lock:
+                self._cause[str(plat)] = "soft"
+            return "soft", 0
         # 软拒不清 needs_warmup：预热成功（拿到风控 cookie）后由
         # note_warmup_ok() 清；否则下一轮继续先预热。
         cd = self.trip(plat, kind, retry_after=retry_after)
