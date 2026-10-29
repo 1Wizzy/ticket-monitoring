@@ -24292,6 +24292,9 @@ class _State:
     started_at = ""
     logger = logging.getLogger("ticket-monitor")
     lock = threading.Lock()
+    # App 渠道登录会话（r604）：与浏览器登录的 login_sessions 并列，
+    # 但载体不同——那边是 Playwright 窗口，这边是 adb 帧流。
+    app_login = None   # 惰性创建 AppLoginRegistry
     login_sessions = {}   # plat -> {"evt": Event}（进行中的网页登录窗口）
     login_errors = {}    # plat -> 最近一次登录保存失败的安全摘要
     login_saved_cb = None  # 登录保存后清理采集器缓存
