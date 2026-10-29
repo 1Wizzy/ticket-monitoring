@@ -80,15 +80,20 @@ def set_flight_route(dev, from_name: str, to_name: str, date_ymd: str,
     time.sleep(1.5)
     if not dev.app_start("cn.suanya.zhixing"):
         return False, "启动 App 失败"
-    time.sleep(8)
-    xml = dev.dump()
-    if "<hierarchy" not in xml:
-        return False, "首页未能取到 UI"
+
+    # 轮询等首页，而不是固定 sleep：实测冷启动到首页可交互在 10–20s 之间
+    # 波动（固定 8s 会稳定失败，实测报「找不到机票查询」）。
+    xml = ""
+    deadline = time.time() + 45
+    while time.time() < deadline:
+        time.sleep(3)
+        xml = dev.dump()
+        if "机票查询" in xml:
+            break
+    if "机票查询" not in xml:
+        return False, "首页未就绪（等待 45s 仍找不到「机票查询」）"
 
     ns = nodes(xml)
-    # 必须在首页：有「机票查询」且没有航班号
-    if not find(ns, "机票查询"):
-        return False, "不在智行首页（找不到「机票查询」）"
 
     ok, detail = _pick_city(dev, ns, from_name, side="from", log=say)
     if not ok:
