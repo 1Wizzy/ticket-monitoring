@@ -353,9 +353,18 @@ def classify_failure(statuses, note=""):
         return "soft"
     if _IP_CODE_RE.search(low) or any(k in low for k in _IP_MARKS):
         return "ip"
-    if "blocked" in sts or any(k.lower() in low for k in _CAPTCHA_MARKS):
+    # **结构化状态优先于 note 文本**（r625）：路径状态是采集器给出的结论，
+    # note 只是给人看的说明。实测一条 status=login、note 写成
+    # 「需要登录，可能会弹验证码」的样本会被下面的 captcha 关键词吃掉，
+    # 于是「该去重登」被判成「验证挑战」→ 冷却 300 秒而不是引导用户登录。
+    # 顺序反过来也同样危险（登录墙里出现「风控」字样会被判 ip）。
+    if "login" in sts:
+        return "login"
+    if "blocked" in sts:
         return "captcha"
-    if "login" in sts or any(k in str(note or "") for k in _LOGIN_MARKS):
+    if any(k.lower() in low for k in _CAPTCHA_MARKS):
+        return "captcha"
+    if any(k in str(note or "") for k in _LOGIN_MARKS):
         return "login"
     return ""
 
@@ -956,6 +965,8 @@ class Pacing:
                                    self.cfg["per_minute"])
         self._last = {}
         self._health = {}
+        # 最近一次失败归类（熔断关闭时也要能说清被什么拦的）
+        self._cause = {}
         self._plan = []
         self._round = {"at": "", "fast": 0, "slow": 0, "skip": 0,
                        "trips": [], "busy": [],
@@ -1208,12 +1219,24 @@ class Pacing:
 
         `retry_after` 来自响应头（秒）。有它就以它为准，没有才用自算阶梯。
         返回 (kind, cooldown_s)；kind 空串表示"不算拒绝"。
+
+        熔断开关关闭时（r625）：分类照做（`cause` 仍记在通道状态里供界面
+        显示「这次是被什么拦的」），但**不返回 kind**——调用方拿 kind 当
+        「已熔断」的信号（写 auto_trip 台账、打「命中…熔断 Ns」、自动弹窗）。
+        原实现在此只让 trip() 返回 0，kind 照旧返回，于是关掉开关后界面仍
+        宣称「已熔断」、账本仍写一条自动干预 —— 开关看起来生效了，实际没有。
         """
         kind = classify_failure(statuses, note)
         if not kind:
             if any(str(s) == "ok" or str(s) == "calendar"
                    for s in (statuses or [])):
                 self.reset(plat)
+            return "", 0
+        if not self.cfg["breaker_enabled"] and kind not in ("soft", "login"):
+            # 未熔断，但把归因留在 Pacing 上（可见性不因开关而消失）：
+            # 面板仍能说「这次是被验证码拦的」，只是不再宣称已熔断。
+            with self._lock:
+                self._cause[str(plat)] = kind
             return "", 0
         # 软拒不清 needs_warmup：预热成功（拿到风控 cookie）后由
         # note_warmup_ok() 清；否则下一轮继续先预热。
@@ -1237,6 +1260,12 @@ class Pacing:
         channels = self._breaker.snapshot(now)
         with self._lock:
             health = {k: dict(v) for k, v in self._health.items()}
+            cause = dict(self._cause)
+        # 熔断关闭时的归因（r625）：未熔断不等于没被拦。把它挂到通道上，
+        # 界面才能说「这轮被验证码拦了，熔断已关」而不是一片正常。
+        for p, k in cause.items():
+            if p in channels and not channels[p].get("reason"):
+                channels[p]["blocked_but_open"] = k
         for p, b in self._bucket.snapshot(now).items():
             if p in channels:
                 channels[p]["bucket"] = b

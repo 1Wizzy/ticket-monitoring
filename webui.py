@@ -17680,6 +17680,13 @@ async function loadPacing(force){
    let tone=_demoAll&&v.state==='ok'&&!v.needs_login?'':'ok',ev='';
    if(v.state==='cooldown'){lab='冷却 '+_paceLeft(v.remain_s);tone='bad';
     ev=(v.reason==='ip'?'出口 IP 被拦':(v.reason==='captcha'?'验证挑战':(v.reason?'失败连击':'自动冷却')));}
+   /* 熔断关闭时的真相（r625）：这一轮被拦了，但开关让你继续跑。
+      原先这里落进 '正常'——用户关掉开关后就再也看不出被拦过。 */
+   else if(v.blocked_but_open){
+    lab='被拦 · 未熔断';tone='warn';
+    ev=(v.blocked_but_open==='captcha'?'本轮命中验证挑战，熔断已关闭'
+        :(v.blocked_but_open==='ip'?'本轮出口 IP 被拦，熔断已关闭'
+        :'本轮被判失败，熔断已关闭（'+v.blocked_but_open+'）'));}
    /* 需登录时要说清「哪一端」：飞猪 PC/H5 是两套独立 cookie，只写
       「需登录」用户不知道点哪个去验证，也会误以为整家渠道都挂了。
       槽位数据来自 channelAuthView 同源的 /api/login-state，演示会话
