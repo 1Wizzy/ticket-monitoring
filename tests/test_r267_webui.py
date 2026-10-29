@@ -86,8 +86,11 @@ def test_state_payload_carries_suspended():
     assert re.search(r'"suspended":\s*_suspended_users\(', src), \
         "/api/state 输出未挂 suspended 键"
     # st.cfg 单一事实源取原始 routes（热载安全——LESSONS 十二§1）
-    assert re.search(r'_suspended_users\(\s*users\s*,\s*st\.cfg\.get\("users"\)', src), \
-        "suspended 取数未走 st.cfg 单一事实源"
+    # r621：`_cfg` 是 `st.cfg` 在 _build_state 里的局部别名（同一事实源），
+    # 判据守的是「取自 cfg 而不是取自运行时 states」，不绑某一种写法。
+    assert re.search(
+        r'_suspended_users\(\s*users\s*,\s*(?:st\.cfg|_cfg)\.get\("users"\)',
+        src), "suspended 取数未走 cfg 单一事实源"
 
 
 def test_state_cache_invalidated_on_cfg_save():
