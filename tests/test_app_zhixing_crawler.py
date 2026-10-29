@@ -132,6 +132,21 @@ def test_unknown_page_marks_blocked_not_empty():
     assert not any(p["status"] == "empty" for p in c.paths)
 
 
+def test_unknown_page_does_not_trip_captcha_breaker():
+    """页面结构不认识 ≠ 被验证码拦。
+
+    pacing.classify_failure 把 blocked 归为 captcha（300s 阶梯熔断），
+    而"App 改版"重试也不会变好，更不该让整个渠道停摆 5 分钟——
+    实机踩过：第一次识别失败就把 App 渠道熔断 300s。
+    """
+    from core.pacing import classify_failure
+    c, _, _ = _make(dumps=["<hierarchy></hierarchy>"])
+    c.safe_fetch("SHA", "BJS", ["2026-10-29"])
+    statuses = [p["status"] for p in c.paths]
+    kind = classify_failure(statuses, note="")
+    assert kind != "captcha", statuses
+
+
 def test_package_and_name():
     c, _, _ = _make()
     assert c.name == "app_zhixing"

@@ -105,9 +105,12 @@ class AppZhixingCrawler(AppCrawler):
             self.path_note("app-list", "empty", detail="页面明确无航班")
             return []
         if state == "unknown":
-            # 有页面但既不认登录也不认空态：这是"没看懂"，不是"没航班"
-            self.path_note("app-list", "blocked",
-                           detail="无法识别的页面状态")
+            # 有页面但既不认登录也不认空态：这是"没看懂"，不是"没航班"。
+            # 记 timeout 而不是 blocked：`blocked` 在 pacing 里归 captcha
+            # （300s 阶梯熔断），而"页面结构不认识"重试也不会变好，
+            # 更不该让整个 App 渠道停摆——这是解析器要修，不是要躲。
+            self.path_note("app-list", "timeout",
+                           detail="无法识别的页面状态（可能是 App 改版）")
             return []
 
         return self._emit_calendar(xml, from_city, to_city, dates,

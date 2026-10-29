@@ -1779,8 +1779,13 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
         key = tuple(sorted(set(platforms)))
         with crawler_cache_lock:
             if key not in crawler_cache:
-                crawler_cfg = dict((rt.get("cfg") or cfg).get("crawler", {}))
+                _full = rt.get("cfg") or cfg
+                crawler_cfg = dict(_full.get("crawler", {}))
                 crawler_cfg["user_data_dir"] = session_root
+                # App 渠道读的是顶层 android: 段（不属于 crawler），
+                # 且要能区分「没配」与「配了但关闭」——所以整段落进去，
+                # 由 core.android.config.normalize 判 enabled。
+                crawler_cfg["android"] = _full.get("android") or {}
                 insts = []
                 for name in key:
                     cls = REGISTRY.get(name)
