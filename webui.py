@@ -18500,8 +18500,9 @@ function buildForm(){if(!CFG)return;let h='',gh='';
    </div>
    `+glab('B','监控渠道','',(u.platforms||[]).length+' / 5 渠道')+`
    <div class="srow"><div class="slab"><b>监控渠道</b><div class="shint">点击切换采集渠道；携程/去哪儿需本机已建立登录态，其余开箱即用</div></div><div class="sctl" style="flex-wrap:wrap;justify-content:flex-end">`+
-   Object.keys(PLATS).map(p=>`<span class="chip pch p-${p}${(u.platforms||[]).includes(p)?' on':''}" title="${(p==='ctrip'||p==='qunar')?'需本机已建立登录态':'开箱即用'}" onclick="togPlat(${i},'${p}',this)">${srxPlatIcon(p)}${PLATS[p]}</span>`).join('')+
-  /* App 渠道（r613）：`app_zhixing` 早已在 REGISTRY / 健康正则 / 告警映射里，
+   Object.keys(PLATS).map(p=>`<span class="chip pch p-${p}${(u.platforms||[]).includes(p)?' on':''}" title="${(p==='ctrip'||p==='qunar')?'需本机已建立登录态':'开箱即用'}" onclick="togPlat(${i},'${p}',this)">${srxPlatIcon(p)}${PLATS[p]}</span>`).join('')
+   +
+   /* App 渠道（r613）：`app_zhixing` 早已在 REGISTRY / 健康正则 / 告警映射里，
      只要写进用户 `platforms:` 就会被实例化——但配置页没有任何入口，用户只能
      改 yaml。这里补一个勾选，并在 title 里点明它依赖「Android 真机通道」总开关
      （那是另一组配置，别让人以为勾了就会跑）。 */
