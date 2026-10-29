@@ -3060,6 +3060,8 @@ def main():
                     help="立即生成价格走势图并推送钉钉（未配图床则只存本地）")
     ap.add_argument("--install-browser", action="store_true",
                     help="仅安装/更新 chromium 内核后退出")
+    ap.add_argument("--app-status", action="store_true",
+                    help="检查 Android 运行时（App 渠道）状态后退出；只读，不安装任何东西")
     ap.add_argument("--setup-login", action="store_true",
                     help="顺序弹出浏览器引导登录所有已启用渠道（每家登录一次永久复用）")
     ap.add_argument("--login", metavar="PLATFORM",
@@ -3075,6 +3077,21 @@ def main():
         # 释放 data/.instance.lock——新实例即时抢锁必撞锁退场（十五§1
         # 同族），延迟到旧进程死后再加锁
         time.sleep(args.restart_delay)
+    if args.app_status:
+        # 只读体检：先于实例锁返回。体检不该因为"已有实例在跑"而失败
+        # ——恰恰相反，那正是用户想确认状态的时刻。
+        from core.android.bootstrap import status as _app_status
+        _p = Path(args.config)
+        _cfg = load_config(str(_p)) if _p.exists() else {}
+        _st = _app_status(_cfg)
+        print(f"Android 运行时：{_st['state']}")
+        print(f"  说明：{_st['detail']}")
+        for _s in _st.get("steps") or []:
+            print(f"    [{'x' if _s['done'] else ' '}] {_s['label']}")
+        if _st.get("next"):
+            print(f"  下一步：{_st['next']}")
+        return
+
     if not acquire_instance_lock():
         print("⚠ 已有实例在运行（检测到实例锁），本次启动退出。"
               "控制台仍可用：浏览器打开 http://127.0.0.1:8765")
@@ -3098,6 +3115,19 @@ def main():
 
     if args.install_browser:
         ensure_chromium(["qunar"])
+        return
+
+    if args.app_status:
+        # 只读体检：打印 Android 运行时状态与下一步，不安装任何东西
+        from core.android.bootstrap import status as _app_status
+        _cfg = load_config(str(cfg_path)) if cfg_path.exists() else {}
+        _st = _app_status(_cfg)
+        print(f"Android 运行时：{_st['state']}")
+        print(f"  说明：{_st['detail']}")
+        for _s in _st.get("steps") or []:
+            print(f"    [{'x' if _s['done'] else ' '}] {_s['label']}")
+        if _st.get("next"):
+            print(f"  下一步：{_st['next']}")
         return
 
     if not cfg_path.exists():
@@ -3147,6 +3177,17 @@ def main():
         logger.warning("[迁移] 登录态搬迁失败（新目录继续；旧档保留）: %s", e)
     _apply_browser_dir(cfg)
     ensure_chromium(cfg.get("platforms") or ["qunar"], logger)
+    # App 渠道（可选）：只在勾了 App 渠道时才检查，未勾选零开销。
+    # 与 ensure_chromium 的差别：**不自动下载**——MuMu 约 7GB 且需一次
+    # 管理员确认，越界替用户装会被当成流氓行为，只给可执行的指引。
+    try:
+        from core.android.bootstrap import ensure_android_runtime
+        _app_plats = set()
+        for _u in (cfg.get("users") or []):
+            _app_plats |= set(_u.get("platforms") or [])
+        ensure_android_runtime(sorted(_app_plats), cfg, logger)
+    except Exception as e:
+        logger.warning("[app] 引导检查失败（不影响其他渠道）: %s", e)
     storage = PriceStorage(_anchored(out.get("db_path"), "data/prices.db"))
     # 迁移源状态只在库成功打开后落盘：路径不可写等启动失败时保留
     # 上一次成功源，下次启动仍能重试搬迁（提前落盘会让真源被遗忘）
