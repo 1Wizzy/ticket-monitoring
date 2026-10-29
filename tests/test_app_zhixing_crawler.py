@@ -184,8 +184,30 @@ def test_out_of_window_date_is_explained_not_silent():
     c, _, _ = _make()
     out = c.safe_fetch("SHA", "BJS", ["2027-03-15"])
     assert out == []
-    rec = [p for p in c.paths if p["path"] == "app-calendar"][-1]
+    rec = [p for p in c.paths if p["path"] == "日历"][-1]
     assert "窗口外" in rec["detail"], rec["detail"]
+
+
+def test_calendar_path_is_in_cal_family():
+    """App 的日历通路必须落在 CAL_PATH_FAMILY 里。
+
+    日历族是按**中文通路名**匹配的（`startswith(("日历","窗历"))`），
+    用来让"只出价不证明细"的通路共享一套复发账。若 App 用英文路径名
+    （如 app-calendar-dialog），族内匹配不到——健康/节流会把同一条
+    业务通路当成两个东西，一边报成功一边报劣化。
+    """
+    from core.models import CAL_PATH_FAMILY
+    c, _, _ = _make(dumps=[_real_fixture()])
+    c.safe_fetch("SHA", "CAN", ["2026-10-30"])
+    cal_paths = [p["path"] for p in c.paths if p["status"] == "calendar"]
+    assert cal_paths, [p["path"] for p in c.paths]
+    for name in cal_paths:
+        assert name.startswith(tuple(CAL_PATH_FAMILY)), name
+
+
+def _real_fixture():
+    with open(FIX, encoding="utf-8") as f:
+        return f.read()
 
 
 def test_long_calendar_dialog_preferred_over_strip():
@@ -199,4 +221,4 @@ def test_long_calendar_dialog_preferred_over_strip():
     assert out, "弹层里 11-03 有价，应产出"
     assert out[0].price == 256.0
     assert "calendar-dialog" in out[0].prov
-    assert any(p["path"] == "app-calendar-dialog" for p in c.paths)
+    assert any(p["path"] == "日历" for p in c.paths)

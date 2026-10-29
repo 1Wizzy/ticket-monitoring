@@ -177,7 +177,7 @@ class AppZhixingCrawler(AppCrawler):
             return []
         rows = parse_date_dialog(xml)
         if not rows:
-            self.path_note("app-calendar-dialog", "parse_error",
+            self.path_note("日历", "parse_error",
                            detail="日历弹层未解析出格子", ms=ms)
             return []
         return self._emit_from_dialog(rows, from_city, to_city, dates, ms)
@@ -232,7 +232,7 @@ class AppZhixingCrawler(AppCrawler):
                  f"（有价 {len(priced)}）"
         if outside:
             detail += f" · {outside} 个目标日期未渲染"
-        self.path_note("app-calendar-dialog", "calendar", rows=len(out),
+        self.path_note("日历", "calendar", rows=len(out),
                        date=(dates[0] if dates else ""), detail=detail, ms=ms,
                        url=f"android://{_APP_PKG}?view=calendar")
         if not out:
@@ -256,7 +256,7 @@ class AppZhixingCrawler(AppCrawler):
 
         rows = parse_calendar(xml)
         if not rows:
-            self.path_note("app-calendar", "parse_error",
+            self.path_note("日历", "parse_error",
                            detail="日历条未解析出价格", ms=ms)
             return []
 
@@ -301,7 +301,7 @@ class AppZhixingCrawler(AppCrawler):
                 "[%s] %d/%d 个目标日期不在智行日历窗口内（该窗口仅约 %d 天）",
                 self.name, outside, len(wanted), len(rows))
         status = "calendar" if out else ("empty" if outside == 0 else "calendar")
-        self.path_note("app-calendar", status, rows=len(out),
+        self.path_note("日历", status, rows=len(out),
                        date=anchor, detail=detail, ms=ms,
                        url=f"android://{_APP_PKG}")
         if not out:
