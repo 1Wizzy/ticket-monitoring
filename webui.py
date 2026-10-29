@@ -13710,7 +13710,7 @@ async function diagProbe(p){
    整页脚本抛 `Cannot access 'APP_PLAT_NAME' before initialization`，
    S 永不初始化、全站不可用。r614 曾把它写进 renderHealth 体内（缩进 0
    看不出来），结果健康卡之外的三处读它全是 ReferenceError。 */
-const APP_PLAT_NAME={app_zhixing:'智行 App',app_meituan:'美团 App'};
+const APP_PLAT_NAME={app_zhixing:'智行 App'};
 function renderHealth(j){
  /* 已有时间线时错误体保陈旧（与 catch 分支「healthcard 可见=保陈旧不
     闪错」政策对齐）：瞬态 500 曾把整条格带掀成错误文案，下一轮询才自愈 */
