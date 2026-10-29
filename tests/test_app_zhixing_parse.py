@@ -82,3 +82,36 @@ def test_detect_state_login_when_blank_page():
 def test_detect_state_unknown_on_garbage():
     assert detect_state("") == "unknown"
     assert detect_state("<hierarchy></hierarchy>") == "unknown"
+
+
+def test_calendar_uses_resource_id_when_present():
+    """有 date-item-N-* 时按 id 配对，不看坐标。
+
+    构造一个坐标故意错乱（日期和价格 y 差很远）的页面：按坐标会配错，
+    按 id 必须仍然正确——id 是 App 自己的结构约定，比坐标稳。
+    """
+    xml = ('<hierarchy>'
+           '<node text="11-05" resource-id="date-item-0-date-text" '
+           'bounds="[0,10][80,30]" />'
+           '<node text="\u00a5299" resource-id="date-item-0-price-text" '
+           'bounds="[0,900][80,930]" />'
+           '<node text="11-06" resource-id="date-item-1-date-text" '
+           'bounds="[100,10][180,30]" />'
+           '<node text="\u00a5388" resource-id="date-item-1-price-text" '
+           'bounds="[100,900][180,930]" />'
+           '</hierarchy>')
+    rows = parse_calendar(xml)
+    assert [(r["date"], r["price"]) for r in rows] == [
+        ("11-05", 299), ("11-06", 388)]
+
+
+def test_calendar_id_path_marks_masked_not_zero():
+    xml = ('<hierarchy>'
+           '<node text="11-05" resource-id="date-item-0-date-text" '
+           'bounds="[0,10][80,30]" />'
+           '<node text="3??" resource-id="date-item-0-price-text" '
+           'bounds="[0,40][80,60]" />'
+           '</hierarchy>')
+    rows = parse_calendar(xml)
+    assert rows[0]["price"] is None
+    assert rows[0]["masked"] is True

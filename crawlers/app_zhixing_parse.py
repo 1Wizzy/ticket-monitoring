@@ -20,9 +20,30 @@ from __future__ import annotations
 import re
 from typing import Dict, List, Optional
 
-# 节点：text + bounds
-_NODE_RE = re.compile(
-    r'text="([^"]*)"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"')
+# 节点解析分两步：先取整个 <node ...> 标签，再分别抽属性。
+# **不要用一个正则同时抓 text/resource-id/bounds**——惰性量词下
+# 中间那个可选分组会永远匹配空（实测踩过：rid 恒为 None，
+# 日历价整片丢成 None 却不报错）。
+_TAG_RE = re.compile(r"<node\b[^>]*>")
+_ATTR_CACHE = {}
+
+
+def _attr(tag: str, name: str) -> str:
+    key = (name,)
+    pat = _ATTR_CACHE.get(key)
+    if pat is None:
+        pat = re.compile(name + r'="([^"]*)"')
+        _ATTR_CACHE[key] = pat
+    m = pat.search(tag)
+    return m.group(1) if m else ""
+
+
+_BOUNDS_RE = re.compile(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"')
+
+# 日历格子的稳定 id（实测）：date-item-3 / date-item-3-date-text /
+# date-item-3-price-text。**按 id 配对优先于按坐标配对**——坐标会随
+# 分辨率/字体缩放漂移，id 是 App 自己的结构约定。
+_ITEM_ID_RE = re.compile(r"^date-item-(\d+)(?:-(date|day|price)-text)?$")
 
 _DATE_RE = re.compile(r"^(\d{2})-(\d{2})$")
 _TIME_RE = re.compile(r"^\d{2}:\d{2}$")
@@ -42,10 +63,12 @@ _LOGIN_MARKS = ("立即登录", "登录解锁更低价", "手机号登录", "验
 
 
 class Node:
-    __slots__ = ("text", "x1", "y1", "x2", "y2")
+    __slots__ = ("text", "rid", "x1", "y1", "x2", "y2")
 
-    def __init__(self, text: str, x1: int, y1: int, x2: int, y2: int):
+    def __init__(self, text: str, rid: str, x1: int, y1: int,
+                 x2: int, y2: int):
         self.text = text
+        self.rid = rid
         self.x1, self.y1, self.x2, self.y2 = x1, y1, x2, y2
 
     @property
@@ -53,18 +76,65 @@ class Node:
         return (self.y1 + self.y2) // 2
 
     def __repr__(self):
-        return f"Node({self.text!r}, {self.x1},{self.y1})"
+        return f"Node({self.text!r}, {self.rid!r}, {self.x1},{self.y1})"
 
 
 def _nodes(xml: str) -> List[Node]:
     out = []
-    for m in _NODE_RE.finditer(xml or ""):
-        text = (m.group(1) or "").strip()
+    for m in _TAG_RE.finditer(xml or ""):
+        tag = m.group(0)
+        text = _attr(tag, "text").strip()
         if not text:
             continue
-        out.append(Node(text, int(m.group(2)), int(m.group(3)),
-                        int(m.group(4)), int(m.group(5))))
+        b = _BOUNDS_RE.search(tag)
+        if not b:
+            continue
+        out.append(Node(text, _attr(tag, "resource-id").strip(),
+                        int(b.group(1)), int(b.group(2)),
+                        int(b.group(3)), int(b.group(4))))
     return out
+
+
+def _parse_calendar_by_id(nodes: List[Node]) -> List[dict]:
+    """按 date-item-N-* 的 resource-id 配对日期与价格。
+
+    这是首选路径：id 是 App 自己的结构约定，比坐标稳。同一个 N 下
+    date-text 给日期、price-text 给价格；缺 price 的格子按"该日无价"
+    处理（不是 0）。
+    """
+    groups: Dict[str, dict] = {}
+    for n in nodes:
+        m = _ITEM_ID_RE.match(n.rid or "")
+        if not m:
+            continue
+        idx, kind = m.group(1), m.group(2) or "root"
+        g = groups.setdefault(idx, {})
+        g[kind] = n
+    if not groups:
+        return []
+
+    out = []
+    for idx in sorted(groups, key=lambda k: int(k)):
+        g = groups[idx]
+        date_node = g.get("date")
+        if date_node is None:
+            continue
+        date_text = date_node.text
+        if not _DATE_RE.match(date_text):
+            continue
+        price_node = g.get("price")
+        price, masked = None, False
+        if price_node is not None:
+            pm = _PRICE_FULL_RE.match(price_node.text)
+            if pm:
+                price = int(pm.group(1))
+            elif _PRICE_MASK_RE.match(price_node.text):
+                masked = True
+            elif price_node.text in _CURRENCY_ONLY:
+                # 「¥」单独一格，数字在相邻节点 —— 交给坐标兜底路径
+                price = None
+        out.append({"date": date_text, "price": price, "masked": masked})
+    return sorted(out, key=lambda r: r["date"])
 
 
 def _same_row(a: Node, b: Node, tol: int = 14) -> bool:
@@ -86,8 +156,18 @@ def parse_calendar(xml: str) -> List[dict]:
     """解析顶部日历条：返回 [{date, price, masked}]，缺价日 price=None。
 
     date 保持 MM-DD（App 上就是 MM-DD，年份由调用方按查询日期补）。
+
+    两条路径：
+      1. **resource-id 配对**（首选）——App 自己的结构约定，最稳；
+      2. **坐标配对**（兜底）——某些版本/页面没有 id 时才用。实测
+         '10-29' cy=129 与 '¥450' cy=153 差 24px，是"上日期下价格"的
+         竖排格子，不是同一行，所以兜底不能用行容差。
     """
     nodes = _nodes(xml)
+    by_id = _parse_calendar_by_id(nodes)
+    if by_id:
+        return by_id
+
     prices = []
     for n in nodes:
         m = _PRICE_FULL_RE.match(n.text)
@@ -181,7 +261,7 @@ def parse_flight_rows(xml: str) -> List[dict]:
 
 
 def detect_state(xml: str) -> str:
-    """页面状态：login / empty / ok / unknown。
+    """页面状态：login / empty / ok / calendar / unknown。
 
     判据顺序（实测教训）：
       * **先判有数据**：未登录时页面顶部本来就有"登录解锁更低价"横幅，
@@ -189,9 +269,15 @@ def detect_state(xml: str) -> str:
         "需要登录"，白白丢掉可用的日历价。
       * 再判空态：只有明确的"没有找到航班"文案才是 empty。
       * 最后才是 login：既无航班也没空态文案、但有登录墙，才归 login。
+
+    「选择日期」日历弹层是**另一种有数据**的页面：它没有航班号，
+    但有 flight_calendar_date_cell-* 的日期格子。不认它就会被判
+    unknown，长窗口日历整片作废（实测踩过）。
     """
     if not xml or "<hierarchy" not in xml:
         return "unknown"
+    if "flight_calendar_date_cell-" in xml:
+        return "calendar"
     texts = [n.text for n in _nodes(xml)]
     joined = " ".join(texts)
     if any(_FLIGHT_RE.search(t) for t in texts):

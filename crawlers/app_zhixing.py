@@ -125,6 +125,11 @@ class AppZhixingCrawler(AppCrawler):
         if state == "empty":
             self.path_note("app-list", "empty", detail="页面明确无航班")
             return []
+        # calendar：页面已经是「选择日期」长窗口日历，直接按它解析，
+        # 不必再打开弹层（它本来就在）。
+        if state == "calendar":
+            return self._emit_calendar(xml, from_city, to_city, dates,
+                                       int((time.time() - started) * 1000))
         if state == "unknown":
             # 有页面但既不认登录也不认空态：这是"没看懂"，不是"没航班"。
             # 记 timeout 而不是 blocked：`blocked` 在 pacing 里归 captcha
@@ -134,11 +139,90 @@ class AppZhixingCrawler(AppCrawler):
                            detail="无法识别的页面状态（可能是 App 改版）")
             return []
 
+        # 主动打开「选择日期」弹层再读一次：弹层是跨月长窗口日历，
+        # 首页条只有 8 天。打开失败不影响结果，回落到首页条解析。
+        long_xml = self._try_long_calendar(dev)
+        if long_xml:
+            out = self._emit_calendar(long_xml, from_city, to_city, dates,
+                                      int((time.time() - started) * 1000))
+            if out:
+                return out
+
         return self._emit_calendar(xml, from_city, to_city, dates,
                                    int((time.time() - started) * 1000))
 
+    def _try_long_calendar(self, dev) -> str:
+        """打开日期弹层并取页面；失败返回空串（不抛）。"""
+        try:
+            from .app_zhixing_nav import close_date_dialog, open_date_dialog
+            ok, detail = open_date_dialog(dev, log=self.logger)
+            if not ok:
+                self.logger.info("[%s] 长窗口日历未打开：%s",
+                                 self.name, detail)
+                return ""
+            xml = dev.dump()
+            close_date_dialog(dev)   # 关掉，别把状态留给下一轮
+            time.sleep(1)
+            return xml
+        except Exception as e:
+            self.logger.info("[%s] 长窗口日历异常：%s", self.name,
+                             type(e).__name__)
+            return ""
+
+    def _emit_from_dialog(self, dialog_rows, from_city: str, to_city: str,
+                          dates: List[str], ms: int) -> List[FlightPrice]:
+        """从「选择日期」弹层产出日历价（长窗口）。
+
+        与首页日历条同属**日历族**：每天一条最低价、无航班号。
+        差别只在覆盖长度（弹层跨月，首页约 8 天）。
+        """
+        wanted = set(dates or [])
+        out: List[FlightPrice] = []
+        for row in dialog_rows:
+            ymd = row["date"]
+            if wanted and ymd not in wanted:
+                continue
+            price = row.get("price")
+            if price is None:
+                continue
+            out.append(FlightPrice(
+                platform=self.name,
+                from_city=from_city, to_city=to_city,
+                depart_date=ymd, price=float(price),
+                extra=('{"calendar": true, "masked": false, '
+                       '"source": "app-calendar-dialog"}'),
+                prov=f"app:{_APP_PKG}:calendar-dialog",
+            ))
+
+        priced = [r for r in dialog_rows if r.get("price")]
+        covered = {r["date"] for r in dialog_rows}
+        outside = len([d for d in wanted if d and d not in covered])
+        detail = f"长窗口日历 {len(out)} 天 / 已渲染 {len(covered)} 格" \
+                 f"（有价 {len(priced)}）"
+        if outside:
+            detail += f" · {outside} 个目标日期未渲染"
+        self.path_note("app-calendar-dialog", "calendar", rows=len(out),
+                       date=(dates[0] if dates else ""), detail=detail, ms=ms,
+                       url=f"android://{_APP_PKG}?view=calendar")
+        if not out:
+            self.logger.info("[%s] 长窗口日历命中 0 条（%s）",
+                             self.name, detail)
+        return out
+
     def _emit_calendar(self, xml: str, from_city: str, to_city: str,
                        dates: List[str], ms: int) -> List[FlightPrice]:
+        # 页面可能是「选择日期」弹层（长窗口，跨两个月）或首页日历条
+        # （短期，7–8 天）。前者优先——同样一次读页面，覆盖长得多。
+        from .app_zhixing_calendar import (has_calendar_dialog, month_range,
+                                           parse_date_dialog)
+        dialog_rows = []
+        if has_calendar_dialog(xml):
+            dialog_rows = parse_date_dialog(xml)
+
+        if dialog_rows:
+            return self._emit_from_dialog(dialog_rows, from_city, to_city,
+                                          dates, ms)
+
         rows = parse_calendar(xml)
         if not rows:
             self.path_note("app-calendar", "parse_error",

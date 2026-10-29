@@ -57,7 +57,10 @@ class FakeDevice:
 
     def dump(self, retries=2):
         self.calls.append(("dump",))
-        return self.dumps.pop(0) if self.dumps else ""
+        # 多页时依次出队，用尽后稳定返回最后一页（模拟"页面没变"）
+        if len(self.dumps) > 1:
+            return self.dumps.pop(0)
+        return self.dumps[0] if self.dumps else ""
 
     def current_activity(self):
         return "cn.suanya.zhixing/com.app.main.entrance.MainActivity"
@@ -67,6 +70,10 @@ class FakeDevice:
 
     def tap(self, x, y):
         self.calls.append(("tap", x, y))
+        return True
+
+    def keyevent(self, key):
+        self.calls.append(("key", key))
         return True
 
 
@@ -179,3 +186,17 @@ def test_out_of_window_date_is_explained_not_silent():
     assert out == []
     rec = [p for p in c.paths if p["path"] == "app-calendar"][-1]
     assert "窗口外" in rec["detail"], rec["detail"]
+
+
+def test_long_calendar_dialog_preferred_over_strip():
+    """页面是「选择日期」弹层时，走长窗口解析（跨月），不用首页条。"""
+    fix = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "fixtures", "zhixing_date_dialog_dump.xml")
+    with open(fix, encoding="utf-8") as f:
+        dialog_xml = f.read()
+    c, _, _ = _make(dumps=[dialog_xml])
+    out = c.safe_fetch("SHA", "CAN", ["2026-11-03"])
+    assert out, "弹层里 11-03 有价，应产出"
+    assert out[0].price == 256.0
+    assert "calendar-dialog" in out[0].prov
+    assert any(p["path"] == "app-calendar-dialog" for p in c.paths)
