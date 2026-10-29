@@ -171,12 +171,27 @@ class AppZhixingCrawler(AppCrawler):
         detail = f"日历 {len(out)} 天"
         if masked_days:
             detail += f" · {masked_days} 天无价"
-        self.path_note("app-calendar", "calendar", rows=len(out),
+        # 「目标日期在日历窗口外」必须单独说明：智行日历条只覆盖首屏
+        # 约 7–8 天，配置里的远期日期永远命中 0 条。若只记「日历 0 天」，
+        # 读者分不清是"这几天没价"还是"这条航线压根不在窗口内"——
+        # 前者是数据、后者是能力边界，处置完全不同（改配置 vs 改实现）。
+        outside = 0
+        if wanted and rows:
+            inwin = {_md_to_ymd(r["date"], anchor) for r in rows}
+            inwin.discard("")
+            outside = len([d for d in wanted if d not in inwin])
+        if outside:
+            detail += f" · {outside} 个目标日期在日历窗口外"
+            self.logger.info(
+                "[%s] %d/%d 个目标日期不在智行日历窗口内（该窗口仅约 %d 天）",
+                self.name, outside, len(wanted), len(rows))
+        status = "calendar" if out else ("empty" if outside == 0 else "calendar")
+        self.path_note("app-calendar", status, rows=len(out),
                        date=anchor, detail=detail, ms=ms,
                        url=f"android://{_APP_PKG}")
         if not out:
             # 有日历但目标日期都没价：这是"没拿到价"，不是"无票"
-            self.logger.info("[%s] 日历条命中 0 条（目标日期无价）", self.name)
+            self.logger.info("[%s] 日历条命中 0 条（%s）", self.name, detail)
         return out
 
     def _clear_blockers(self, dev, xml: str):

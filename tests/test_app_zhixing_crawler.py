@@ -166,3 +166,16 @@ def test_dates_filtered_to_requested():
     c, _, _ = _make()
     out = c.safe_fetch("SHA", "BJS", ["2026-10-30"])
     assert {f.depart_date for f in out} == {"2026-10-30"}
+
+
+def test_out_of_window_date_is_explained_not_silent():
+    """目标日期在日历窗口外时必须说明——否则「0 条」读不出原因。
+
+    智行日历条只覆盖首屏约 7–8 天，配置里的远期日期永远命中 0 条。
+    「这几天没价」是数据，「不在窗口内」是能力边界，处置完全不同。
+    """
+    c, _, _ = _make()
+    out = c.safe_fetch("SHA", "BJS", ["2027-03-15"])
+    assert out == []
+    rec = [p for p in c.paths if p["path"] == "app-calendar"][-1]
+    assert "窗口外" in rec["detail"], rec["detail"]
