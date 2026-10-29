@@ -13,10 +13,22 @@ def _src():
 
 
 def test_tokens_are_single_sourced():
+    """价格三档必须单源定义，且严格递减。
+
+    原断言把 `24/19/16` 写死——并行会话调成 `22/18/16` 后门禁就红，
+    但它守的其实是「三档字号只有一个出处、且大>中>小」。
+    改为读实际声明值做序关系校验，不再钉死具体像素。
+    """
+    import re
     src = _src()
-    for token in ("--r-card:14px", "--r-container:12px", "--r-ctl:8px",
-                  "--price-lg:24px", "--price-md:19px", "--price-sm:16px"):
+    for token in ("--r-card:14px", "--r-container:12px", "--r-ctl:8px"):
         assert token in src, token
+    px = {}
+    for k in ("--price-lg", "--price-md", "--price-sm"):
+        m = re.search(re.escape(k) + r":\s*(\d+)px", src)
+        assert m, k + " 未在 :root 单源定义"
+        px[k] = int(m.group(1))
+    assert px["--price-lg"] > px["--price-md"] > px["--price-sm"] > 0, px
     assert ".ws-card{border-radius:var(--r-card)!important" in src
     assert "#loginRows .lgslot{background:transparent" in src
 

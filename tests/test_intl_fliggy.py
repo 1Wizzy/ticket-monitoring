@@ -18,6 +18,8 @@ import logging
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.intl import airport_city_code  # noqa: E402
@@ -25,6 +27,17 @@ from crawlers.fliggy import FliggyCrawler  # noqa: E402
 
 _LOG = logging.getLogger("t_intl_fliggy")
 _FG = FliggyCrawler({}, _LOG)
+
+
+@pytest.fixture(autouse=True)
+def _offline_no_pacing(monkeypatch):
+    """解析/守卫单测不打真实节奏 sleep，也不让兜底通路打真实 H5 网络。
+
+    实测：`_fetch_intl` 空结果会落到 `_h5_fallback`（真实请求、超时
+    15–20s/次），叠加每日期 2–5s 的节奏 sleep，单文件 2s 拖成 83s，
+    还违反「测试离线可跑」。本文件只测解析/守卫，两条通路都冻结。"""
+    monkeypatch.setattr(_FG, "_sleep", lambda *a, **k: None)
+    monkeypatch.setattr(_FG, "_h5_fallback", lambda *a, **k: [])
 
 
 # ---- 机场码 → 城市码 ----

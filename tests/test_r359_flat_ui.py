@@ -34,7 +34,7 @@ def test_flat_surfaces_and_segmented_chart_controls():
         "#cfgview .rline{border-color:transparent;background:color-mix",
         "#cfgview .ractions{border-color:transparent;background:color-mix",
         ".ws-ranges{border-color:transparent;background:color-mix",
-        ".ws-ranges button{border-right:0;border-radius:5px;height:26px}",
+        ".ws-ranges button{border-right:0;border-radius:var(--r3);height:26px}",
     ):
         assert needle in STYLE, needle
 

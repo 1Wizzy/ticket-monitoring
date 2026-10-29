@@ -31,9 +31,20 @@ def _job(tmp_path, schedule):
     return job, rt, st
 
 
-def test_quiet_window_short_circuits_before_marker(tmp_path):
+def test_quiet_window_short_circuits_before_marker(tmp_path, monkeypatch):
+    """静默窗内 force=False 必须短路；force=True 必须绕过。
+
+    注意：原实现把窗口设成 00:00–23:59 直接依赖**真实时钟**，而
+    `in_window` 把 23:59–00:00 这一分钟视为窗外——每天午夜跑这套会
+    假失败（实测 00:04 跑全量时红、隔离跑绿）。这里把 Pacing 的 clock
+    钉到固定时刻，判据只看窗口逻辑本身。
+    """
+    import time as _t
+    fixed = _t.mktime((2026, 10, 28, 12, 0, 0, 0, 0, -1))
     job, rt, st = _job(tmp_path, {"scan_quiet_start": "00:00",
                                   "scan_quiet_end": "23:59"})
+    # clock 是构造参数存成的实例属性，直接替换这一个实例的时钟
+    rt["pacing"]._clock = lambda: fixed
     assert rt["pacing"].quiet_now() is True
     job()                                   # 定时触发：force=False
     marker = tmp_path / "last_scan.json"

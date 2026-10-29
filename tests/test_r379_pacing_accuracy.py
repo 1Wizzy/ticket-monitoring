@@ -453,4 +453,3 @@ def test_pacing_ui_exposes_scope_calendar_and_probe_scope():
             "scope:_probeScope",
     ):
         assert needle in src, needle
-

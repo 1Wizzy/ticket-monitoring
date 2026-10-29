@@ -12,7 +12,8 @@
 > - 后端产出 `calendar_only` / `session_busy` / `parse_error`；
 > - 登录窗口关窗检测 + Web 600s 超时；
 > - P1 人工接管：探针任务内挑战票据卡、打开被挑战原页（同一持久档案）、人工完成后用同一会话核验、失败/跳过、通过后自动补采失败腿；
-> - 38 项 P0/P1 单测；非浏览器全量 **3164 passed / 4 skipped**、`test_channel_ui_status` **16 passed**；1360/390 注入票据浏览器实测 open/window_open/passed 卡片、倒计时与操作按钮，零溢出、零 pageerror；**未提交、未发布**。
+> - 38 项 P0/P1 单测；非浏览器全量 **3164 passed / 4 skipped**（**当时快照**，非当前基线）、`test_channel_ui_status` **16 passed**；1360/390 注入票据浏览器实测 open/window_open/passed 卡片、倒计时与操作按钮，零溢出、零 pageerror。
+> - **发布状态更新（2026-10-27 复核）**：上述 P0/P1 已合入主线并随 v1.5.291 发布（见 `docs/release-notes-v1.5.291.md`：验证票据 `#task=<id>` 深链、跨窗口人工接管、登录/验证拒绝即时标记）。实现证据在当前树：`crawlers/challenge.py`、`crawlers/base.py` 的 `open_challenge_window`、`tests/test_p0_control.py`、`tests/test_p1_challenge_takeover.py`。文中「未提交、未发布」为当时的快照，已不再成立。
 > 仍未做：官方 API、自动破解、第三方平台、完整 Playwright 套件。
 
 ## 0. 结论摘要
@@ -38,17 +39,24 @@
 
 ## 1. 现状证据
 
+> **行号时效警告（2026-10-27 核对）**：本节及 §2 出现的大量 `file.py:NNN-NNN` 是
+> **2026-10-23 调研当时的行号快照**，此后 crawlers 与 webui 多次改动，行号**已普遍漂移**
+> （抽查 `crawlers/qunar.py:419-443`、`crawlers/tuniu.py:492-493`、`crawlers/ctrip.py:733-751` 指向的
+> 已不是文中描述的那段逻辑）。**不要按行号定位**：请用文中同时给出的语义/函数名（如
+> `_probe_result_status`、`classify_failure`、`path_note`）去检索。数条结论本身（六条 empty 误记路径）
+> 已在后续轮次修复，见 §1.2 的「发布状态更新」。
+
 ### 1.1 代码已经具备的能力
 
 | 能力 | 现状 | 证据 |
 |---|---|---|
-| 逐路径状态账本 | PC/H5/API/日历每次尝试记录 path/status/rows/date/detail/ms | `crawlers/base.py:66`、`crawlers/base.py:74-92` |
-| 统一浏览器档案 | 每渠道独立 `user_data/<plat>`，持久化 Chromium；登录窗口与采集共用档案 | `crawlers/base.py:113-125`、`crawlers/base.py:199-264` |
-| 会话快照 | `storage_state()` 保存 cookies/localStorage/IndexedDB；重开时只补缺失 Cookie | `crawlers/base.py:250-264` |
-| 登录窗口 | 有头窗口 + 桌面视口；用户点“我已登录完成”后保存会话 | `crawlers/base.py:419-464`、`webui.py:17377-17436` |
-| 登录态判定 | 保存时间、采集拒绝、明细成功三类证据；区分渠道与国内/国际 scope | `webui.py:17273-17375`、`tests/test_channel_status.py` |
-| 任务状态聚合 | `blocked -> challenge`、`login -> login_required`；有行但有失败路径记 `partial` | `webui.py:17887-17900` |
-| 登录卡片 | 五渠道“弹窗登录/我已登录完成/等待采集验证”；失败与过期有文案 | `webui.py:11156-11215`、`webui.py:21660-21697` |
+| 逐路径状态账本 | PC/H5/API/日历每次尝试记录 path/status/rows/date/detail/ms | `crawlers/base.py::PATH_STATUS` 与 `crawlers/base.py::path_note()`（每次尝试写一条） |
+| 统一浏览器档案 | 每渠道独立 `user_data/<plat>`，持久化 Chromium；登录窗口与采集共用档案 | `crawlers/base.py::_browser_context()`（内部 `launch_persistent_context`） |
+| 会话快照 | `storage_state()` 保存 cookies/localStorage/IndexedDB；重开时只补缺失 Cookie | `crawlers/base.py::_browser_context()` 的 `ctx.storage_state()` 落盘点 |
+| 登录窗口 | 有头窗口 + 桌面视口；用户点“我已登录完成”后保存会话 | `crawlers/base.py::_login_window()`、`webui.py::renderLoginCards()` |
+| 登录态判定 | 保存时间、采集拒绝、明细成功三类证据；区分渠道与国内/国际 scope | `webui.py::channelAuthView()`、`tests/test_channel_status.py` |
+| 任务状态聚合 | `blocked -> challenge`、`login -> login_required`；有行但有失败路径记 `partial` | `webui.py` 任务状态聚合（`partial` 判定，见 `SPMON_RUN_LABEL.partial`） |
+| 登录卡片 | 五渠道“弹窗登录/我已登录完成/等待采集验证”；失败与过期有文案 | `webui.py::renderLoginCards()`、`webui.py::channelAuthView()` 的 `labels` 表 |
 | 挑战识别（分散） | 携程 whaleguard/验证码；去哪儿**国际** code 7/8/9/10004（国内仅 1999）；飞猪 baxia/滑块（国内不检测登录）；同程验证码/登录；途牛滑块 DOM/710114 | 见 §2 各渠道 |
 | 回归测试 | 认证状态不因空结果/旧失败/保存时间错乱而误判 | `tests/test_channel_status.py`、`tests/test_r338_login_state.py`、`tests/test_channel_ui_status.py` |
 
@@ -101,7 +109,7 @@
 | 去哪儿 | **国际 H5** JSON `code 7=滑块 / 8=跳登录 / 9=强刷 / bstatus.code 10004=点选`；`1999/2008` 未登录硬拒；**国内仅识别 1999**，7/8/9/10004 未检测 | `crawlers/qunar.py:1487`、`:1570-1600`、`:1994-1998`；`docs/INTL_DESIGN.md:99` | 去哪儿开放平台国内/国际商旅 API（需注册签约）；H5 登录态 | 优先官方 API；国内先补风险码检测；浏览器路径保持登录 + 退避；被挑战时原页接管 |
 | 飞猪 | 阿里 baxia 滑块；匿名 headless 明细级 poller 必触发（历史记录）；登录走淘宝/支付宝 | `crawlers/fliggy.py:230`、`:661-662`；`docs/INTL_DESIGN.md:147` | **飞猪 FlyAI 官方开放平台**（机票搜索、直连官方价库；API Key/实名；配额以控制台为准）；商家开放平台偏订单/政策 | 优先 FlyAI；浏览器 SSR 列表为回退；被挑战时原页接管 |
 | 同程 | 列表/登录页验证码；`passport` 跳转；数美滑块（公开技术分析）；国际列表明细需登录 + as-sdk | `crawlers/tongcheng.py:325-328`、`:421-428`、`:668-676`；`docs/INTL_DESIGN.md` 同程章节 | 同程商旅 MCP/Skills/CLI（企业）；日历 API 匿名但只有日历价 | 日历价只作低价信号；明细走登录会话 + 人工接管；企业资质走商旅 |
-| 途牛 | 国内 `710114/needLogin` 登录墙、`179991` 风控（现未落 path）；滑块/人机验证 DOM；国际存在“受理不出数”软墙 | `crawlers/tuniu.py:418-435`、`:485-493`、`:953-954`；`docs/INTL_DESIGN.md` §2.4 | **途牛 MCP**：`flightMCP`（`searchLowestPriceFlight`、`multiCabinDetails`）、`intelFlightMCP`；官方限流 **5 RPM / 50 RPD，所有 Key 共享** | 国内登录优先；MCP 只用于重点航线/低频；国际软墙如实标 |
+| 途牛 | 国内 `710114/needLogin` 登录墙、`179991` 风控（现未落 path）；滑块/人机验证 DOM；国际可出极少数行（每轮批仅 1 行；2026-10-27 复核已推翻旧「受理不出数」结论，见 `INTL_DESIGN.md` §2.4） | `crawlers/tuniu.py:418-435`、`:485-493`、`:953-954`；`docs/INTL_DESIGN.md` §2.4 | **途牛 MCP**：`flightMCP`（`searchLowestPriceFlight`、`multiCabinDetails`）、`intelFlightMCP`；官方限流 **5 RPM / 50 RPD，所有 Key 共享** | 国内登录优先；MCP 只用于重点航线/低频；国际软墙如实标 |
 
 ### 2.1 关键判断
 
@@ -142,7 +150,7 @@
 
 ### 4.2 检测契约
 
-新增统一的 `ChallengeSignal`（建议放在 `crawlers/base.py` 或 `core/challenges.py`）：
+新增统一的 `ChallengeSignal`（**已实现**：`crawlers/challenge.py::ChallengeSignal`；本节原提案里的 `core/challenges.py` 这一落点未创建）：
 
 ```text
 ChallengeSignal:
@@ -203,11 +211,11 @@ detected
 
 关键语义：
 
-- **打开原始页面，不打开渠道首页。** 登录窗口当前只有去哪儿落到 passport 登录页（`crawlers/qunar.py:290`），其余渠道都打首页；这对挑战接管不够。必须保存被挑战的 URL/path，并在同一 profile 中打开该 URL。
+- **打开原始页面，不打开渠道首页。** 登录窗口里只有去哪儿会落到 passport 登录页（`crawlers/qunar.py:263 LOGIN_URL`），其余渠道都打首页；这对挑战接管不够。必须保存被挑战的 URL/path，并在同一 profile 中打开该 URL。
 - **成功判定以数据路径为准**：用户点“我已完成”后，后台用同一 profile 重新请求被挑战的列表/明细端点；挑战码消失、HTTP 200/业务成功才算通过。页面上的“验证成功”动画不能作为唯一证据。
 - **验证成功但 0 行**：记为 `verified_empty`（会话已恢复、该日期确实无明细），不得写成“登录失败”，也不得写成“有票”。
-- **超时/关窗**：挑战窗口默认 5 分钟，登录窗口默认 10 分钟；必须检测 `page.is_closed()`/上下文关闭，关窗或超时 → `expired`，该渠道冷却 15 分钟，不自动循环重开。现役 `_login_window()` 的 `while not done_evt.is_set()` 没有超时/关窗旁路（`crawlers/base.py:431-442`），用户直接关窗可能让会话卡片永久停在 active，P0 一并修。
-- **并发**：一个渠道同时只允许一个验证窗口；窗口持 profile 锁，其他渠道继续跑；全局最多两个窗口，避免多窗口叠加触发更高风控。
+- **超时/关窗**：挑战窗口默认 5 分钟，登录窗口默认 10 分钟；必须检测 `page.is_closed()` / 上下文关闭，关窗或超时 → `expired`，该渠道冷却 15 分钟，不自动循环重开。**现状（2026-10-27 核对已实现）**：`crawlers/base.py:961-970` 与 `1025-1034` 已有超时判据 + 关窗旁路；用户直接关窗不会让会话卡死在 active。
+- **并发**：一个渠道同时只允许一个验证窗口；窗口持 profile 锁，其他渠道继续跑；全局最多两个窗口，避免多窗口叠加触发更高风控。**现状（2026-10-27 核对已实现）**：`crawlers/base.py:28 CHANNEL_GATE = threading.BoundedSemaphore(2)` + `main.py:2678 ThreadPoolExecutor(max_workers=_mw)`（受 `pacing.max_concurrency` 约束）；旧版“最多 5 个”不再出现。
 - **跳过后**：`skipped` + 冷却；本轮不再请求该渠道，其他渠道结果保留。
 
 ### 4.5 恢复与补采
@@ -220,7 +228,9 @@ detected
 
 ### 4.6 调度与配额
 
-- **浏览器路径**：每渠道并发 1，全局并发 2（沿用现闸门）；渠道内最小间隔 + 抖动；被挑战立即停该渠道并指数退避（15/60/180 分钟），成功一次即复位。
+- **浏览器路径**：每渠道并发 1，全局并发 2（沿用现闸门）；渠道内最小间隔 + 抖动；被挑战立即停该渠道并指数退避（`ChannelBreaker` 默认 `base_s=300` / `cap_s=3600`，
+  按 `min(cap, base×2^(n-1))` 逐级放大：**5/10/20/40/60 分钟**封顶），成功一次即复位。
+  登录类拒绝走独立的固定冷却 `login_cooldown_s=900`（15 分钟）。
 - **定时采集并入同一闸门**：现役定时采集在单个查询内 `ThreadPoolExecutor(max_workers=len(plats))`，最多同时 5 个渠道浏览器（`main.py:1868-1883`），是验证码叠加触发的直接来源；必须改为全局 2、每渠道 1，并把探针/定时/登录窗口一起纳入。
 - **失败即熔断**：ctrip/fliggy/tongcheng 被 blocked 后不得继续换路径连打（当前仍会继续后续日期/补 PC/补日历）；tuniu `179991` 不得“标记 blocked 后继续按 max_attempts 重试并把退避加倍”；每渠道本轮最多一次替代路径。
 - **重试不绕冷却**：探针“重试失败项”当前带 `retry:true` 绕过 60s 冷却并立即重跑所有 challenge/login/blocked 渠道（`webui.py:21777-21780`、`:16512-16523`）；必须按票据/渠道冷却放行，挑战渠道不在冷却内重开。
@@ -233,10 +243,12 @@ detected
 
 ### 4.7 官方 API/MCP 适配
 
+> **下表是待建提案，不是现状**（2026-10-27 核对：`crawlers/tuniu_mcp.py` 与 `crawlers/fliggy_flyai.py` 在当前树中**均不存在**）。按本表去 import 会失败；要落地须先实现适配器与配额门。
+
 | 适配器 | 能力 | 认证/配额 | 数据口径 | 备注 |
 |---|---|---|---|---|
-| `crawlers/tuniu_mcp.py` | `searchLowestPriceFlight`、`multiCabinDetails`；国际搜索/舱位 | API Key；5 RPM / 50 RPD 共享 | 需验收是否含航班号/时刻/舱位；只有最低价时标 `lowest_only`，不算明细 | 只用于重点航线/低频 |
-| `crawlers/fliggy_flyai.py` | 机票搜索、官方价库 | API Key/实名；配额以控制台为准 | 需验收是否含航班明细；保留 `jumpUrl` 作为原页入口 | 优先于 baxia 浏览器路径 |
+| `crawlers/tuniu_mcp.py`（未创建） | `searchLowestPriceFlight`、`multiCabinDetails`；国际搜索/舱位 | API Key；5 RPM / 50 RPD 共享 | 需验收是否含航班号/时刻/舱位；只有最低价时标 `lowest_only`，不算明细 | 只用于重点航线/低频 |
+| `crawlers/fliggy_flyai.py`（未创建） | 机票搜索、官方价库 | API Key/实名；配额以控制台为准 | 需验收是否含航班明细；保留 `jumpUrl` 作为原页入口 | 优先于 baxia 浏览器路径 |
 | 企业适配器（可选） | 携程商旅、去哪儿开放平台、同程商旅 | 企业签约/资质 | 以合同接口为准 | 不作为个人短期方案 |
 
 适配器统一要求：
@@ -307,19 +319,24 @@ detected
 - 可访问性：新增票据时焦点落到票据标题；状态变化用 `aria-live=polite`；状态不只靠颜色；按钮 ≥32px；尊重 `prefers-reduced-motion`。
 - 视觉：沿用现有控制台 token 与渠道品牌图标；签名元素是四步“检测→接管→验证→补采”时间线，不再加装饰性渐变/插画。
 
-### 4.10 接口与代码落点（建议）
+### 4.10 接口与代码落点（建议，**括号内为已实现时的真实名字**）
+
+> **本表混有已实现与未实现两类落点**（2026-10-27 逐项核对）：
+> 已实现 —— `crawlers/challenge.py`（`ChallengeSignal`/`classify_text`）、`crawlers/base.py::open_challenge_window`、`webui.py::_probe_challenge_ticket`、`/api/challenge/{open,verify,skip}`。
+> **未实现（文件/用例尚不存在，勿当作现状引用）** —— `core/challenges.py`、`crawlers/tuniu_mcp.py`、`crawlers/fliggy_flyai.py`、`tests/test_challenge_classifier.py`、`tests/test_challenge_resume.py`、`tests/test_probe_status_semantics.py`。
 
 | 落点 | 改动 |
 |---|---|
-| `crawlers/base.py` | `ChallengeSignal`、`classify_challenge()`、`open_challenge_window(url, plat)`、`verify_session(plat, probe_url)`；`path_note` 增加 `kind/evidence` |
-| `crawlers/{ctrip,qunar,fliggy,tongcheng,tuniu}.py` | 用统一分类器替换分散正则；解析前检测；修复 §1.4 六条 empty 路径；记录挑战证据；删除/收敛重复的 `_last_blocked` |
-| `webui.py` | `_State.challenge_tickets`；`/api/challenge/tickets`、`/api/challenge/open`、`/api/challenge/verify`、`/api/challenge/skip`；任务视图返回 `challenges`；补采轮次；`calendar_only/session_busy/parse_error` 状态落地；重试尊重冷却 |
+| `crawlers/challenge.py` | 建议：`ChallengeSignal`、`classify_challenge()`、`verify_session(plat, probe_url)`；**实际已实现**：`class ChallengeSignal`、`classify_text(text, url)`、`login_signal()`、`blocked_signal(kind)`；**验证会话**落在 `crawlers/base.py::open_challenge_window()` |
+| `crawlers/base.py` | `crawlers/base.py::open_challenge_window(url, plat)` 已实现；`path_note` 增加 `kind/evidence`（建议） |
+| `crawlers/{ctrip,qunar,fliggy,tongcheng,tuniu}.py` | **已部分落地（2026-10-27 核对）**：`classify_text` 已被 ctrip / qunar / fliggy / fliggy_h5 / tongcheng 采用，途牛走自己的 `710114` 判据；残余 `_last_blocked` 仅存于 `fliggy*.py`（各 3 处），仍建议收敛。解析前检测、§1.4 六条 empty 路径修复见 §1.2 的落地记录 |
+| `webui.py` | 票据由 `_probe_challenge_ticket()` 挂在探针任务上（无独立票据端点）；端点实为 `/api/challenge/open`、`/api/challenge/verify`、`/api/challenge/skip`；任务视图返回 `challenges`；补采轮次；`calendar_only/session_busy/parse_error` 状态落地；重试尊重冷却 |
 | `main.py` | 定时采集并入全局 2/每渠道 1 闸门；被 blocked 后本轮熔断 |
 | `core/health.py` | 挑战率、接管成功率、MTTR、配额指标；认证证据与挑战证据分开 |
-| `crawlers/tuniu_mcp.py`、`crawlers/fliggy_flyai.py` | 官方适配器 + 配额门 + 数据口径标记 |
-| `tests/test_challenge_classifier.py` | 五渠道挑战/登录/正常空页 fixture；§1.4 六条路径禁止 empty 误判 |
-| `tests/test_probe_status_semantics.py` | `calendar_only/session_busy/parse_error` 后端产出与任务/leg 聚合 |
-| `tests/test_challenge_resume.py` | 票据状态机、超时/关窗、跳过、补采只跑失败腿、去重、原任务快照不变 |
+| `crawlers/tuniu_mcp.py`、`crawlers/fliggy_flyai.py`（均未创建） | 官方适配器 + 配额门 + 数据口径标记 |
+| `tests/test_challenge_classifier.py`（未创建） | 五渠道挑战/登录/正常空页 fixture；§1.4 六条路径禁止 empty 误判 |
+| `tests/test_probe_status_semantics.py`（未创建） | `calendar_only/session_busy/parse_error` 后端产出与任务/leg 聚合 |
+| `tests/test_challenge_resume.py`（未创建） | 票据状态机、超时/关窗、跳过、补采只跑失败腿、去重、原任务快照不变 |
 | `docs/uitest.py` | 票据各状态、真实时间线、移动端提示、焦点/aria、无假进度 |
 
 ## 5. 实施计划

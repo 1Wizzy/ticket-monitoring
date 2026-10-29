@@ -38,5 +38,5 @@ class TestWebuiV167Pins:
 
     def test_qual_price_uses_ok_txt_token(self):
         """：达标行价格绿字 --ok-txt（AA 收编，--green 退役）。"""
-        assert "tr.qual td.price{color:var(--ok-txt);font-weight:800}" \
-            in self._src()
+        # 断言只锚颜色令牌；字重随全站收敛到四档（800 已并入 700）
+        assert "tr.qual td.price{color:var(--ok-txt)" in self._src()

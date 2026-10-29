@@ -45,7 +45,9 @@ def _measure(port, width):
         pg = b.new_page(viewport={"width": width, "height": 1200})
         pg.goto("http://127.0.0.1:%d/#cfg" % port,
                 wait_until="domcontentloaded", timeout=30000)
-        pg.wait_for_timeout(2600)
+        # 等登录卡真渲染出来再量：8 worker 并发时固定 2.6s 曾量到空表
+        pg.wait_for_selector("#loginRows .lgcard", timeout=20000)
+        pg.wait_for_timeout(600)
         rows = pg.evaluate("""() => [...document.querySelectorAll('#loginRows .lgcard')].map(c=>{
           const b=c.getBoundingClientRect();
           const a=c.querySelector('.lgact')||c.querySelector('.btn2');

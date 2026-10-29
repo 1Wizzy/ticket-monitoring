@@ -99,7 +99,8 @@ def test_matrix_cell_hierarchy_and_hint():
 
 def test_mobile_320_identity_and_first_screen():
     s = _src()
-    assert '#searchview .srx-row{grid-template-columns:24px minmax(0,1fr) auto 75px;gap:4px}' in s
+    # r386：320 档价格列由 auto 改固定 72px（行间价格左缘参差 17px）
+    assert '#searchview .srx-row{grid-template-columns:24px minmax(0,1fr) 72px 75px;gap:4px}' in s
     assert 'grid-template-columns:repeat(2,36px)' in s
     assert '#searchview .srx-hero-act{display:flex;flex-wrap:nowrap;overflow-x:auto' in s
     assert '#chartRoutes{flex-wrap:nowrap;overflow-x:auto' in s

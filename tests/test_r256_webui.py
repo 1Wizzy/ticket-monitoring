@@ -133,13 +133,17 @@ def test_kpi_empty_dash_muted(pg):
 # ---- W-2：走势图例分组间距 ----
 
 def test_trend_legend_group_gap(pg):
-    """阈值参考组（lgZone 起）左距 14px：与数据系列组分缝。"""
+    """阈值参考组（lgZone 起）左距 14px、父容器 gap 12px：两组分缝。
+
+    gap 在 r473b 由 16px 收敛到 12px（图例缝统一，ID 选择器压过类选择器）。
+    这里钉精确值而不是「≥8 就行」——松成范围等于放弃守卫，任何回归都绿。
+    """
     m = pg.evaluate("""()=>{
       const el=document.getElementById('lgZone');
       return {ml:getComputedStyle(el).marginLeft,
               gap:getComputedStyle(el.parentElement).gap};}""")
     assert m["ml"] == "14px", m
-    assert m["gap"] == "16px", m
+    assert m["gap"] == "12px", m
 
 
 # ---- W-3：日历格 hover 反馈 ----

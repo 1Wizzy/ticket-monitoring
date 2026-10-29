@@ -187,10 +187,16 @@ def test_watch_entry_normalizes_identity_inputs():
 
 
 def test_watch_hover_redraws_base_chart():
-    """悬停只能重绘整张底图后再画一条十字线；直接叠画会留下拖影。"""
+    """悬停必须先恢复整张底图再叠十字线；直接叠画会留下拖影。
+
+    r374 起底图改为「一次绘制 + 位图缓存」：悬停只贴回 WS._base，
+    不再每次 mousemove 全量 wsDrawChart（实测 3.22ms/次 → 0.01ms）。
+    仍然满足「先恢复底图，再画十字线」这条不变量。"""
     src = open(os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "webui.py"), encoding="utf-8").read()
     tail = src[src.index("function wsHoverAt"):]
-    assert "wsDrawChart()" in tail
-    assert "wsDrawHover()" not in tail
+    assert "ctx.drawImage(WS._base,0,0)" in tail, "悬停未先恢复底图"
+    assert "wsDrawChart(true)" in tail, "缺无底图时的兜底重绘"
+    assert tail.index("drawImage(WS._base") < tail.index("wsDrawHover()"), \
+        "必须先恢复底图再叠浮层"

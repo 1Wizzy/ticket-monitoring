@@ -61,10 +61,17 @@ class TestWebuiV178Pins:
         assert "jumpTrendDetail()" in kseg, "键盘 Enter 未接 jumpTrendDetail"
 
     def test_cursor_affordance_on_chart(self):
-        """canvas 可点须有 cursor affordance（v1.5.74 cursor affordance 律）。"""
+        """canvas 可点须有 cursor affordance（v1.5.74 cursor affordance 律）。
+
+        r374：三处走势统一为 crosshair（读数语义）。pointer 只在「点了会
+        跳转」处使用，而三条画的点击语义各不相同（航线跳明细 / 关注钉住
+        读数 / 雷达无点击），统一 pointer 会给出错误的可跳转暗示；可点性
+        改由 title/aria 文字明说。
+        """
         src = self._src()
-        assert "#chart{cursor:pointer}" in src, \
-            "#chart 无 pointer 光标（可点性无 affordance）"
+        assert "#chart{cursor:crosshair}" in src, \
+            "#chart 光标未与另两条走势统一"
+        assert "点击看该航线当日明细" in src, "可点性缺少文字暗示"
 
     def test_hint_promise_conditional(self):
         """图例承诺句「点击看该航线当日明细」必须双前提条件在场：
@@ -136,12 +143,18 @@ class TestWebuiV178Pins:
         assert "display:inline-block" in seg, "route 文本非原子换行"
 
     def test_p2_kpisum_link_nowrap(self):
-        """概览「查看明细 ▸ / 走势 ▸」768 档箭头孤行折断：链接 nowrap
+        """概览「查看明细 ▸ / 走势 ▸」768 档箭头孤行折断：链接不得折行
         （audit_v178 P2-3）。r302 W5：跳转词缀与全站跳转 affordance
-        （pill ▸/mtabUser ▸）统一单形 ▸，▾ 仅存于折叠头族。"""
+        （pill ▸/mtabUser ▸）统一单形 ▸，▾ 仅存于折叠头族。
+
+        r419 起两个动作从 kpisum 句尾移到卡头 `.uact2`：nowrap 由该容器
+        统一提供（`white-space:nowrap` + `flex:0 0 auto`），因此断言
+        改为「这两处入口都处在不折行的容器里」，语义不变。"""
         src = self._src()
         assert "查看明细 ▾" not in src, "跳转词缀旧形 ▾ 复活"
-        i0 = src.index("查看明细 ▸")
-        seg = src[max(0, i0 - 240):i0]
-        assert "white-space:nowrap" in seg, "kpisum 链接未 nowrap"
+        assert '.uhead .uact2{margin-left:auto' in src
+        i0 = src.index(".uhead .uact2{margin-left:auto")
+        seg = src[i0:i0 + 320]
+        assert "white-space:nowrap" in seg, "动作区未 nowrap（箭头会孤行）"
+        assert "flex:0 0 auto" in seg, "动作区会被压缩折行"
 

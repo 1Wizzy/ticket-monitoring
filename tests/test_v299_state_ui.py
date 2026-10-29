@@ -59,11 +59,16 @@ def test_radar_chart_controls_match_trend_chart_capabilities():
         ".spmon-chartwrap{overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;overscroll-behavior-x:contain;touch-action:pan-x;-webkit-overflow-scrolling:touch}",
         "#spMonChart{max-width:none}",
         "const units=SPMON.mode==='kline'?candles.length:times.length",
-        "units>5?Math.max(baseW,Math.min(2600,units*54)):baseW",
+        # r374：点数多时才允许横向滚动，且上限 2.4 倍可视宽；
+        # 26 点 × 30px 仍落在可视宽内，不会撑出 1404px 屏外画布。
+        "const W=Math.max(baseW,Math.min(units*MINPX,baseW*2.4))",
+        "c.style.width=W+'px'",
         "p.p>0&&(!rangeMs||p.t>=cutoff)",
-        "mn=Math.max(0,mn-pad)",
-        "ctx.globalAlpha=low||sel?1:.38",
-        "lastRight+8",
+        "[mx>0?Math.max(0,mn-p):mn-p,mx+p]",
+        # r374：非聚焦日期线不再用 .55 透明度（叠成浅灰斑，读作白色遮挡），
+        # 改中性墨色 + .7 保持层级且可辨。
+        "alpha:low||sel?1:.7",
+        "if(left<lastR+8)return;",
         "#searchview .srx-src+.srx-src{border-left:1px solid var(--r-hair)!important;",
         "#searchview .srx-capbar{background:transparent!important;border:0!important;",
     ):

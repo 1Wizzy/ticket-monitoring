@@ -76,7 +76,8 @@ def test_trusted_icons_are_direct_img_bic():
 def test_css_no_clipping_and_short_desktop_note():
     s = _src()
     assert ".cwf-cand .mt{grid-area:meta;font-size:10px;color:var(--mut);white-space:normal" in s
-    assert "#searchview .srx-band-note{font-size:9px;margin-top:4px}" in s
+    # r374 字号收口：9px 低于全站最小标注档（10px），价带说明提到 10px
+    assert "#searchview .srx-band-note{font-size:10px;margin-top:4px}" in s
     assert "#searchview .srx-band-note a{display:none}" in s
     assert "word-break:keep-all;overflow-wrap:normal" in s
     assert "#searchview .srx-dtabs{flex-wrap:wrap!important;overflow-x:visible!important;row-gap:3px}" in s

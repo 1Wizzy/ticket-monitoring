@@ -14,6 +14,11 @@
 | login_required | 当前范围有晚于保存及同范围明细证据的明确认证拒绝 |
 | missing | 没有保存的本地会话资料 |
 | save_error | 登录工作线程未能完成保存 |
+| read_error | **前端派生**：`/api/login-state` 读取失败，界面保留上次资料并自动重试 |
+| loading | **前端派生**：尚未拿到首份快照 |
+| demo | **前端派生**：演示模式，会话未经验证（演示徽标同屏） |
+
+> 前 8 个由后端产出；后 3 个是界面在前端按响应情况派生的状态（2026-10-27 核对 `webui.py::channelAuthView`）。看到 `read_error` 不代表账号失效，只代表这一次没读到。
 
 接口另含 `saved_at`、`needs_login` 及按 `domestic/international/unknown` 划分的 `scopes`。当前动作使用 `status/needs_login`；兼容字段 `stale` 仅保留旧采集器标记，不作为新页面独立判断依据。状态接口读取失败时，前端显示读取失败并保留上次资料，不能改成未登录。
 
@@ -44,7 +49,12 @@
 ```powershell
 $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD='1'
 $env:PYTHONIOENCODING='utf-8'
-python -m pytest tests/test_channel_session_bridge.py tests/test_channel_auth_classification.py tests/test_channel_health_evidence.py tests/test_channel_status.py tests/test_channel_ui_status.py -q
+python -m pytest tests/test_channel_session_bridge.py tests/test_channel_health_evidence.py tests/test_channel_status.py tests/test_channel_ui_status.py -q
 ```
 
-现有飞猪、同程国际路径仍以日历接口为主，真实列表明细接入是单独能力缺口。本次认证修复不将日历成功包装成明细成功，也不把这个缺口误报成登录失效。
+> 认证分类的用例实际就在上列 `test_channel_status.py` / `test_channel_ui_status.py` 里；早期草案点名的 `tests/test_channel_auth_classification.py` **从未创建**（2026-10-27 核对），已从命令中移除。
+
+国际路径的渠道能力不齐，**不要一概而论**（2026-10-27 核实）：
+- **飞猪国际**：已有真实列表路径（`sjipiao.fliggy.com` PC 列表，`_parse_intl_items` 解析，账本记为「sjipiao.fliggy.com 国际列表」），日历仅作补充。
+- **同程国际**：仍以低价日历为主（`miflightapi/ts/calendar`，城市级最低价）；列表明细双端强制登录 + as-sdk 签名，属挂账能力缺口。
+认证判定纪律不变：日历成功不得包装成明细成功，也不得因缺明细而误报登录失效。

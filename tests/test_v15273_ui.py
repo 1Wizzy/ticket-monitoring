@@ -155,9 +155,15 @@ def test_note_shows_full_text_and_two_lines():
 
 
 def test_mobile_and_responsive_contracts():
-    assert "grid-template-columns:26px minmax(0,1fr) auto 118px" in SRC
+    # r386：价格列由 auto 改固定宽——每条行是独立 grid，auto 会按本行
+    # 价格字符数算宽，行间价格左缘参差 17px（用户实报对齐问题）
+    assert "grid-template-columns:26px minmax(0,1fr) 86px 118px" in SRC
     assert "左右滑动查看更多日期" in SRC
-    assert "@media(max-width:760px){#searchview .srx-mrail{flex-wrap:wrap" in SRC
+    # r420：镜像工具条窄档不再 wrap（wrap 会把「收起镜像」单独挤到第二行），
+    # 改为单行横向滚动。约束用「两档都 nowrap、全站无 wrap 残留」表达，
+    # 不依赖具体断点块的排版位置。
+    assert SRC.count("srx-mrail{flex-wrap:nowrap") >= 2
+    assert "srx-mrail{flex-wrap:wrap" not in SRC
     assert ".monwatch:last-child:nth-child(odd)" in SRC
     assert "bottom:calc(18px + env(safe-area-inset-bottom))" in SRC
 

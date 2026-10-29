@@ -2,6 +2,16 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **落地状态（2026-10-27 逐项核对）**：**已执行完毕**，但本文的 32 个 `- [ ]` 从未回填勾选，
+> 直接读会误以为计划未开工。实测产物（6/6 存在且用例全绿）：
+> `tests/test_v295_tokens.py`、`tests/test_v295_mobile_fold.py`、
+> `tests/test_v295_sector_strip.py`、`tests/test_v295_perf_source.py`、
+> `docs/perf_gate.py`、`docs/search_live_gate.py`。
+> 2026-10-27 实跑：这 4 个测试文件 **6 passed**。
+>
+> 引用本文前请记住：**checkbox 未勾 ≠ 未完成**；判断是否落地看产物文件与用例，不看方框。
+> 与 Batch 1 同类（见 `docs/superpowers/plans/2026-10-24-v295-batch1-evidence.md` 顶部说明）。
+
 **Goal:** Finish the flat/unified console language, make folds and mobile surfaces truthful and usable, add a restrained Sector Strip signature, and land measurable search-filter performance without overclaiming.
 
 **Architecture:** CSS/token consolidation plus small JS helpers inside `webui.py`. No new frontend framework. Visual changes stay behind existing classes; screenshots and UI gates prove pixels at exact widths/themes. Performance work is limited to the measured hot paths (closed facet panel, repeated row icons) with a reproducible 4× CPU gate.

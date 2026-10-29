@@ -17,6 +17,7 @@
 """
 import os
 import re
+import socket
 import subprocess
 import sys
 import time
@@ -28,8 +29,17 @@ pytest.importorskip("playwright",
                     reason="行为钉依赖 playwright（缺库 SKIP 不 ERROR）")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PORT = 8798
-BASE = "http://127.0.0.1:%d" % PORT
+# 现取空闲端口：固定 8798 与 r330 同口，并发全量必抢
+PORT = None
+BASE = None
+
+
+def _free_port():
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
 
 
 def _page_src():
@@ -50,6 +60,9 @@ def _wait_up():
 
 @pytest.fixture(scope="module")
 def srv():
+    global PORT, BASE
+    PORT = _free_port()
+    BASE = "http://127.0.0.1:%d" % PORT
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
         import os as _os
@@ -60,11 +73,23 @@ def srv():
         if ("127.0.0.1:%d" % PORT) in ln and "LISTENING" in ln:
             subprocess.run(["taskkill", "/PID", ln.split()[-1], "/F"],
                            capture_output=True)
-    proc = subprocess.Popen(
-        [sys.executable, os.path.join(ROOT, "webui.py"), "--demo",
-         "--port", str(PORT)],
-        cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    assert _wait_up(), "demo 启动失败"
+    # 端口探测到关闭之间有窗口：并发跑测（xdist 8 worker + UI 4 分片）时
+    # 别的进程可能抢走这个端口。产品行为是对的——占不到端口就退出，
+    # 不能为了跑测去改产品；这里换端口重试。
+    proc = None
+    up = False
+    for _try in range(3):
+        proc = subprocess.Popen(
+            [sys.executable, os.path.join(ROOT, "webui.py"), "--demo",
+             "--port", str(PORT)],
+            cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if _wait_up():
+            up = True
+            break
+        proc.terminate()
+        PORT = _free_port()
+        BASE = "http://127.0.0.1:%d" % PORT
+    assert up, "demo 启动失败（3 次换端口仍未起来）"
     yield proc
     proc.terminate()
     try:

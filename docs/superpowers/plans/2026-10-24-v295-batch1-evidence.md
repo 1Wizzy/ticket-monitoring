@@ -2,6 +2,16 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **落地状态（2026-10-27 逐项核对）**：**已执行完毕**，但本文的 52 个 `- [ ]` 从未回填勾选，
+> 直接读会误以为计划未开工。实测产物（8/9 存在）：
+> `core/health_diag.py`、`core/radar_alerts.py`、`tests/test_health_diag.py`、
+> `tests/test_radar_alerts.py`、`tests/test_radar_monitor.py`、`tests/test_v295_health_ui.py`、
+> `tests/test_v295_prov.py`、`tests/test_v295_prov_ui.py`。
+> 唯一缺失：`tests/test_v295_batch1_gate.py`（全仓仅本计划提到，从未创建）——
+> 该门禁覆盖的行为已由上述 test_v295_* 用例承担，缺口是"计划项与最终文件名不一致"，不是功能缺失。
+>
+> 引用本文前请记住：**checkbox 未勾 ≠ 未完成**；判断是否落地看产物文件与用例，不看方框。
+
 **Goal:** Make specials monitoring actually run in production, scope its history/alerts to the user's query, classify channel health from evidence, and persist a path-level provenance chain without fabricating raw responses.
 
 **Architecture:** Keep the single `webui.py` integrator. Add two small pure modules (`core/radar_alerts.py`, `core/health_diag.py`) and extend `core/storage.py` with idempotent migrations and ledgers. The radar auto-loop remains the only scheduler; alerts are evaluated only after automatic `ok` snapshot writes. Provenance is written at fetch time as `prov` JSON plus `fetch_paths`; absence stays `unknown`.
@@ -809,7 +819,7 @@ def test_fetch_path_and_prov_round_trip(tmp_path):
 ### Task 10: Batch 1 integration and acceptance
 
 **Files:**
-- Test: `tests/test_v295_batch1_gate.py` (create)
+- Test: `tests/test_v295_batch1_gate.py` (未创建 —— 计划项，未落地)
 - Modify: `docs/EXECUTION_SPEC_LATEST.md` (batch 1 facts), `docs/release-notes-v1.5.295.md` (create later)
 - No version bump yet.
 

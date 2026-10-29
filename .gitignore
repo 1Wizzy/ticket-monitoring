@@ -281,3 +281,6 @@ _build_check/
 
 # 国际校准台账（内部工作账本，同 HANDOFF 本地维护不入公开树）
 docs/INTL_CALIBRATION.md
+
+# 并行会话跑 uitest 的分片中间产物（每片刻一份 .next，完成后由主进程合并）
+docs/uitest_result.txt.*.next

@@ -113,7 +113,8 @@ def test_demo_exempt_from_real_time_staleness_but_live_not():
 
 
 def test_mobile_row_actions_are_touch_sized():
-    assert "grid-template-columns:26px minmax(0,1fr) auto 118px" in SRC
+    # r386：价格列固定 86px 并右对齐，行与行才对齐成一条竖线
+    assert "grid-template-columns:26px minmax(0,1fr) 86px 118px" in SRC
     assert "width:36px;height:36px;border:1px solid var(--line);background:var(--card)" in SRC
     assert "@media(pointer:coarse){.btn2{min-height:36px}}" in SRC
 

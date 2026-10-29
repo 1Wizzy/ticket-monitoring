@@ -10,6 +10,7 @@
 运行：PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/test_r235_webui_axis.py -q
 """
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -21,8 +22,17 @@ pytest.importorskip("playwright",
                     reason="行为钉依赖 playwright（缺库 SKIP 不 ERROR）")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PORT = 8797
-BASE = "http://127.0.0.1:%d" % PORT
+# 现取空闲端口：固定 8797 在并发全量下会被别模块的 legacy 清理误杀
+PORT = None
+BASE = None
+
+
+def _free_port():
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
 
 
 def _wait_up():
@@ -38,6 +48,9 @@ def _wait_up():
 
 @pytest.fixture(scope="module")
 def srv():
+    global PORT, BASE
+    PORT = _free_port()
+    BASE = "http://127.0.0.1:%d" % PORT
     # CI 缺 chromium 二进制（playwright 包装了但没 install 浏览器）：
     # importorskip 防不住「包在二进制缺」形态，launch 探测缺则 SKIP
     from playwright.sync_api import sync_playwright

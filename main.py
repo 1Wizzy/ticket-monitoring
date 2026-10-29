@@ -1789,38 +1789,65 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                 crawler_cache[key] = insts
             return crawler_cache[key]
 
+    # 干预闸门锁（r481）：三处「同渠道只允许一次」的占位都必须在锁内
+    # 完成「判断 + 置位」，否则 ThreadingHTTPServer 的并发请求会让双方
+    # 都通过判断（负控实测：插入让出点即开出两个验证窗）。
+    _WARM_LOCK = threading.Lock()
+    _VERIFY_LOCK = threading.Lock()
+
     def warm_channel(platform):
         """手动预热（可干预入口）：拿实例 → 持 channel_slot → 打一次首页。
 
         与自动预热共用同一把渠道锁，人工干预不会与采集抢同一会话。
+
+        幂等（r480）：同一渠道已在预热时直接拒绝。前端 PACE_BUSY 只挡
+        同一页面上的连点，挡不住第二个标签页/直接调接口——而重复预热
+        是本系统里最没价值又最伤风控的动作（既叠加指纹，又把成功率打低）。
+
+        原子性（r481）：闸门必须是「判断 + 置位」在锁内一步完成。
+        先独立判断再置位的话，两个标签页同时点会让双方都通过判断
+        （ThreadingHTTPServer 是并发处理请求的）——负控实测：在判断与
+        置位之间插入一个让出点即可开出**两个**窗口。
         """
+        _wg = rt.setdefault("warm_open", {})
+        with _WARM_LOCK:
+            if _wg.get(platform):
+                return {"ok": False, "dup": True,
+                        "err": "该渠道正在预热，等这次结束再看结果"}
+            _wg[platform] = True
         try:
-            insts = get_crawlers([platform])
-        except Exception as e:
-            return {"ok": False, "err": str(e)[:120]}
-        if not insts:
-            return {"ok": False, "err": "未知渠道: %s" % platform}
-        c = insts[0]
-        url = str(getattr(c, "warmup_url", "") or "").strip()
-        if not url:
-            return {"ok": False,
-                    "err": "%s 无独立预热入口（内部自带或不需要）" % platform}
-        try:
-            with channel_slot(c.name):
-                ok = c.warmup()
-        except Exception as e:
-            return {"ok": False, "err": str(e)[:120]}
-        try:
-            if rt.get("pacing") is not None:
-                rt["pacing"].record(platform)
-            storage.save_intervention(
-                platform, "warmup", ok=bool(ok), scope="",
-                note="%s 风控 cookie %s" % (
-                    url, ",".join(getattr(c, "warmup_cookies", []) or [])
-                    or "无"))
-        except Exception:
-            pass
-        return {"ok": bool(ok), "platform": platform, "url": url}
+            try:
+                insts = get_crawlers([platform])
+            except Exception as e:
+                return {"ok": False, "err": str(e)[:120]}
+            if not insts:
+                return {"ok": False, "err": "未知渠道: %s" % platform}
+            c = insts[0]
+            url = str(getattr(c, "warmup_url", "") or "").strip()
+            if not url:
+                return {"ok": False,
+                        "err": "%s 无独立预热入口（内部自带或不需要）" % platform}
+            try:
+                with channel_slot(c.name):
+                    ok = c.warmup()
+            except Exception as e:
+                return {"ok": False, "err": str(e)[:120]}
+            try:
+                if rt.get("pacing") is not None:
+                    rt["pacing"].record(platform)
+                storage.save_intervention(
+                    platform, "warmup", ok=bool(ok), scope="",
+                    note="%s 风控 cookie %s" % (
+                        url, ",".join(getattr(c, "warmup_cookies", []) or [])
+                        or "无"))
+            except Exception:
+                pass
+            return {"ok": bool(ok), "platform": platform, "url": url}
+        finally:
+            # 任何 return 路径都要放行：占位在锁内完成，释放也必须无条件，
+            # 否则一次「没有预热入口」就会把该渠道永久锁死。
+            with _WARM_LOCK:
+                _wg.pop(platform, None)
 
     rt["warm_channel"] = warm_channel
 
@@ -1927,19 +1954,46 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
 
         关窗即视为「人认为搞定了」：自动解除冷却 + 单查探测，把
         「验证有没有用」当场告诉人，而不是等下轮再猜。
+
+        幂等（r480）：同一渠道已有验证窗在开时直接拒绝。旧实现无守卫，
+        第二次请求的线程会先卡在 channel_slot 上，等第一个窗口关掉后
+        **再弹一个窗**——人刚做完验证，屏幕上又冒出一个同样的页面，
+        而且第二次的 done 事件无人触发，窗口只能靠 900s 超时收场。
         """
+        _ving = rt.setdefault("verify_open", {})
+        # 原子性（r481）：判断与置位必须在同一把锁内。分两步做时，两个
+        # 标签页同时点会让双方都通过判断——负控实测：在两者之间插入一个
+        # 让出点即开出两个窗口，且第二个窗的 done 事件无人触发。
+        with _VERIFY_LOCK:
+            if _ving.get(platform):
+                return {"ok": False, "dup": True,
+                        "err": "该渠道的验证窗口已经开着——完成验证后直接关窗，"
+                               "系统会自动解除冷却并单查探测"}
+            _ving[platform] = True
+        # 预检失败要在锁内回滚：占位已在锁内完成，任何提前返回都必须撤销，
+        # 否则该渠道再也打不开验证窗口。
+        _resolved = False
         try:
-            insts = get_crawlers([platform])
+            try:
+                insts = get_crawlers([platform])
+            except Exception:
+                insts = []
+            if not insts:
+                return {"ok": False, "err": "未知渠道: %s" % platform}
+            c = insts[0]
+            scene = (rt.get("scene") or {}).get(platform) or {}
+            url = (scene.get("url") or getattr(c, "last_block_url", "")
+                   or getattr(c, "warmup_url", "") or c.login_url() or "")
+            if not url:
+                return {"ok": False, "err": "无法确定要打开的地址"}
+            _resolved = True
         except Exception as e:
             return {"ok": False, "err": str(e)[:120]}
-        if not insts:
-            return {"ok": False, "err": "未知渠道: %s" % platform}
-        c = insts[0]
-        scene = (rt.get("scene") or {}).get(platform) or {}
-        url = (scene.get("url") or getattr(c, "last_block_url", "")
-               or getattr(c, "warmup_url", "") or c.login_url() or "")
-        if not url:
-            return {"ok": False, "err": "无法确定要打开的地址"}
+        finally:
+            if not _resolved:
+                with _VERIFY_LOCK:
+                    _ving.pop(platform, None)
+
         done = threading.Event()
 
         def _run():
@@ -1949,85 +2003,114 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                 # 与采集共用渠道锁：验证窗口开的是采集同一份 profile，
                 # 不持锁会和正在跑的采集抢浏览器（SessionBusy）或让
                 # 两份不同指纹的上下文同时指向同一个档案。
-                if isinstance(scene.get("mobile"), bool):
-                    c.use_mobile = scene["mobile"]
-                with channel_slot(c.name):
-                    c.open_challenge_window(url, done, timeout_s=900)
-            except Exception as e:
-                logger.warning("[验证] %s 窗口异常: %s", platform, e)
-                return
-            finally:
-                c.use_mobile = bak
-            # 关窗 = 人完成了验证：立刻解除冷却并探测一次
-            try:
-                if rt.get("pacing") is not None:
-                    rt["pacing"].reset(platform)
-            except Exception:
-                pass
-            try:
-                if isinstance(scene.get("mobile"), bool):
-                    c.use_mobile = scene["mobile"]
-                ok, rows, note = _probe_channel(c, scene)
-            finally:
-                c.use_mobile = bak
-            # 验证没通过就重新竖起熔断：先 reset 是为了让探测能打出去；
-            # 探测仍被拦时若保持 reset，渠道会显示"已恢复"并在下一轮
-            # 立刻再撞一次——这是把"验证失败"伪装成"已修复"。
-            if not ok and rt.get("pacing") is not None:
                 try:
-                    _st = [x.get("status") for x in
-                           (getattr(c, "paths", None) or [])]
-                    _note = " ".join(
-                        str(x.get("detail") or "") for x in
-                        (getattr(c, "paths", None) or [])
-                        if x.get("status") not in ("ok", "calendar", "empty"))
-                    _kind, _cd = rt["pacing"].observe(
-                        platform, _st, _note,
-                        retry_after=int(
-                            getattr(c, "retry_after_s", 0) or 0))
-                    if _kind:
-                        rt["scene"].setdefault(platform, {})["retripped"] = {
-                            "kind": _kind, "cooldown_s": int(_cd)}
-                        logger.warning(
-                            "[验证] %s 未通过，重新熔断 %ds（%s）",
-                            platform, _cd, _kind)
-                except Exception as _re:
-                    logger.warning("[验证] %s 重新熔断失败: %s",
-                                   platform, _re)
-            refill = _refetch_failed(platform) if ok else {"n": 0, "rows": 0}
-            rt["scene"].setdefault(platform, {})["verify"] = {
-                "at": time.strftime("%H:%M:%S"), "ok": ok,
-                "rows": rows, "note": note, "refill": refill}
-            # 落干预账：重启后仍能回答"上次验证是否真的恢复"
-            try:
-                _aft = (rt.get("pacing").snapshot()["channels"]
-                        .get(platform) if rt.get("pacing") else {}) or {}
-                storage.save_intervention(
-                    platform, "verify", ok=ok, rows=rows,
-                    scope=str(scene.get("kind") or ""),
-                    before=str(scene.get("kind") or ""),
-                    after="%s/%s" % (_aft.get("state"), _aft.get("reason")),
-                    note=("；".join(filter(None, [note,
-                          ("补采 %d 条/落库 %d" % (refill.get("n", 0),
-                                                   refill.get("rows", 0)))
-                          if refill.get("n") else ""]))),
-                    ms=int((time.time() - _t0) * 1000))
-            except Exception:
-                pass
-            logger.info("[验证] %s 回归探测：%s（%d 条）%s", platform,
-                        "通过" if ok else "未通过", rows, note)
+                    if isinstance(scene.get("mobile"), bool):
+                        c.use_mobile = scene["mobile"]
+                    with channel_slot(c.name):
+                        c.open_challenge_window(url, done, timeout_s=900)
+                except Exception as e:
+                    logger.warning("[验证] %s 窗口异常: %s", platform, e)
+                    return
+                finally:
+                    c.use_mobile = bak
+                # 关窗 = 人完成了验证：立刻解除冷却并探测一次
+                try:
+                    if rt.get("pacing") is not None:
+                        rt["pacing"].reset(platform)
+                except Exception:
+                    pass
+                try:
+                    if isinstance(scene.get("mobile"), bool):
+                        c.use_mobile = scene["mobile"]
+                    ok, rows, note = _probe_channel(c, scene)
+                finally:
+                    c.use_mobile = bak
+                # 验证没通过就重新竖起熔断：先 reset 是为了让探测能打出去；
+                # 探测仍被拦时若保持 reset，渠道会显示"已恢复"并在下一轮
+                # 立刻再撞一次——这是把"验证失败"伪装成"已修复"。
+                if not ok and rt.get("pacing") is not None:
+                    try:
+                        _st = [x.get("status") for x in
+                               (getattr(c, "paths", None) or [])]
+                        _note = " ".join(
+                            str(x.get("detail") or "") for x in
+                            (getattr(c, "paths", None) or [])
+                            if x.get("status") not in ("ok", "calendar", "empty"))
+                        _kind, _cd = rt["pacing"].observe(
+                            platform, _st, _note,
+                            retry_after=int(
+                                getattr(c, "retry_after_s", 0) or 0))
+                        if _kind:
+                            rt["scene"].setdefault(platform, {})["retripped"] = {
+                                "kind": _kind, "cooldown_s": int(_cd)}
+                            logger.warning(
+                                "[验证] %s 未通过，重新熔断 %ds（%s）",
+                                platform, _cd, _kind)
+                    except Exception as _re:
+                        logger.warning("[验证] %s 重新熔断失败: %s",
+                                       platform, _re)
+                refill = _refetch_failed(platform) if ok else {"n": 0,
+                                                              "rows": 0}
+                rt["scene"].setdefault(platform, {})["verify"] = {
+                    "at": time.strftime("%H:%M:%S"), "ok": ok,
+                    "rows": rows, "note": note, "refill": refill}
+                # 落干预账：重启后仍能回答"上次验证是否真的恢复"
+                try:
+                    _aft = (rt.get("pacing").snapshot()["channels"]
+                            .get(platform) if rt.get("pacing") else {}) or {}
+                    storage.save_intervention(
+                        platform, "verify", ok=ok, rows=rows,
+                        scope=str(scene.get("kind") or ""),
+                        before=str(scene.get("kind") or ""),
+                        after="%s/%s" % (_aft.get("state"),
+                                         _aft.get("reason")),
+                        note=("；".join(filter(None, [note,
+                              ("补采 %d 条/落库 %d" % (refill.get("n", 0),
+                                                       refill.get("rows", 0)))
+                              if refill.get("n") else ""]))),
+                        ms=int((time.time() - _t0) * 1000))
+                except Exception:
+                    pass
+                logger.info("[验证] %s 回归探测：%s（%d 条）%s", platform,
+                            "通过" if ok else "未通过", rows, note)
+            finally:
+                # 任何路径都要放行（含 window 异常时的 early return），
+                # 否则一次异常会让该渠道再也打不开验证窗口。
+                with _VERIFY_LOCK:
+                    rt.get("verify_open", {}).pop(platform, None)
+                # 与在途标记同源清除：窗口关了就不再显示「正在验证」，
+                # 此时结果已经落进 scene["verify"]，面板改读验证结论。
+                try:
+                    (rt.get("scene", {}).get(platform) or {}).pop(
+                        "verify_open_at", None)
+                except Exception:
+                    pass
 
+        # 置位已在锁内完成（见函数头）。线程启动失败要回滚并如实报错。
+        _launched = False
         try:
             threading.Thread(target=_run, daemon=True,
                              name="verify-%s" % platform).start()
-        except Exception as e:
-            return {"ok": False, "err": str(e)[:120]}
-        logger.info("[干预] 打开 %s 验证窗口：%s（关窗即保存会话并自动探测）",
-                    platform, url)
-        return {"ok": True, "platform": platform, "url": url,
-                "scene": scene,
-                "hint": "窗口已打开：完成验证后直接关闭窗口——会话自动保存、"
-                        "冷却自动解除、并立刻单查探测一次"}
+            _launched = True
+            # 窗口开着的这 15 分钟必须是「可见状态」（r482）：原先面板仍写
+            # 「需登录 / 去验证」，用户点了看不到任何变化，只好再点一次——
+            # 这才是连点的真实根因，光有幂等拒绝只是在事后拦，人还是懵的。
+            try:
+                rt.setdefault("scene", {}).setdefault(platform, {})["verify_open_at"] = (
+                    time.strftime("%H:%M:%S"))
+                rt["scene"][platform]["verify_timeout_s"] = 900
+            except Exception:
+                pass
+            logger.info("[干预] 打开 %s 验证窗口：%s（关窗即保存会话并自动探测）",
+                        platform, url)
+            return {"ok": True, "platform": platform, "url": url,
+                    "scene": scene,
+                    "hint": "窗口已打开：完成验证后直接关闭窗口——会话自动保存、"
+                            "冷却自动解除、并立刻单查探测一次"}
+        finally:
+            if not _launched:
+                with _VERIFY_LOCK:
+                    _ving.pop(platform, None)
 
     rt["verify_channel"] = verify_channel
 
@@ -2575,6 +2658,19 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                             "mobile": (bool(_bad0.get("mobile"))
                                        if "mobile" in _bad0 else None),
                             "files": dict(getattr(c, "last_scene", {}) or {})}
+                        # 自动熔断也入账（action=auto_trip）。原先只有手动
+                        # warm/verify/probe 写 interventions，于是账本在
+                        # 35 小时里"零干预"——系统自己熔断过什么、冷却多久，
+                        # 事后完全无法追溯。只记状态跃迁（每个 kind 一次），
+                        # 不记每次失败，量级与手动干预同一档。
+                        try:
+                            storage.save_intervention(
+                                c.name, "auto_trip", ok=False,
+                                scope=_kind, note=("自动熔断 %s，冷却 %ss · %s"
+                                                   % (_kind, int(_cd),
+                                                      _note[:120])))
+                        except Exception:
+                            pass
                         _ch = (pac.snapshot()["channels"].get(c.name) or {})
                         logger.warning(
                             "[节流] %s 命中%s，熔断 %ds（第 %d 次）",
@@ -2584,15 +2680,24 @@ def make_sweep_job(cfg, rt, logger, storage, charts_fn):
                         # 只开一次，防连点。
                         _auto = bool(((rt.get("cfg") or cfg).get("crawler")
                                       or {}).get("auto_verify", False))
-                        if _auto and _kind == "captcha":
-                            _av = rt.setdefault("_auto_verify_at", {})
-                            if time.time() - _av.get(c.name, 0) > 600:
-                                _av[c.name] = time.time()
-                                logger.info("[干预] %s 命中验证，自动打开"
-                                            "验证窗口（auto_verify）", c.name)
-                                threading.Thread(
-                                    target=verify_channel, args=(c.name,),
-                                    daemon=True).start()
+                        if _kind == "captcha":
+                            if _auto:
+                                _av = rt.setdefault("_auto_verify_at", {})
+                                if time.time() - _av.get(c.name, 0) > 600:
+                                    _av[c.name] = time.time()
+                                    logger.info("[干预] %s 命中验证，自动打开"
+                                                "验证窗口（auto_verify）", c.name)
+                                    threading.Thread(
+                                        target=verify_channel, args=(c.name,),
+                                        daemon=True).start()
+                            else:
+                                # 「自动开窗已关闭」要留痕（r505）：否则命中验证后
+                                # 界面只剩「需验证」，用户既不知道本来可以自动处理，
+                                # 也不知道是自己关掉的——属「可识别」缺口。
+                                logger.warning(
+                                    "[干预] %s 命中验证，但「命中验证自动开窗」"
+                                    "已关闭（配置 · 全局参数 → 采集）；"
+                                    "需要人工点「去验证」", c.name)
             ok_paths = [x for x in paths
                         if x.get("status") in ("ok", "calendar")]
             selected = ok_paths[-1] if ok_paths else None
@@ -3352,4 +3457,29 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # 发行包是 PyInstaller 单文件，双击运行 = 一个控制台窗口。
+    # 旧写法 `main()` 一抛异常窗口立刻关闭，用户只看到浏览器
+    # 「无法连接服务器 127.0.0.1:8765」（GitHub issue #11 即此形态）：
+    # 没有任何线索说明是缺 config.yaml、端口被占、还是依赖缺失。
+    # 这里把异常原样打出来并停住，让人能读到真正的原因。
+    try:
+        main()
+    except SystemExit:
+        raise
+    except BaseException as _e:            # noqa: BLE001 - 入口兜底
+        import traceback
+        traceback.print_exc()
+        try:
+            print("\n⚠ 启动失败：%s: %s" % (type(_e).__name__, _e))
+            print("   常见原因：config.yaml 缺失或格式错误 / 端口 8765 被占用 /"
+                  " 依赖未安装。")
+            print("   详细日志见 logs/monitor.log。")
+        except Exception:
+            pass
+        # 双击启动时没有父终端可回看：停住，别让窗口一闪而过。
+        try:
+            if sys.stdin and sys.stdin.isatty():
+                input("\n按回车键关闭…")
+        except Exception:
+            pass
+        raise SystemExit(1)

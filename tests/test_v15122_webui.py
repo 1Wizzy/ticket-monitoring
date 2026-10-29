@@ -74,7 +74,7 @@ def test_p2d_letter_spacing_two_tier_tokens():
     assert s.count("letter-spacing:var(--ls2)") == 4
     # r325：+1 处 .rintl 国际徽标消费（源码钉随消费点记账）
     # R15：+1 处 .rrt 往返徽标消费（源码钉随消费点记账）
-    assert s.count("letter-spacing:var(--ls05)") == 8  # r352 关注台试看条/航线内切换微签 +2
+    assert s.count("letter-spacing:var(--ls05)") == 10  # r420 节流小节标题/复发表头 +2（与健康卡 pseclab 同族）
     # 裸字距声明清零（半像素/两像素档全入令牌）
     assert "letter-spacing:.5px" not in s
     assert "letter-spacing:2px" not in s
@@ -87,7 +87,7 @@ def test_p2e_tile_radius_token():
     assert s.count("--r10:10px") == 2          # 主站 + notify
     assert s.count("border-radius:10px") == 0
     assert s.count("border-radius:0 10px 10px 10px") == 0
-    # 主站 7 处 + notify 2 处 + .pldesp 单角变体 1 处 + r340 检索浮层 1 处
+    # 主站 7 处 + notify 2 处 + r340 检索浮层 1 处
     # + r340b 详情抽屉/校准册 2 处 + r357 配置表面 4 处
     # + 检索台 srx-mxcard/srx-hero-act 2 处 + srf-card 1 处 + 特价面板 1 处
     # + 渠道台 chband 1 处 + 检索浮层 r10 1 处 = 22
@@ -95,7 +95,14 @@ def test_p2e_tile_radius_token():
     # + v294 扁平化监控卡/雷达监控/健康诊断/关注航班统一卡 6 处 = 29
     # v1.5.303 基线 28 处（v297 登录内层 lgslot 并入外层表面 -1）
     # + r369 节流状态条 paceBox 1 处 = 29
+    # r473e 起节流量尺改成「无底色的发丝竖线布局」，.pace-stats 不再需要圆角
+    # （它在浅灰面板里本来就不该是一张带边的白卡），所以回到 29。
     assert s.count("border-radius:var(--r10)") == 29
-    assert "border-radius:0 var(--r10) var(--r10) var(--r10)" in s
+    # r455 退役唯一一处单角变体（.pldesp「展开体跟行左缘对齐」）。
+    # 那处圆角本来是为「行是圆角盒子 + 展开体另起一张盒子」服务的；
+    # 现在行与展开体合成同一条列表项（无色块、发丝下划线分隔），
+    # 不再有第二个盒子，单角变体失去消费者。留着它就是死样式。
+    assert "border-radius:0 var(--r10) var(--r10) var(--r10)" not in s
+    assert ".pldesp{background:transparent;border:0;" in s
     # --r3=9px 值不动（uitest 在案钉：notify logo 9px）
     assert "--r3:9px" in s

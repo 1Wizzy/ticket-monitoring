@@ -25,5 +25,7 @@ def test_mobile_calendar_and_chart_affordance():
     for s in ("#searchview .srx-grid:has(.srx-mirror.srx-folded)",
               "#searchview .srx-brief .srx-src{flex:0 0 220px!important}",
               "spMonCalFit", "spMonTable",
-              "role=\"img\" aria-label=\"特价监控走势\""):
+              # r374 画布可键盘聚焦，aria-label 补充了键位说明
+              "role=\"img\" aria-label=\"特价监控走势",
+              'id="spMonChart" tabindex="0"'):
         assert s in src, s

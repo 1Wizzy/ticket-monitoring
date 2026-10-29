@@ -156,7 +156,12 @@ def test_ui_renders_dash_for_empty_coverage():
         os.path.abspath(__file__))), "webui.py"), encoding="utf-8").read()
     assert "(j.coverage.ratio||0)*100" not in src, \
         "不得再把「没发」渲染成 0%"
-    assert "j.coverage.ratio==null?'—'" in src
+    # 空覆盖率必须渲染成「—」而不是 0%。实现可能写成
+    # `ratio==null?null:...` 再由下游 `_covVal===null?'—'` 落字，
+    # 只要「空 → —」这条链在源码里成立即可。
+    assert ("j.coverage.ratio==null?'—'" in src
+            or "j.coverage.ratio==null?null" in src
+            and "_covVal===null?'—'" in src), "空覆盖率未渲染成 —"
 
 
 # ---- r388d：陈旧样本不得报「路径劣化」----

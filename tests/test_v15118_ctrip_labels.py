@@ -227,10 +227,18 @@ def test_webui_p11_kpisum_touch_floor():
 
 def test_webui_p21_pushlog_empty_title():
     """P2-1（r219 WebUI 审计）：推送记录空账本标题「最近 0 条」别扭，
-    空态降级「暂无推送记录」（有记录时保留计数词面）。"""
-    assert ("$('pvTitle').textContent=items.length?"
-            "('📨 推送记录（最近 '+items.length+' 条）')"
-            ":'📨 暂无推送记录';") in src()
+    空态降级「暂无推送记录」（有记录时保留计数词面）。
+
+    图标已从 emoji 收编为内联 SVG（深色下 emoji 自带彩色底，与扁平语言冲突），
+    所以这里只锚「标题文案 + 计数胶囊 + 空态降级」，不锁 emoji。"""
+    src_ = src()
+    assert "$('pvTitle').innerHTML=(items.length" in src_
+    assert "推送记录<span class=\"pvhead-n\">最近 '+items.length+' 条</span>" in src_
+    assert "暂无推送记录" in src_
+    # 有记录 / 无记录 必须走同一处三元，不能各写一套
+    i = src_.index("$('pvTitle').innerHTML=(items.length")
+    seg = src_[i:i + 420]
+    assert 'use href="#i-bell"' in seg, "标题缺少铃铛图标"
 
 
 # ---- P2-2（推送审校）：补位角标「0h前」词面反语义 ----

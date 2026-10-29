@@ -99,7 +99,10 @@ def test_tuniu_domestic_login_wall_and_session_injection_pins():
     assert "710114" in src and "国内接口 710114 请登录" in src
     assert "self._install_tac_cookies(client)" in src
     ui = pathlib.Path(webui.__file__).read_text(encoding="utf-8")
-    assert "tuniu:'国内需'" in ui
+    # 2026-10-27 起废弃「建议/国内需/国际需」分档：全渠道必须登录，
+    # 差异只在会话槽位。原来这条钉的是旧档位，已按新口径改写。
+    assert "tuniu:'必须'" in ui
+    assert "tuniu:'国内需'" not in ui
 
 
 def test_tongcheng_session_evidence_and_density_pins():

@@ -1,12 +1,18 @@
 # NAS / 服务器容器化部署：
 #   cp config.example.yaml config.yaml   # 首次：建配置（网页里配也行）
-#   docker compose up -d
+#   docker compose up -d                 # 本地构建（默认路径，无需拉镜像）
 #   浏览器打开 http://NAS_IP:8765
+#
+# 关于镜像：本项目**不发布预构建镜像**，仓库里也没有推 ghcr 的流水线，
+# 所以 `docker pull ghcr.io/dengmeiluan/ticket-monitoring` 一定是 denied
+# （GitHub issue #8 即此）。请用这里的 `build: .` 本地构建，或直接下载
+# Release zip 在宿主机运行。
+# 关于登录：容器里没有图形界面，**无法弹出有头浏览器**（issue #10）。
+# 采集本身不需要登录窗口；若要登录，请在桌面环境登录好后把 user_data
+# 整目录挂载/拷贝进来，容器内直接复用已有会话。
 services:
   ticket-monitoring:
     build: .
-    # 预构建镜像（与 Release 同源时可用，免去本机构建）：
-    # image: ghcr.io/dengmeiluan/ticket-monitoring:latest
     container_name: ticket-monitoring
     ports:
       - "8765:8765"

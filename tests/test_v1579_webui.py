@@ -29,8 +29,11 @@ def test_trend_empty_state_guarded():
     fetch 失败（_markStale）=服务未启动，且不覆盖已绘制图表。"""
     assert 'id="chartEmpty" style="display:flex">数据加载中…' in PAGE, \
         "静态初始文案应为中性「数据加载中…」（教学词面在此=假空态）"
-    assert ("$('chartEmpty').innerHTML='暂无走势数据<span>完成第一轮扫描后"
-            in PAGE), "教学词面应挂在 chart() 确无数据分支（S 已到达才承诺）"
+    # 教学词面必须挂在 chart() 确无数据分支（S 已到达才承诺）。
+    # 2026-10-29 起三图空态统一两段式：标题走 <b>、说明走 <span>，
+    # 这里守「同一处 innerHTML 同时写标题与说明」，不再钉死前后相邻。
+    assert "'<b>暂无走势数据</b><span>完成第一轮扫描后" in PAGE, \
+        "教学词面应挂在 chart() 确无数据分支（S 已到达才承诺）"
     assert ("const ce=$('chartEmpty');if(ce&&ce.style.display!=='none')"
             in PAGE), "_markStale 应守卫翻新 chartEmpty（已绘制图表不动）"
 

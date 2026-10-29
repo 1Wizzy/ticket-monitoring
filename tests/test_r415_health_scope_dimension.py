@@ -96,7 +96,10 @@ def test_health_payload_carries_paths():
     """健康载荷要带分通路成功率与退役标记，否则面板只有一个厂商数。"""
     src = _src("webui.py")
     i = src.index("def _health_decorate")
-    block = src[i:i + 2200]
+    # 取到函数结束，不用固定字符窗口：插一段别的维度就会把 path_stats
+    # 挤出窗口，变成假红（r430 加会话维度时踩过）。
+    j = src.index("\ndef ", i + 10)
+    block = src[i:j]
     assert "path_stats" in block
     assert "retired_paths" in block or "retired" in block
 

@@ -220,6 +220,10 @@ def test_probe_detail_evidence_updates_session_without_empty_inference(tmp_path,
     webui._State.cfg = {"crawler": {"user_data_dir": str(tmp_path)},
                         "output": {"db_path": str(tmp_path / "x.db")}}
     webui._State.logger = logging.getLogger("test-v288")
+    # 健康证据来自真实 monitor.log；本测试只验证「探针明细」的推理边界，
+    # 不能让本机日志里恰好存在的途牛明细把断言顶成 available。
+    monkeypatch.setattr(webui, "_health_state",
+                        lambda *a, **k: {"evidence": {}})
     webui._PROBE_AUTH.clear()
     try:
         # empty/calendar-only must never be recorded as session evidence

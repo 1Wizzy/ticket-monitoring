@@ -55,6 +55,21 @@ DEFAULTS = {
     "per_minute": 0,
     "warmup_enabled": True,
     "warmup_platforms": ("qunar", "fliggy", "tuniu"),
+    # 成功率保护（自动降频）开关。关掉后 set_health 仍记录 rate/attempts
+    # 供界面显示，但 penalty 恒为 1.0，不再拉长 TTL——用户显式要求
+    # 「宁可多打也别降频」时有办法做到（熔断/预热同理各有关闭项）。
+    "health_penalty_enabled": True,
+    # 成功率保护的阈值（r485：原先写死在 set_health 里，用户只能开/关，
+    # 不能按自己渠道的实际情况调）。四档语义保持原样，只把数字提出来：
+    #   rate >= health_ok_ratio           → ×1（不降频）
+    #   rate >= health_slow_ratio         → ×health_slow_factor
+    #   更低                              → ×health_slowest_factor
+    #   样本 < health_min_samples         → 不判（避免首轮波动就降频）
+    "health_min_samples": 5,
+    "health_ok_ratio": 0.7,
+    "health_slow_ratio": 0.4,
+    "health_slow_factor": 1.5,
+    "health_slowest_factor": 3.0,
     "cadence": {},
     # 同轮并发浏览器的硬上限（0=跟随渠道数）。同机 5 家齐发最容易被
     # 判成"同一来源的多路机器人"，2 路是实测较稳的档。
@@ -62,6 +77,21 @@ DEFAULTS = {
     # 临期多少天内进入快层（默认 3 天）
     "near_days": 3,
 }
+
+
+def _flag(v, default):
+    """把配置里的开关值解析成布尔。
+
+    `config.yaml` 是手写的，`enabled: "false"`（带引号）在 YAML 里是**字符串**，
+    而 `bool("false")` 是 True —— 开关会静默失效：界面按 `!== false` 显示
+    「已关闭」，后端却仍按开启执行（r519 实测 health_penalty / breaker /
+    warmup 三处全中）。字符串按常见假值词判定，与 YAML 语义一致。
+    """
+    if v is None:
+        return bool(default)
+    if isinstance(v, str):
+        return v.strip().lower() not in ("0", "false", "no", "off", "")
+    return bool(v)
 
 
 def _num(v, default, lo, hi, cast=int):
@@ -100,8 +130,8 @@ def parse_pacing(cfg):
                              DEFAULTS["near_ratio"], 0.0, 1.0, float)
     out["stagger_seconds"] = _num(sc.get("stagger_seconds"),
                                   DEFAULTS["stagger_seconds"], 0, 120)
-    out["breaker_enabled"] = bool(
-        brk.get("enabled", DEFAULTS["breaker_enabled"]))
+    out["breaker_enabled"] = _flag(
+        brk.get("enabled"), DEFAULTS["breaker_enabled"])
     out["breaker_base_s"] = _num(brk.get("base_s"),
                                  DEFAULTS["breaker_base_s"], 30, 3600)
     out["breaker_cap_s"] = _num(brk.get("cap_s"),
@@ -119,8 +149,8 @@ def parse_pacing(cfg):
     # 预热编排（L1/L3）：只对声明了 warmup_url 的渠道生效；默认三家
     # （qunar/fliggy/tuniu）——ctrip 与同程在各自 fetch 内部已自带预热
     warm = crw.get("warmup") or {}
-    out["warmup_enabled"] = bool(
-        warm.get("enabled", DEFAULTS["warmup_enabled"]))
+    out["warmup_enabled"] = _flag(
+        warm.get("enabled"), DEFAULTS["warmup_enabled"])
     _pl = warm.get("platforms")
     if _pl is None:
         _pl = list(DEFAULTS["warmup_platforms"])
@@ -128,6 +158,29 @@ def parse_pacing(cfg):
         _pl = [x.strip() for x in _pl.split(",")]
     out["warmup_platforms"] = tuple(
         p for p in (_pl or []) if p in PLATFORMS)
+    # 手写 config.yaml 常见 `health_penalty_enabled: "false"`（带引号）。
+    # `bool("false")` 是 True —— 开关会**静默失效**：界面显示已关闭、
+    # 后端却仍在降频（r519）。字符串按常见真值词判定，与 YAML 语义一致。
+    out["health_penalty_enabled"] = _flag(
+        crw.get("health_penalty_enabled"),
+        DEFAULTS["health_penalty_enabled"])
+    # 阈值可配置（r485）：把写死在 set_health 里的四档提出来。钳制保证
+    # 「慢档阈值 < 合格阈值」「最慢档 ≥ 慢档」这类顺序不变式，否则用户
+    # 填反了会得到「成功率越高罚得越重」的反向行为。
+    out["health_min_samples"] = _num(
+        crw.get("health_min_samples"), DEFAULTS["health_min_samples"], 1, 200)
+    out["health_ok_ratio"] = _num(
+        crw.get("health_ok_ratio"), DEFAULTS["health_ok_ratio"], 0.05, 1.0,
+        float)
+    out["health_slow_ratio"] = _num(
+        crw.get("health_slow_ratio"), DEFAULTS["health_slow_ratio"], 0.0,
+        out["health_ok_ratio"], float)
+    out["health_slow_factor"] = _num(
+        crw.get("health_slow_factor"), DEFAULTS["health_slow_factor"], 1.0,
+        10.0, float)
+    out["health_slowest_factor"] = _num(
+        crw.get("health_slowest_factor"), DEFAULTS["health_slowest_factor"],
+        out["health_slow_factor"], 20.0, float)
     # 每渠道独立节奏（3 区扩展）：最小采集间隔，0=跟随全局 TTL
     cad = crw.get("cadence") or {}
     _cad = {}
@@ -634,6 +687,24 @@ def advise(plat, ch=None, paths=None, now=None, node=None,
         q_ok = int(node.get("query_ok") or 0) or sum(
             int((v or {}).get("query_ok") or 0) for v in paths.values())
     if not attempts and not q_attempts:
+        # 「近 24h 无样本」有两种原因（r516，对应用户反馈「登录配好了但渠道
+        # 全红」）：① 刚启动、还没轮到这一轮；② **采集根本没在跑**。
+        # 只看窗口内计数分不出这两者，一律说「先跑一轮再判断」会让第二种
+        # 情形的人一直进行无效等待——而真正要看的是采集进程/调度。
+        # 用该渠道最近一条样本的时间兜底：存在且已很旧，就是停了。
+        _last = str(node.get("last_seen_at") or node.get("last_at")
+                    or node.get("last_ok_at") or "")
+        _age_h = 0.0
+        if _last:
+            _m = _age_min(_last, now)
+            _age_h = (_m or 0.0) / 60.0
+        if _last and _age_h >= 6:
+            return {"state": "stalled", "action": "scan", "severity": "act",
+                    "hint": "该渠道已 %.0f 小时没有采集样本（最后一条 %s）——"
+                            "不是「先跑一轮」，而是采集没在跑：检查监控进程与"
+                            "扫描周期是否在运行，登录状态本身无需重做"
+                            % (_age_h, _last[5:16]),
+                    "eta_s": 0}
         return {"state": "unknown", "action": "scan", "severity": "ok",
                 "hint": "近 24h 无样本：先跑一轮再判断", "eta_s": 0}
     # 域级劣化优先：国内好、国际被登录墙拦住时，不应该把整家渠道
@@ -674,6 +745,52 @@ def advise(plat, ch=None, paths=None, now=None, node=None,
             if (str(_name).startswith(_CAL_FAMILY)
                     and _cal_family_ok(_sp, _name)):
                 continue
+            # 这一域的失败如果主要是「登录墙」（login 拦截≥10 且占该路尝试
+            # 半数以上），根因是会话而不是限流/路径选择：再观察、再降频、
+            # 再换路径都没用，只有重登能救。实测去哪儿国际 H5 24h 内
+            # 18 次 login / 0 成功，advise 却给「观察一轮」，白等 9 小时。
+            # 必须放在「陈旧样本不判」之前：那条规则防的是「这条路没在用」，
+            # 而 login 拦截恰恰证明它一直在被尝试（只是进不去）。
+            #
+            # **但登录失败占多数还不够**：得确认这条路本身几乎不出数。
+            # 实测同一通路（国际 H5）24h 内 BKK 3/22 全被 login 挡，而
+            # 同会话的 HAK 27/29、LHR 9/12 正常——非 BKK 记录 44/50 成功。
+            # 那种情形是「单条航线被拦」，重登解决不了，让用户去重登
+            # 等于把人引去做无效操作。判据：本路 ok+calendar 占比 < 20%。
+            _login_n = int((_v or {}).get("login") or 0)
+            _okish = (int((_v or {}).get("ok") or 0)
+                      + int((_v or {}).get("calendar") or 0))
+            # 判据优先用**最近一次成功之后**的登录墙连击数（r479）：
+            # 24h 窗口是全量的，重登后旧行不会消失，只用「登录数/总数」
+            # 会让用户刚登完又被要求再登一次（实测重登后 3 次全成功，
+            # 仍判 login）。连击数一出数就清零，直接回答「现在通不通」。
+            # 缺该字段（旧载荷/单测）时退回总登录数，行为不变。
+            _ln_run = int((_v or {}).get("login_since_ok", -1))
+            if _ln_run < 0:
+                _ln_run = _login_n
+            if _ln_run >= 8 and _okish * 5 <= _n:
+                _dom = "国内" if _sk == "dom" else "国际"
+                # scope/path 回传给界面选登录端：飞猪 PC 与 H5 是两套
+                # cookie，「国际 H5 被拦」必须去登 H5；只按厂商开窗
+                # （verify）打开的是 PC 窗，登完 H5 依然进不去。
+                return {"state": "login", "action": "relogin",
+                        "severity": "act", "scope": _sk, "path": _name,
+                        "hint": "%s %s 近 24h 被登录墙拦 %d/%d 次、仅 %d 次"
+                                "出数——根因是会话失效，限流与换路都无效；"
+                                "点「去登录」重存该渠道会话"
+                                % (_dom, _name, _login_n, _n, _okish),
+                        "eta_s": 0}
+            # 登录拦截占多数、但这条路其他航线仍在正常出数 → 会话是好的，
+            # 是航线级拦截。不要提重登（无效），如实说明并给可行动作。
+            if _ln_run >= 8:
+                _dom = "国内" if _sk == "dom" else "国际"
+                return {"state": "path_degraded", "action": "probe",
+                        "severity": "wait",
+                        "hint": "%s %s 有 %d/%d 次被登录墙拦，但同一会话其他"
+                                "航线仍在出数（%d 次）——会话是好的，属航线级"
+                                "拦截；先点「自检」核实，别急着重登"
+                                % (_dom, _name, _login_n, _n, _okish),
+                        "eta_s": 0}
             # r388：只对"最近真的在试"的路下结论。某条兜底路径可能几小时
             # 没被用到（主路径一直成功就不走它），拿半天前的旧样本报
             # 「路径劣化」等于催用户去修一条根本没在用的路。
@@ -904,14 +1021,23 @@ class Pacing:
             n = int(attempts or 0)
         except (TypeError, ValueError):
             return
-        if n < 5:
+        # 用户关掉「成功率保护」时：仍然记账（界面要显示 rate/attempts），
+        # 但不产生任何降频。宁可多打几次，也不接受自动拉长 TTL。
+        _pen_on = bool(self.cfg.get("health_penalty_enabled", True))
+        if not _pen_on:
+            with self._lock:
+                self._health[str(plat)] = {"rate": round(r, 3),
+                                           "attempts": n, "penalty": 1.0,
+                                           "disabled": True}
+            return
+        if n < int(self.cfg.get("health_min_samples", 5)):
             penalty = 1.0
-        elif r >= 0.7:
+        elif r >= float(self.cfg.get("health_ok_ratio", 0.7)):
             penalty = 1.0
-        elif r >= 0.4:
-            penalty = 1.5
+        elif r >= float(self.cfg.get("health_slow_ratio", 0.4)):
+            penalty = float(self.cfg.get("health_slow_factor", 1.5))
         else:
-            penalty = 3.0
+            penalty = float(self.cfg.get("health_slowest_factor", 3.0))
         with self._lock:
             self._health[str(plat)] = {"rate": round(r, 3), "attempts": n,
                                        "penalty": penalty}

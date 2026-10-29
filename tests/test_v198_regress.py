@@ -148,15 +148,15 @@ class TestChartAnimReveal:
         src = self._src()
         i = src.index("const _anim=CHART_ANIM&&!RM;")
         seg = src[i:i + 200]
-        assert "if(!_anim)chartDraw();" in seg, \
+        assert "if(!_anim){chartDraw();" in seg, \
             "动画轮未跳过首绘（全量终帧先画满，clip 逐帧重绘零视觉产出）"
-        assert seg.index("if(!_anim)chartDraw();") < seg.index("if(_anim){"), \
+        assert seg.index("if(!_anim){chartDraw();") < seg.index("if(_anim){"), \
             "直绘守卫必须位于动画分支之前（顺序即语义）"
 
     def test_non_anim_path_still_direct_draw(self):
         """RM/非动画路径保持直绘（终帧立即可见，r197 死区钉前提）。"""
         src = self._src()
-        assert re.search(r"if\(!_anim\)chartDraw\(\);", src), \
+        assert re.search(r"if\(!_anim\)\{chartDraw\(\);", src), \
             "直绘守卫缺失"
 
 

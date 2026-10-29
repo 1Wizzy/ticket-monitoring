@@ -322,9 +322,15 @@ python _scratch/analyze_pace.py
 ```
 代码默认  fast_ttl 15 / slow_ttl 120 / near 0.15 / stagger 0
           min_gap 0 / per_minute 0 / breaker 开(base 300, cap 3600)
+          login_cooldown 900 / warmup 开(qunar, fliggy, tuniu)
 本机配置  interval 30 / jitter 8 / 静默 01:00–07:00
           stagger 25 / min_gap 3 / fast 15 / slow 120
 ```
+
+> 判据来源：`core/pacing.py` 的 `DEFAULTS`（`fast_ttl_min` / `slow_ttl_min` / `near_ratio` /
+> `stagger_seconds` / `min_gap_s` / `per_minute` / `breaker_enabled` / `breaker_base_s` /
+> `breaker_cap_s` / `login_cooldown_s` / `warmup_enabled` / `warmup_platforms`）。
+> 增删任何一个键都要同步这一块——门禁 `test_playbook_defaults_block_matches_code` 会对着代码比。
 
 `fast_ttl` 必须小于「interval − jitter」，否则早到的轮次会被 TTL 挡掉——
 这是唯一一个配错会"看起来像没扫"的键。
@@ -425,6 +431,10 @@ ctrip PC/H5 均 100%，fliggy PC 100%，qunar H5/API 0%——问题在 qunar 的
 | 40–70% | ×1.5 | 慢半拍 |
 | <40%（样本 ≥5） | ×3 | 明显收缩 |
 | 样本 <5 | ×1 | 不判（防首轮误伤） |
+
+口径：这里的「近 24h 成功率」是**原口径** `query_rate`（`main.py` 调 `pac.set_health(plat, node["query_rate"], …)`），
+**不是**「在用口径」`query_rate_live`——罚速对该渠道的所有路径一律生效，不区分退役与否。
+若要按在用通路罚速，属代码变更，需同时改这里与 SPEC §2.5 的消费方表。
 
 `Pacing.set_health()` 写入，`plan_query()` 读它放大 fast/slow TTL；
 状态条 `/api/pacing.channels[].health` 直接看得到 `rate/attempts/penalty`。
@@ -890,7 +900,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest \
   tests/test_r380_soft_budget.py tests/test_pacing.py -q
 ```
 
-本轮门禁：pytest **3837 passed / 0 failed**；UI **658/658，JS 错误 0**；
+本轮（**r380 当轮**，非当前基线）门禁：pytest **3837 passed / 0 failed**；UI **658/658，JS 错误 0**；
 面板在 1512/390/320 三档零横向溢出。
 
 ### 13.9 补充：干预后"持续性"与域级归因（同日收口）
@@ -898,6 +908,10 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest \
 - **干预后每 30 分钟趋势**：`intervention_effect()` 额外返回 `trend`
   （bucket / rate / n）与 `regressed`。先好后坏（曾有 ≥70% 窗口、最近
   窗口 <40%）直接判 `regressed`，一致性不成立，建议复查会话/入口。
+  - 实现位置（2026-10-27 核对）：`core/storage.py::intervention_effect`，
+    分桶 `strftime('%s', ...) / 1800`（30 分钟），**最多 16 个桶**（`LIMIT 16`，约 8 小时）；
+    判定 `any(rate>=0.7) and last<0.4`，与上文 70%/40% 一致。
+  - 超出 8 小时的回落不会进入 `trend`——时间更早的"先好后坏"要靠 24h 的 before/after 口径判断。
 - **样本门槛**：干预后 <3 个样本只报 `provisional`（待复验），
   不宣布"已恢复"；1 次探测成功只能证明"这一刻通了"。
 - **同屏矛盾消除**：干预已见效时，advice 从 `path_degraded` 转为
@@ -1152,7 +1166,7 @@ direct   isCal set: [False]
 海湾航空 16:30 -> 06:35 经 巴林 ¥1992
 ```
 
-注意两处**有意保留** code 判据的位置：历史行键（`_fc_key` 族，无 code
+注意两处**有意保留** code 判据的位置：历史行键（`flight_key` / `_srx_flight_key`，无 code
 时回退 name）与演示数据播种（演示库无飞猪中转）。它们不是"真实班次"
 判定，不应随本修一并放宽。
 
@@ -1266,7 +1280,7 @@ PATH H5:H5 empty | H5 日期选择未匹配     ← 不再 NameError
 加新鲜度门槛：`last_at` 超过 **180 分钟**的路径不参与劣化判定（域级与
 平台级同时生效；新鲜样本仍照常告警，门槛不吞真问题）。
 
-线上验证（同一份账本）：
+线上验证（同一份账本；**当时文案快照**，r417 起建议条改称「近 24h 查询成功率」并附退役通路说明）：
 
 ```
 改前：qunar -> path_degraded  国内 API 近 24h 有效率 0%（18 次有效）
@@ -2026,9 +2040,13 @@ entry_path=窗历  path_status=calendar  rows=1  request_url=（空）
 - `_TC_CAL_URL` = `wx.17u.cn/...queryCalendarLowestPrice`：现在真正在用的。
 
 顺手记错的话，排查的人会拿着一个"根本不会成功"的地址去复现成功记录，
-比不记更浪费时间。守卫 `test_recorded_url_is_the_one_actually_called`
-专门断言：记录的必须是 `_TC_CAL_URL`，代码里不得出现 `INTL_CALENDAR_API`
-（看代码行、跳过注释——注释里提到它是在解释"为什么不用它"）。
+比不记更浪费时间。守卫 `test_recorded_url_is_the_one_actually_called` 专门断言：
+窗历那条 `path_note` **前后 1100 字符的代码块内**不得出现 `INTL_CALENDAR_API`
+（只看代码行、跳过注释）。
+
+> 注意范围：这是**局部守卫**，不是全文件禁令。`crawlers/tongcheng.py` 里
+> `INTL_CALENDAR_API` 仍作为常量定义与旧路径构造函数存在（3 处），那是合法的；
+> 被禁的只是「把已停用的地址写进成功记录的 path_note」。
 
 **"可溯源"的完整定义**：不是"失败时能查"，而是**每一条账都能回答
 "这次请求到底发了什么"**。只覆盖失败等于只覆盖了一半。

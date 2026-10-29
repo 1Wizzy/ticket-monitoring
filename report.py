@@ -2220,8 +2220,13 @@ def recent_platform_flights(db_path, from_city, to_city, date, hours=6):
     # 先取全部历史行再逐条 json.loads，只为丢掉窗口外——真机 2823 行
     # × 28KB extra 白解析 ~8s/航线-日期。fetched_at 为
     # '%Y-%m-%d %H:%M:%S' 定长格式，字符串比较即时间比较。
+    _has_prov = any(r[1] == "prov" for r in conn.execute(
+        "PRAGMA table_info(flight_prices)").fetchall())
+    _cols = ("id AS _row_id, platform, extra, fetched_at"
+             + (", prov" if _has_prov else ""))
     rows = conn.execute(
-        "SELECT id AS _row_id, platform, extra, fetched_at FROM flight_prices "
+        "SELECT " + _cols + " "
+        "FROM flight_prices "
         "WHERE from_city=? AND to_city=? AND depart_date=? AND extra != '' "
         "AND fetched_at >= datetime('now', 'localtime', ?) "
         "ORDER BY id DESC",
@@ -2257,6 +2262,11 @@ def recent_platform_flights(db_path, from_city, to_city, date, hours=6):
                     # rowId=null 实锤）
                     _it["_row_id"] = r["_row_id"]
                     _it["_raw_idx"] = _ix
+                    # 补位行也必须带该次采集的入口/路径溯源；原先 SQL 没取
+                    # prov，整条链路落到 UI 都是 {}（用户实报「补位数据看着
+                    # 奇怪、无法核对来源」）。NULL/空串原样透传，不臆造。
+                    if _has_prov:
+                        _it["_prov"] = r["prov"] or ""
             out[p] = (age, obj)
     return out
 

@@ -99,6 +99,13 @@ def test_start_login_rejected_within_pending_window(monkeypatch):
     # 线程——不 patch 会真开 Playwright 有头窗口）
     monkeypatch.setattr(REGISTRY[_PLAT], "_login_window",
                         lambda self, evt, *args, **kwargs: None)
+    # 本机真实 monitor.log 会带回「需登录」证据：pending 闸门只拦
+    # 「没有新拒绝」的槽位，证据在场时放行是设计行为。断言要钉的是
+    # 闸门本身，先把外部证据隔离掉（否则本机有真实数据就必然假红）。
+    monkeypatch.setattr(webui, "_health_state",
+                        lambda hours: {"evidence": {}})
+    webui._PROBE_AUTH.clear()
+    webui._State.login_errors.clear()
     webui._State.login_sessions.pop(_PLAT, None)
     webui._State.login_pending[_PLAT] = time.time()
     try:
@@ -110,3 +117,7 @@ def test_start_login_rejected_within_pending_window(monkeypatch):
     finally:
         webui._State.login_pending.pop(_PLAT, None)
         webui._State.login_sessions.pop(_PLAT, None)
+        # 登录线程失败会把摘要写进全局 login_errors，串到后续用例的
+        # 「保存失败」状态上（r368 曾因此假红）——本用例不验该字段。
+        webui._State.login_errors.pop(_PLAT, None)
+        webui._PROBE_AUTH.clear()

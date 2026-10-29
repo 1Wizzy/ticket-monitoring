@@ -36,7 +36,10 @@ def test_probe_fields_are_content_sized_and_picker_aligns_right():
 
 
 def test_chart_extreme_tags_have_a_dedicated_top_band():
-    assert "const L=58,R=18,T=W>=560?36:18,B=40" in SRC
+    # r374: 内边距收归 PCHART 单源；价签带改由 band 参数申请（业务留白），
+    # 断言「价签确实落在绘图区之外的顶部带」，而不是某个字面量常量。
+    assert "PCHART.frame(W,H,{x0:info.x0,x1:info.x1,y0:info.y0,y1:info.y1," in SRC
+    assert "band:W>=560?22:6" in SRC
     assert "let focusTarget=null;" in SRC
     assert "const placeTop=(text,x,color,align)=>" in SRC
     assert "focusTarget={v:tgt,color:cssv('--red')||'#c22a2e'}" in SRC

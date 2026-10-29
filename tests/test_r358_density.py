@@ -10,15 +10,24 @@ STYLE = re.search(r"<style>(.*?)</style>", SRC, re.S).group(1)
 
 
 def test_tab_and_toolbar_groups_share_one_surface():
+    """动作组/页签组必须是「同一个表面」上的并列件，不是各自独立的小卡。
+
+    r435 更正：这里原本钉的是 `srx-hero-act .srx-btn:last-child{grid-column:1/-1}`
+    ——那条规则本身是缺陷（它把「展开更多工具」这个 last-child 拉成整行，
+    开合时横移 284~364px）。用户要求「该废弃的就废弃」，故改为守设计意图：
+    动作钮无边框无底色（共享父表面），且父容器是一整块表面。
+    """
     for needle in (
         "#montabs .mtab{border-color:transparent;background:transparent",
         "#montabs .mtab.on{background:var(--blue)",
         "#searchview .srx-hero-act{background:color-mix",
         "#searchview .srx-hero-act .srx-btn{border-color:transparent;background:transparent",
-        "#searchview .srx-hero-act .srx-btn:last-child{grid-column:1/-1}",
         "#searchview .srx-band .srx-day{background:color-mix",
     ):
         assert needle in STYLE, needle
+    # 触发器不得被任何「最后一格铺满」的规则拉成整行
+    assert ".srx-btn:last-child{grid-column:1/-1}" not in STYLE or \
+        ".srx-btn:not(.srx-more-btn):last-child{grid-column:1/-1}" in STYLE
 
 
 def test_probe_collapses_to_one_line_before_expand():
@@ -60,8 +69,10 @@ def test_watch_chart_tags_avoid_each_other():
     assert "function wsTagRect(ctx,text,x,y,align){" in SRC
     assert "function wsBoxHit(a,b){" in SRC
     assert "const tagBoxes=[];" in SRC
-    # r361: extreme/price tags live in a 36px top band, outside the plot.
-    assert "const L=58,R=18,T=W>=560?36:18,B=40" in SRC
+    # r374: 价签带由 PCHART.frame(band) 提供（内边距单源），不再由本函数
+    # 自带一套 L/R/T/B 字面量；断言改成「确实经过 band 申请了顶部带」。
+    assert "PCHART.frame(W,H,{x0:info.x0,x1:info.x1,y0:info.y0,y1:info.y1," in SRC
+    assert "band:W>=560?22:6" in SRC
     assert "let focusTarget=null;" in SRC
     chart = SRC[SRC.index("const placeTop=(text,x,color,align)=>{"):
                 SRC.index("if(focusTarget)placeTop")]
@@ -93,7 +104,8 @@ def test_price_band_signals_horizontal_scroll_at_768():
 def test_mobile_source_cards_signal_horizontal_scroll():
     assert "function srxBriefHint(){" in SRC
     assert "el.addEventListener('scroll',srxBriefHint,{passive:true})" in SRC
-    assert "if(which==='overview')setTimeout(()=>{srxBriefHint();srxBandHint();},60)" in SRC
+    # r374：同一语义改为带兜底的 try 形式，展开后 60ms 重算横滑暗示
+    assert "if(open)setTimeout(()=>{srxBriefHint();srxBandHint();},60);" in SRC
     assert "#searchview .srx-brief.xhint:not(.xend)" in STYLE
 
 

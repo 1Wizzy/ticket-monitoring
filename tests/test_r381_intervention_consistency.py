@@ -227,11 +227,17 @@ def test_degradation_needs_valid_samples():
 
 
 def test_manual_reset_verifies_and_reports_truth():
-    """解除熔断不能直接记成功：必须带真实单查结果。"""
-    import inspect
-    import webui
-    src = inspect.getsource(webui._Handler._do_POST)
-    block = src.split('self.path == "/api/pacing/reset"', 1)[1][:3000]
+    """解除熔断不能直接记成功：必须带真实单查结果。
+
+    读文件而不是 inspect.getsource(webui._Handler._do_POST)：全套运行时
+    其它测试会替换/包装 `_Handler`，取到的源码里可能没有 reset 分支，
+    `split(...)[1]` 直接 IndexError（r379 已记录同一坑）。"""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(here, "webui.py"), encoding="utf-8").read()
+    # 切片要盖住整个分支（r480 加了并发守卫后 3000 字符不够，会把
+    # 写账那段挤出窗口造成假红）。用下一个 elif 作终止符。
+    block = src.split('self.path == "/api/pacing/reset"', 1)[1]
+    block = block.split('elif self.path ==', 1)[0]
     assert "probe_cb" in block, "解除后必须触发单查"
     assert 'save_intervention(' in block
     assert '"reset", ok=_ok' in block, "干预账的 ok 必须来自探测结果"

@@ -58,8 +58,12 @@ users:
     quiet_end: '07:00'       # 免打扰结束（支持跨零点）
     win_toast: true          # Windows 右下角弹窗（达标本机触达，心跳不弹）
     image_host:
-      provider: freeimage    # freeimage（免注册）/ smms（需 token）
-      # token: ''            # provider=smms 时的 sm.ms API token
+      # provider: ghimg（GitHub 图库，需 repo+token，当前推荐）/
+      #           smms（需 token）/ freeimage（免注册，但端点已被对方封禁，
+      #           代码内置连败熔断，仅作历史兼容）
+      provider: ghimg
+      # repo: ''             # provider=ghimg 时的 GitHub 仓库（owner/name）
+      # token: ''            # ghimg 的 GitHub Token 或 smms 的 API token
     push_drop_min: 30        # 降价再推阈值（￥）
     push_rise_min: 50        # 涨价再推阈值（￥）
     # 未达标心跳正文形态（三态可选，默认 slim=推荐）：
@@ -141,6 +145,10 @@ crawler:
     base_s: 300             # 首次冷却；连续命中按 2 倍阶梯递增
     cap_s: 3600             # 单次冷却上限
     login_cooldown_s: 900   # 登录墙冷却（固定，不随命中次数增长）
+  # ── 成功率保护（自动降频）：近 24h 查询率低于 70% 自动拉长该渠道 TTL
+  #    （低于 40% 拉 3 倍，样本不足 5 次不判）。关掉后仍统计成功率，
+  #    但不再自动降频——只在「宁可多打也不接受变慢」时才关。
+  health_penalty_enabled: true
   # ── 首页预热（L1/L3）：每轮每渠道先打一次首页再查深链 ──────────
   # 深链直入是最强的机器指纹（无 referer、无风控下发的 cookie）。
   # 只对声明了 warmup_url 的渠道生效；ctrip 与同程在 fetch 内部自带预热。
@@ -150,6 +158,10 @@ crawler:
   # 指纹一致性（L3）：抹掉 navigator.webdriver 等「自动化浏览器」标记。
   # 只让页面看到一个普通 Chrome——不伪造账号、不破解验证、不改 IP。
   stealth: true
+  # HTTP 出口的 TLS/JA3 指纹（core/net.py）：有 curl_cffi 时按此指纹发起请求，
+  # 缺依赖自动退回 httpx。设为空串可整渠道强制走 httpx（排障用）。
+  # 可选值见 curl_cffi 文档，默认 chrome。
+  tls_impersonate: chrome
   # 登录/验证窗口默认沿用该 profile 的 PC/H5 身份（指纹幂等）。
   # 仅当手机 profile 的滑块无法用鼠标完成时，才开启强制桌面登录；
   # 代价是登录指纹与采集指纹不一致。

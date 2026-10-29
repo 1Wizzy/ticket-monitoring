@@ -85,8 +85,14 @@ def test_trend_dayline_neutral_color():
     i = src.index("ctx.globalAlpha=.45")
     seg = src[i:i + 700]
     assert "--stl" not in seg, "跨天分隔竖线/日期标签仍取警示色 --stl"
-    assert "cssv('--line2')" in seg
-    assert "cssv('--mut')" in seg
+    assert "cssv('--line2')" in seg, "跨天竖线必须是线条档 --line2"
+    # r374：日期标签统一走 PCHART.axes 的 AXIS＝cssv('--mut')（文字档），
+    # 不再各自内联取色；两者都不得回到警示色。
+    j = src.index("const PCHART={")
+    axes = src[j:j + 9000]
+    assert "AXIS=cssv('--mut')" in axes, "日期刻度必须取 --mut 文字档"
+    assert "ctx.fillStyle=AXIS" in axes
+    assert "--stl" not in axes.split("ctx.fillStyle=AXIS")[0][-400:]
 
 
 # ---------- F5: 网格线专用 --grid 令牌 ----------

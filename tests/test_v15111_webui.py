@@ -11,7 +11,7 @@
    xrow colspan 展开行不受扰（行为钉 uitest 验横贯）。
 4. 配置即时校验：GLB_RANGES 单源表驱动 glbCheck 输入即校验，
    saveCfg 复用同表（防两处漂移）。
-5. 明细价格字号阶梯：cozy 档 15px，compact 档保持密度语义。
+5. 明细价格字号阶梯：cozy 档放大到七阶内（现 16px），compact 档保持密度语义。
 6. ctrip riskPolicy 高风险政策透明标记消费端：API 白名单 strip 门 +
    价格格 ⚠ 徽标（warn 色与 title 风险说明；词面不加「价」尾）。
 
@@ -96,9 +96,19 @@ def test_glb_ranges_single_source_table():
 
 
 def test_price_font_size_tier():
-    """价格字号阶梯：cozy 档 15px、compact 档不命中（密度语义保留）。"""
+    """价格字号阶梯：cozy 档放大、compact 档不命中（密度语义保留）。
+
+    原断言把 15px 写死；字号阶统一后主价格走 16px（10/11/12/13/14/16/18/22
+    七阶之一）。守的是「cozy 档单独放大且大于正文 13px、compact 档不覆盖」，
+    不钉死具体像素。
+    """
+    import re
     src = _src()
-    assert ":root:not([data-density=compact]) #ftable td.price{font-size:15px}" in src
+    m = re.search(r":root:not\(\[data-density=compact\]\) #ftable td\.price\{font-size:(\d+)px\}", src)
+    assert m, "明细价格 cozy 档字号阶梯缺席"
+    px = int(m.group(1))
+    assert px > 13, "明细价格 cozy 档 %dpx 未与正文 13px 拉开主次" % px
+    assert px in {14, 16, 18}, "明细价格 cozy 档 %dpx 不在七阶内" % px
 
 
 def test_riskpolicy_whitelist_and_badge():

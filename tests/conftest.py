@@ -86,3 +86,40 @@ def _allow_test_webhook(monkeypatch):
     被资格门拦住真实发送（r254 发送端生产资格门）。需验门本体的
     用例显式 delenv/setenv 自覆（monkeypatch LIFO）。"""
     monkeypatch.setenv("DING_WEBHOOK_ALLOW", "1")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_webui_probe_auth(monkeypatch):
+    """webui 的进程级「本轮探针证据」缓存逐用例归零（r481 并发假红根因）。
+
+    `webui._PROBE_AUTH` 记的是本轮探针的即时明细/拒绝证据；并发全量下
+    同一 worker 会先后跑多个文件，上一文件留下的明细会把下一文件的
+    登录态推成 available（r367 实测：期望 saved 得到 available）。
+    `_IN_HEALTH_DECORATE` 是健康装饰层的重入标志，残留 True 会让
+    `_login_state_view` 绕过可注入的 `_health_state` 去解析真实日志。
+    webui 尚未导入的用例没有可泄漏状态，跳过以免强制加载 4MB 模块。"""
+    import sys as _sys
+    if "webui" not in _sys.modules:
+        return
+    import webui as _w
+    monkeypatch.setattr(_w, "_PROBE_AUTH", {}, raising=False)
+    monkeypatch.setattr(_w, "_IN_HEALTH_DECORATE", False, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _neutralize_host_proxy_env(monkeypatch):
+    """测试不得依赖本机代理配置（r433）：本机 `NO_PROXY` 含 `[::1]` 时，
+    httpx 解析该条目会抛 `InvalidURL: Invalid port: ':1]'`——
+    `test_net_post` / `test_tuniu_saved_cookies` 三条在开发机上红、
+    在 CI 上绿，红绿取决于跑测机器而不是代码。三条单跑加
+    `NO_PROXY=localhost,127.0.0.1,::1` 即 7/7 全绿，据此确认。
+
+    归一成「不带方括号」的写法（方括号是 IPv6 字面量的 URL 语法，
+    在 NO_PROXY 列表里 httpx 不当它是 host），并清掉代理指向——
+    需要验代理行为的用例显式 setenv 自覆（monkeypatch LIFO）。"""
+    proxy_vars = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+                  "http_proxy", "https_proxy", "all_proxy")
+    for var in proxy_vars:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.1,::1")
+    monkeypatch.setenv("no_proxy", "localhost,127.0.0.1,::1")

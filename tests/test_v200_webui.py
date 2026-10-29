@@ -84,8 +84,13 @@ class TestXrowWrapMobile:
         m = re.search(
             r"#ftable tr\.xrow:not\(\.tgrow\) td\{white-space:normal", src)
         assert m, "xrow ≤760 折行规则缺失"
-        base = src.index("th,td{padding:7px 10px;text-align:left;white-space:nowrap")
-        assert base < m.start(), "折行规则须在 nowrap 基础规则之后"
+        # 只认「基础规则是 nowrap」这个意图，不绑死具体 padding 数值：
+        # 字号/间距尺度的统一（r473）改过 7px 10px → 8px 12px，
+        # 绑死数值会让「折行规则必须在基础规则之后」这条守卫假红。
+        base = re.search(
+            r"th,td\{[^}]*text-align:left;white-space:nowrap", src)
+        assert base, "表格基础规则不再是 nowrap"
+        assert base.start() < m.start(), "折行规则须在 nowrap 基础规则之后"
 
     def test_conclusion_nowrap(self):
         """结论句「（可省 ￥N）/（差…）/（仅一渠道报价）」整体 nowrap——

@@ -15,6 +15,7 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from datetime import datetime
@@ -353,6 +354,27 @@ def _exit_history_push(ip):
         pass
 
 
+def _last_seen_of(plat):
+    """该渠道**不限窗口**的最近采集样本时刻（r516）。
+
+    窗口口径的 `path_stats.last_at` 在「采集停了很多天」时是空的，
+    分不出「新装还没跑」和「跑过但停了」——这两个状态给用户的动作完全
+    不同（等一轮 vs 去查采集进程），所以单独查一次全表。
+    """
+    try:
+        db = _anchored(((_State.cfg or {}).get("output") or {}).get(
+            "db_path"), "data/prices.db")
+        if not os.path.isfile(db):
+            return ""
+        with sqlite3.connect(db) as c:
+            row = c.execute(
+                "SELECT MAX(fetched_at) FROM fetch_paths WHERE platform=?",
+                (str(plat or ""),)).fetchone()
+        return str((row or [""])[0] or "")
+    except Exception:
+        return ""
+
+
 def _paths_payload(hours=24, demo=False):
     """PC/H5 路径账（可观测）：近 N 小时 渠道×入口 的尝试/成功/拦截。
 
@@ -361,7 +383,14 @@ def _paths_payload(hours=24, demo=False):
     """
     hours = max(1, min(24 * 90, int(hours or 24)))
     if demo:
-        return {"ok": True, "hours": hours, "platforms": {}, "demo": True}
+        try:
+            from core.demo import demo_health
+            plats = _demo_paths_from_rounds(
+                (demo_health() or {}).get("rounds") or [])
+        except Exception:
+            plats = {}
+        return {"ok": True, "hours": hours, "platforms": plats,
+                "demo": True}
     try:
         db = _anchored(((_State.cfg or {}).get("output") or {}).get(
             "db_path"), "data/prices.db")
@@ -609,7 +638,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  html{color-scheme:light}
  html[data-theme="dark"]{
   color-scheme:dark;
-  --bg:#0a0f16;--card:#101823;--tx:#dbe4ee;--mut:#7f92a6;--tx2:#a9b9ca;
+  --bg:#0a0f16;--card:#101823;--tx:#dbe4ee;--mut:#8497ab;--tx2:#a9b9ca;
   /* dark 专用件色令牌（r239 P3-3：游离 hex 收口防漂移）——
      --danger-solid=暗色警示红实底（arming 按钮/筛选角标，#ef5350 白字
      欠 AA 的深档替身）；--demo-*/--ver-*=演示条/版本横幅暗色三件套 */
@@ -688,13 +717,13 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
            display:flex;align-items:center;gap:10px;text-transform:uppercase}
  .logo{width:30px;height:30px;border-radius:var(--r3);flex:none;
        background:var(--tx);color:var(--card);
-       display:inline-flex;align-items:center;justify-content:center;font-size:15px}
+       display:inline-flex;align-items:center;justify-content:center;font-size:14px}
  .logo .ic{width:17px;height:17px;stroke-width:1.7}
  .hbtn .ic{width:15px;height:15px}
  #mainnav span{display:inline-flex;align-items:center;gap:6px}
  #mainnav span .ic{width:14px;height:14px;stroke-width:1.8}
  .demoTag{display:inline-block;margin-right:7px;padding:1px 5px;border:1px solid currentColor;
-   border-radius:4px;font-family:var(--num);font-size:9px;letter-spacing:1px;
+   border-radius:4px;font-family:var(--num);font-size:10px;letter-spacing:1px;
    font-weight:700;vertical-align:1px}
  .pill{font-size:13px;font-weight:700;background:var(--headbg);color:var(--tx2);
        padding:6px 14px;border-radius:var(--r3);border:1px solid var(--line);
@@ -754,7 +783,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
   background:var(--card);color:var(--tx2);font-size:11px;cursor:pointer;white-space:nowrap}
  .monwatch-route:hover{border-color:var(--line2);background:var(--hover)}
  .monwatch-route i{font-style:normal;font-family:var(--num);font-size:10px;color:var(--mut);border:1px solid var(--line);border-radius:var(--pill);min-width:17px;height:17px;display:inline-flex;align-items:center;justify-content:center;padding:0 4px}
- .monwatch-route.on{border-color:var(--blue);background:rgba(var(--blue-rgb),.07);color:var(--blue);font-weight:650}.monwatch-route.on i{color:var(--blue);border-color:rgba(var(--blue-rgb),.28)}
+ .monwatch-route.on{border-color:var(--blue);background:rgba(var(--blue-rgb),.07);color:var(--blue);font-weight:600}.monwatch-route.on i{color:var(--blue);border-color:rgba(var(--blue-rgb),.28)}
  .monwatch-list{display:flex;flex-wrap:wrap;gap:10px;padding:10px 12px 12px}
  .monwatch{flex:1 1 460px;max-width:calc(50% - 5px);min-width:0;border:1px solid var(--line);border-radius:var(--r3);background:var(--headbg);padding:12px 14px;
   display:grid;grid-template-columns:minmax(210px,.9fr) minmax(260px,1.25fr);grid-template-areas:"head head" "main svg" "foot foot";gap:9px 16px}
@@ -763,15 +792,18 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .monwatch.hit{border-color:rgba(var(--okrgb),.42);box-shadow:inset 3px 0 0 var(--green)}
  .monwatch.paused{opacity:.8}.monwatch.out{border-style:dashed}
  .monwatch-h{grid-area:head}
- .monwatch-id b{font-size:15px}
+ .monwatch-id b{font-size:14px}
  .monwatch-id span{font-size:11px}
  .monwatch-main{grid-area:main;display:flex;flex-direction:column;align-items:flex-start;gap:2px;justify-content:center}
- .monwatch-main b{font-size:27px;letter-spacing:-.6px}
+ .monwatch-main b{font-size:22px;letter-spacing:-.6px}
  .monwatch-main span{font-size:11px}
  .monwatch-main .mk{font-size:10px;letter-spacing:var(--ls1);text-transform:uppercase;color:var(--mut);margin-bottom:1px}
  .monwatch-svg{grid-area:svg;min-height:94px;display:flex;flex-direction:column;justify-content:center}
  .monwatch-svg svg{height:64px}
- .monwatch-foot{grid-area:foot;border-top:1px dashed var(--line);padding-top:7px}
+ /* r477：监控卡自身没有描边（border 0 / 背景透明），页脚再画一条虚线
+    只是纯装饰分割——全站概览 8 条（路由 6 + 关注 2）。扁平化按卡片间距
+    分组，不靠线；去掉虚线，保留 7px 上间距。 */
+ .monwatch-foot{grid-area:foot;border-top:0;padding-top:7px}
  @media(max-width:900px){
   .monwatch{flex-basis:100%;max-width:none;grid-template-columns:1fr;grid-template-areas:"head" "main" "svg" "foot";gap:7px}
  }
@@ -780,12 +812,12 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .monwatch-id b{display:block;font-family:var(--num);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
  .monwatch-id span{display:block;font-size:11px;color:var(--mut);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
  @media(max-width:900px){.monwatch-id span{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.4}}
- .monwatch-state{display:inline-flex;align-items:center;gap:4px;height:21px;padding:0 7px;border-radius:var(--pill);border:1px solid var(--line);background:var(--card);color:var(--mut);font-size:10px;font-weight:600;white-space:nowrap}
+ .monwatch-state{display:inline-flex;align-items:center;gap:4px;height:21px;padding:0 6px;border-radius:var(--pill);border:1px solid var(--line);background:var(--card);color:var(--mut);font-size:10px;font-weight:600;white-space:nowrap}
  .monwatch-state i{width:5px;height:5px;border-radius:50%;background:var(--mut)}
  .monwatch-state.on{color:var(--ok-txt);border-color:rgba(var(--okrgb),.3);background:var(--okbg)}.monwatch-state.on i{background:var(--green)}
  .monwatch-state.out{color:var(--warn-deep);border-color:var(--warnbd);background:var(--warnbg)}.monwatch-state.out i{background:var(--orange)}
  .monwatch-main{display:flex;align-items:baseline;gap:7px;min-width:0}
- .monwatch-main b{font-family:var(--num);font-size:19px;font-weight:700;letter-spacing:-.4px}
+ .monwatch-main b{font-family:var(--num);font-size:18px;font-weight:700;letter-spacing:-.4px}
  .monwatch-main span{font-size:11px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
  .monwatch-main span.ok{color:var(--ok-txt)}.monwatch-main span.warn{color:var(--warn-deep)}
  .monwatch-svg{border:1px solid var(--line);border-radius:6px;background:var(--card);padding:5px 7px 3px;min-height:58px}
@@ -794,7 +826,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .monwatch-svg .empty{font-size:10px;color:var(--mut);line-height:1.5;padding:12px 0;text-align:center}
  .monwatch-foot{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:10px;color:var(--mut)}
  .monwatch-foot .sp{margin-left:auto}
- .monwatch-foot button{height:28px;padding:0 9px;border:1px solid var(--line2);border-radius:5px;background:var(--card);color:var(--tx2);font-size:10px;cursor:pointer}
+ .monwatch-foot button{height:28px;padding:0 9px;border:1px solid var(--line2);border-radius:var(--r3);background:var(--card);color:var(--tx2);font-size:10px;cursor:pointer}
  .monwatch-foot button:hover{border-color:var(--blue);color:var(--blue)}
  .monwatch-empty{flex:1 1 100%;padding:18px 12px;border:1px dashed var(--line2);border-radius:8px;text-align:center;color:var(--mut);font-size:11px;line-height:1.6}
  .monwatch-empty b{display:block;font-size:12px;color:var(--tx);margin-bottom:3px}
@@ -807,16 +839,16 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .monroute-h b{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
  .monroute-h span{font-size:11px;color:var(--mut);white-space:nowrap}
  .monroute-main{grid-area:main;display:flex;flex-direction:column;align-items:flex-start;gap:2px;justify-content:center}
- .monroute-main b{font-family:var(--num);font-size:26px;letter-spacing:-.5px}
+ .monroute-main b{font-family:var(--num);font-size:22px;letter-spacing:-.5px}
  .monroute-main span{font-size:10px;color:var(--mut)}
  .monroute-main .th{font-size:10px;color:var(--tx2);white-space:normal;line-height:1.45}
  .monroute-svg{grid-area:svg;border:1px solid var(--line);border-radius:6px;background:var(--card);padding:5px 7px 3px;min-height:58px}
  .monroute-svg svg{display:block;width:100%;height:56px;overflow:visible}
  .monroute-svg .lg{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:10px;color:var(--mut);margin-top:2px}
  .monroute-svg .empty{font-size:10px;color:var(--mut);line-height:1.5;padding:12px 0;text-align:center}
- .monroute-foot{grid-area:foot;display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px dashed var(--line);padding-top:7px;font-size:10px;color:var(--mut)}
+ .monroute-foot{grid-area:foot;display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:0;padding-top:7px;font-size:10px;color:var(--mut)}
  .monroute-foot .sp{margin-left:auto}
- .monroute-foot button{height:28px;padding:0 9px;border:1px solid var(--line2);border-radius:5px;background:var(--card);color:var(--tx2);font-size:10px;cursor:pointer}
+ .monroute-foot button{height:28px;padding:0 9px;border:1px solid var(--line2);border-radius:var(--r3);background:var(--card);color:var(--tx2);font-size:10px;cursor:pointer}
  .monroute-foot button:hover{border-color:var(--blue);color:var(--blue)}
  @media(max-width:900px){.monroute{grid-template-columns:1fr;grid-template-areas:"head" "main" "svg" "foot";gap:7px}}
  @media(max-width:760px){.monroute-list{padding:8px}}
@@ -828,7 +860,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .ws-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:14px var(--ws-pad) 12px;border-bottom:1px solid var(--line)}
  .ws-head-copy{min-width:0;flex:1 1 520px}
  .ws-eyebrow{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:6px}
- .ws-eyebrow .ws-live{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border:1px solid rgba(var(--okrgb),.32);border-radius:var(--pill);background:var(--okbg);color:var(--ok-txt);font-size:10px;font-weight:650;letter-spacing:var(--ls1)}
+ .ws-eyebrow .ws-live{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border:1px solid rgba(var(--okrgb),.32);border-radius:var(--pill);background:var(--okbg);color:var(--ok-txt);font-size:10px;font-weight:600;letter-spacing:var(--ls1)}
  .ws-eyebrow .ws-live i{width:5px;height:5px;border-radius:50%;background:var(--green);animation:hitpulse 1.8s ease-in-out infinite}
  .ws-eyebrow .ws-live.off{color:var(--mut);background:var(--headbg);border-color:var(--line)}
  .ws-eyebrow .ws-live.off i{background:var(--mut);animation:none}
@@ -836,7 +868,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .ws-sub{margin:5px 0 0;color:var(--tx2);font-size:11px;line-height:1.55;max-width:780px}
  .ws-head-act{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
  .ws-head-act .ws-user{height:30px;border:1px solid var(--ctlbd);border-radius:7px;background:var(--card);color:var(--tx2);font-size:11px;padding:0 8px}
- .ws-btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;height:32px;padding:0 11px;border:1px solid var(--ctlbd);border-radius:7px;background:var(--card);color:var(--tx2);font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;transition:.15s}
+ .ws-btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;height:32px;padding:0 11px;border:1px solid var(--ctlbd);border-radius:var(--r3);background:var(--card);color:var(--tx2);font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;transition:.15s}
  .ws-btn:hover{border-color:var(--blue);color:var(--blue);background:var(--hover)}
  .ws-btn.primary{background:linear-gradient(180deg,var(--fill2),var(--fill));border-color:transparent;color:#fff;box-shadow:0 1px 3px var(--glow)}
  .ws-btn.primary:hover{filter:brightness(1.08);color:#fff}
@@ -854,23 +886,23 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .ws-kpi:last-child{border-right:0}
  .ws-kpi .k{display:flex;align-items:center;gap:5px;font-size:10px;letter-spacing:var(--ls1);text-transform:uppercase;color:var(--mut);white-space:nowrap}
  .ws-kpi .v{display:flex;align-items:baseline;gap:5px;margin-top:3px;min-width:0}
- .ws-kpi .v b{font-family:var(--num);font-size:22px;line-height:1;font-weight:650;letter-spacing:-.5px;white-space:nowrap}
+ .ws-kpi .v b{font-family:var(--num);font-size:18px;line-height:1;font-weight:600;letter-spacing:-.5px;white-space:nowrap}
  .ws-kpi .v span{font-size:10px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
  .ws-kpi .v b.ok{color:var(--ok-txt)}.ws-kpi .v b.warn{color:var(--warn-deep)}
  .ws-kpi .f{font-size:10px;color:var(--mut);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
  .ws-routebar{padding:10px var(--ws-pad) 11px;border-bottom:1px solid var(--line);background:var(--card)}
  .ws-routebar-h{display:flex;align-items:center;gap:8px;margin-bottom:8px;min-width:0}
- .ws-routebar-h b{font-size:12px;font-weight:650}
+ .ws-routebar-h b{font-size:12px;font-weight:600}
  .ws-routebar-h span{font-size:10px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
  .ws-routewatch{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px;padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:var(--headbg);font-size:10px;color:var(--mut)}
- .ws-routewatch .lab{font-size:10px;letter-spacing:var(--ls1);text-transform:uppercase;color:var(--blue);font-weight:650}
+ .ws-routewatch .lab{font-size:10px;letter-spacing:var(--ls1);text-transform:uppercase;color:var(--blue);font-weight:600}
  .ws-routewatch b{font-size:12px;color:var(--tx)}
  .ws-routewatch .line{color:var(--tx2)}
  .ws-routewatch .sp{margin-left:auto}
  .ws-routewatch .ws-rwspark{width:190px;height:34px;flex:none;display:inline-flex;align-items:center;border-left:1px solid var(--line);padding-left:8px}
  .ws-routewatch .ws-rwspark svg{width:100%;height:32px;overflow:visible}
  @media(max-width:760px){.ws-routewatch .ws-rwspark{width:100%;border-left:0;padding-left:0}}
- .ws-routewatch button{height:26px;padding:0 8px;border:1px solid var(--line2);border-radius:5px;background:var(--card);color:var(--tx2);font-size:10px;cursor:pointer;white-space:nowrap}
+ .ws-routewatch button{height:26px;padding:0 8px;border:1px solid var(--line2);border-radius:var(--r3);background:var(--card);color:var(--tx2);font-size:10px;cursor:pointer;white-space:nowrap}
  .ws-routewatch button:hover{border-color:var(--blue);color:var(--blue)}
  .ws-routewatch .miss{color:var(--warn-deep)}
  .ws-routes{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(236px,1fr);gap:7px;overflow-x:auto;padding-bottom:1px;scrollbar-width:thin}
@@ -882,45 +914,46 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .ws-route.on::before{background:rgba(255,255,255,.82)}
  .ws-route.hit::before{background:var(--green)}
  .ws-route.on.hit::before{background:#b7f0ca}
- .ws-rt-top{display:flex;align-items:center;gap:4px;min-width:0;font-size:12px;font-weight:650;white-space:nowrap}
- .ws-rt-top b{font-weight:650;overflow:hidden;text-overflow:ellipsis}.ws-rt-top i{font-style:normal;color:var(--mut);font-size:10px}
+ .ws-rt-top{display:flex;align-items:center;gap:4px;min-width:0;font-size:12px;font-weight:600;white-space:nowrap}
+ .ws-rt-top b{font-weight:600;overflow:hidden;text-overflow:ellipsis}.ws-rt-top i{font-style:normal;color:var(--mut);font-size:10px}
  .ws-route.on .ws-rt-top i{color:rgba(255,255,255,.72)}
  .ws-rt-date{margin-left:auto;font-family:var(--num);font-size:10px;color:var(--mut);border:1px solid var(--line);border-radius:4px;padding:1px 4px;flex:none}
  .ws-route.on .ws-rt-date{color:#fff;border-color:rgba(255,255,255,.3)}
  .ws-rt-bot{display:flex;align-items:center;gap:6px;min-width:0;font-size:10px;color:var(--mut);white-space:nowrap}
- .ws-rt-bot b{font-family:var(--num);font-size:13px;color:var(--tx);letter-spacing:-.2px}
+ /* font-weight 显式 600：`<b>` 默认 bolder 会在父级 600 上算成 900（超四档）。 */
+ .ws-rt-bot b{font-family:var(--num);font-size:13px;font-weight:600;color:var(--tx);letter-spacing:-.2px}
  .ws-route.on .ws-rt-bot,.ws-route.on .ws-rt-bot b{color:rgba(255,255,255,.92)}
  .ws-rt-bot .dot{width:5px;height:5px;border-radius:50%;background:var(--green);flex:none}
  .ws-rt-bot .sp{margin-left:auto}
- .ws-rt-bot .tag{font-style:normal;border:1px solid var(--line);border-radius:var(--pill);padding:0 5px;color:var(--tx2);font-size:10px}
+ .ws-rt-bot .tag{font-style:normal;border:1px solid var(--line);border-radius:var(--pill);padding:0 8px;color:var(--tx2);font-size:10px}
  .ws-route.on .ws-rt-bot .tag{border-color:rgba(255,255,255,.3);color:#fff}
  .ws-chartcard{margin:0 var(--ws-pad)}
  .ws-chart-h{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:11px 0 8px}
  .ws-chart-h .ws-chart-title{min-width:0;flex:1 1 360px}
- .ws-chart-h b{display:block;font-size:13px;font-weight:650;letter-spacing:.1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ .ws-chart-h b{display:block;font-size:13px;font-weight:600;letter-spacing:.1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
  .ws-chart-h span{display:block;font-size:10px;color:var(--mut);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
  .ws-ranges{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:7px;overflow:hidden;background:var(--card);flex:none}
  .ws-ranges button{height:30px;padding:0 10px;border:0;border-right:1px solid var(--line);border-radius:0;background:transparent;color:var(--tx2);font-size:10px;font-weight:600;box-shadow:none;cursor:pointer}
  .ws-ranges button:last-child{border-right:0}
  .ws-ranges button:hover{background:var(--hover);filter:none;box-shadow:none;color:var(--blue)}
- .ws-ranges button.on{background:var(--fill);color:#fff}
- .ws-chart-foot{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:0 0 8px;font-size:10px;color:var(--mut)}
+ .ws-ranges button.on{background:var(--r-blue-soft);color:var(--r-blue)}
+ .ws-chart-foot{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:0 0 8px;font-size:12px;color:var(--mut)}
  .ws-chart-foot .sp{margin-left:auto}
  .ws-chart-foot b{color:var(--tx2);font-weight:600}
  .ws-chart-foot .warn{color:var(--warn-deep)}
  .ws-chartwrap{position:relative;height:clamp(250px,30vw,352px);margin:0 0 2px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:linear-gradient(180deg,var(--card),var(--headbg))}
  #wsChart{display:block;width:100%;height:100%;cursor:crosshair;outline:none}
- #wsChart:focus-visible{box-shadow:inset 0 0 0 2px var(--blue)}
- .ws-tip{position:absolute;z-index:5;display:none;max-width:270px;padding:8px 10px;border:1px solid var(--line2);border-radius:7px;background:var(--card);box-shadow:var(--sh3);font-size:10px;line-height:1.55;color:var(--tx2);pointer-events:none}
+ #wsChart:focus-visible,#spMonChart:focus-visible{box-shadow:inset 0 0 0 2px var(--blue)}
+ .ws-tip{position:absolute;z-index:5;display:none;max-width:270px;padding:6px 9px;border:0;border-radius:8px;background:rgba(44,62,80,.93);box-shadow:none;font-size:12px;line-height:1.5;color:#fff;pointer-events:none}
  .ws-tip.on{display:block}
- .ws-tip b{display:block;color:var(--tx);font-size:11px;margin-bottom:2px}
+ .ws-tip b{display:block;color:#fff;font-size:12px;margin-bottom:2px}
  .ws-tip .tr{display:flex;align-items:center;gap:6px;white-space:nowrap}
  .ws-tip .tr i{width:6px;height:6px;border-radius:50%;flex:none}
- .ws-tip .tr b{display:inline;font-family:var(--num);font-size:11px;margin:0 0 0 auto;padding-left:9px}
+ .ws-tip .tr b{display:inline;font-family:var(--num);font-size:12px;margin:0 0 0 auto;padding-left:9px}
  .ws-tip .tr span{overflow:hidden;text-overflow:ellipsis}
- .ws-tip .tm{color:var(--mut);font-family:var(--num);font-size:9px;margin-top:3px}
- .ws-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:20px;text-align:center;color:var(--mut);font-size:11px;line-height:1.6;background:var(--headbg)}
- .ws-empty b{color:var(--tx);font-size:12px}
+ .ws-tip .tm{color:rgba(255,255,255,.72);font-family:var(--num);font-size:11px;margin-top:3px}
+ .ws-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:20px;text-align:center;color:var(--mut);font-size:12px;line-height:1.6;background:var(--headbg)}
+ .ws-empty b{color:var(--tx);font-size:13px;font-weight:600}
  .ws-empty[hidden]{display:none}
  .ws-legend{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 0 10px;min-height:38px}
  .ws-lg-lab{font-size:10px;color:var(--mut);letter-spacing:var(--ls05);white-space:nowrap;margin-right:2px}
@@ -928,7 +961,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .ws-lg:hover{border-color:var(--line2)}
  .ws-lg.on{border-color:var(--blue);background:rgba(var(--blue-rgb),.07);color:var(--tx)}
  .ws-lg i{width:7px;height:7px;border-radius:50%;flex:none}
- .ws-lg b{font-family:var(--num);font-size:10px;color:var(--tx)}
+ .ws-lg b{font-family:var(--num);font-size:10px;font-weight:600;color:var(--tx)}
  .ws-lg em{font-style:normal;color:var(--mut)}
  .ws-lg .ok{color:var(--ok-txt)}
 /* 关注台图例：两行网格（代码/价格/目标/状态），不再单行挤压叠字 */
@@ -940,7 +973,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
 .ws-lg>img,.ws-lg>.bic{grid-area:ic;width:14px;height:14px}
 .ws-lg>i{grid-area:dot}
 .ws-lg>b{grid-area:code;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:11px}
-.ws-lg>span:nth-of-type(1){grid-area:price;font-family:var(--num);font-size:13px;font-weight:650}
+.ws-lg>span:nth-of-type(1){grid-area:price;font-family:var(--num);font-size:13px;font-weight:600}
 .ws-lg>em{grid-area:tgt;font-size:11px;color:var(--mut)}
 .ws-lg>span:nth-of-type(2){grid-area:st;justify-self:end;font-size:10px}
  .ws-focus{margin:0 var(--ws-pad) 10px;border-top:1px solid var(--line);padding-top:10px;padding-bottom:26px}
@@ -948,7 +981,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .ws-fcell{padding:8px 10px;min-width:0;border-right:1px solid var(--line)}
  .ws-fcell:last-child{border-right:0}
  .ws-fcell .k{font-size:10px;letter-spacing:var(--ls1);text-transform:uppercase;color:var(--mut);white-space:nowrap}
- .ws-fcell .v{font-family:var(--num);font-size:15px;font-weight:650;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ .ws-fcell .v{font-family:var(--num);font-size:16px;font-weight:600;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
  .ws-fcell .v.ok{color:var(--ok-txt)}.ws-fcell .v.warn{color:var(--warn-deep)}
  .ws-fcell .s{font-size:10px;color:var(--mut);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
  .ws-fident{display:flex;align-items:center;gap:8px;min-width:0}
@@ -965,7 +998,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .ws-runway em{position:absolute;right:0;top:-3px;bottom:-3px;width:2px;background:var(--red);border-radius:2px}
  .ws-runway b{position:absolute;left:0;top:9px;font-family:var(--num);font-size:10px;color:var(--mut);font-weight:500;white-space:nowrap}
  .ws-runway.none{height:auto;background:transparent;margin-top:5px}
- .ws-runway.none b{position:static;display:block;font-size:9px;line-height:1.3}
+ .ws-runway.none b{position:static;display:block;font-size:10px;line-height:1.3}
  .ws-chanstrip{display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:8px 10px;border-top:1px dashed var(--line);margin-top:2px}
  .ws-chanstrip .lab{font-size:10px;letter-spacing:var(--ls1);color:var(--mut);white-space:nowrap}
  .ws-ch{min-height:24px;padding:0 8px 0 7px;border:1px solid var(--line);border-radius:var(--pill);background:var(--card);color:var(--tx2);font-size:10px;white-space:nowrap;display:inline-flex;align-items:center;gap:4px}
@@ -975,18 +1008,18 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .ws-ch.miss b{color:var(--tx2)}
  .ws-roster{margin:0 var(--ws-pad) var(--ws-pad)}
  .ws-roster-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:2px 0 8px}
- .ws-roster-h b{font-size:13px;font-weight:650}
+ .ws-roster-h b{font-size:13px;font-weight:600}
  .ws-roster-h span{font-size:10px;color:var(--mut)}
  .ws-roster-h .sp{margin-left:auto}
  .ws-filterbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--headbg);margin-bottom:8px}
- .ws-filterbar input[type=text],.ws-filterbar input[type=number],.ws-filterbar select{height:28px;border:1px solid var(--ctlbd);border-radius:6px;background:var(--card);color:var(--tx);font-size:10px;padding:0 7px;min-width:0}
+ .ws-filterbar input[type=text],.ws-filterbar input[type=number],.ws-filterbar select{height:28px;border:1px solid var(--ctlbd);border-radius:var(--r3);background:var(--card);color:var(--tx);font-size:10px;padding:0 7px;min-width:0}
  .ws-filterbar input[type=text]{flex:1 1 160px;max-width:260px}
  .ws-filterbar input[type=number]{width:68px}
  .ws-filterbar .ws-seg{display:inline-flex;border:1px solid var(--line2);border-radius:6px;overflow:hidden;background:var(--card)}
  .ws-filterbar .ws-seg button{height:28px;border:0;border-right:1px solid var(--line);border-radius:0;background:transparent;color:var(--tx2);font-size:10px;padding:0 7px;box-shadow:none;cursor:pointer}
  .ws-filterbar .ws-seg button:last-child{border-right:0}
  .ws-filterbar .ws-seg button.on{background:var(--fill);color:#fff}
- .ws-filterbar .ws-reset{height:28px;padding:0 8px;border:1px solid var(--line2);border-radius:6px;background:transparent;color:var(--mut);font-size:10px;box-shadow:none}
+ .ws-filterbar .ws-reset{height:28px;padding:0 8px;border:1px solid var(--line2);border-radius:var(--r3);background:transparent;color:var(--mut);font-size:10px;box-shadow:none}
  .ws-filterbar .ws-reset:hover{color:var(--blue);border-color:var(--blue);filter:none;box-shadow:none}
  .ws-filterbar .ws-shown{margin-left:auto;font-size:10px;color:var(--mut);white-space:nowrap}
  .ws-moref{display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex-basis:100%;padding-top:3px;border-top:1px dashed var(--line)}
@@ -1006,7 +1039,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .ws-rc:last-child{border-right:0}
  .ws-rc .k{font-size:10px;letter-spacing:var(--ls1);text-transform:uppercase;color:var(--mut);white-space:nowrap;margin-bottom:2px}
  .ws-rc .v{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
- .ws-rc .v b{font-family:var(--num);font-size:15px;font-weight:650;letter-spacing:-.2px}
+ .ws-rc .v b{font-family:var(--num);font-size:16px;font-weight:600;letter-spacing:-.2px}
  .ws-rc .v small{font-size:10px;color:var(--mut);font-weight:400;margin-left:4px}
  .ws-rc .s{font-size:10px;color:var(--mut);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
  .ws-rc .s.ok{color:var(--ok-txt)}.ws-rc .s.warn{color:var(--warn-deep)}.ws-rc .s.hit{color:var(--ok-txt)}
@@ -1015,7 +1048,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .ws-ident .nm{min-width:0}
  .ws-ident .nm b{display:block;font-family:var(--num);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
  .ws-ident .nm span{display:block;font-size:10px;color:var(--mut);margin-top:1px;white-space:normal;overflow:visible;text-overflow:clip;line-height:1.35;word-break:keep-all;overflow-wrap:normal}
- .ws-price b{font-family:var(--num);font-size:17px;font-weight:650;letter-spacing:-.35px}
+ .ws-price b{font-family:var(--num);font-size:16px;font-weight:600;letter-spacing:-.35px}
  .ws-price.zero b{color:var(--mut)}
  .ws-state{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 6px;border:1px solid var(--line);border-radius:var(--pill);background:var(--headbg);color:var(--mut);font-size:10px;font-weight:600;white-space:nowrap}
  .ws-state i{width:5px;height:5px;border-radius:50%;background:var(--mut)}
@@ -1024,7 +1057,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .ws-state.wait{color:var(--mut);background:var(--soft);border-color:var(--line)}.ws-state.wait i{background:var(--mut)}
  .ws-state.hit{color:var(--ok-txt);background:var(--okbg);border-color:rgba(var(--okrgb),.45)}.ws-state.hit i{background:var(--green)}
  .ws-row-act{position:absolute;right:4px;top:50%;transform:translateY(-50%);display:flex;align-items:center;justify-content:flex-end;gap:2px;padding:0;z-index:1}
- .ws-row-act button{width:28px;height:28px;padding:0;border:1px solid transparent;border-radius:5px;background:transparent;color:var(--mut);box-shadow:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+ .ws-row-act button{width:28px;height:28px;padding:0;border:1px solid transparent;border-radius:var(--r3);background:transparent;color:var(--mut);box-shadow:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
  .ws-row-act button:hover{color:var(--blue);border-color:var(--line);background:var(--hover);filter:none;box-shadow:none}
  .ws-row-act .chev{transition:transform .15s ease-out}
  .ws-row.open .ws-row-act .chev{transform:rotate(90deg)}
@@ -1068,7 +1101,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  @media(max-width:600px){
   #montab-watch{--ws-pad:10px}
   .ws-head{padding:12px var(--ws-pad) 10px}.ws-sub{font-size:10px}.ws-head-act .ws-btn{height:28px;font-size:10px}
-  .ws-kpi{padding:9px 10px}.ws-kpi .v b{font-size:19px}
+  .ws-kpi{padding:9px 10px}.ws-kpi .v b{font-size:18px}
   .ws-routebar{padding:9px 10px 10px}.ws-routes{grid-auto-columns:minmax(205px,1fr)}
   .ws-chart-h{padding-top:9px}.ws-ranges button{height:25px;padding:0 7px;font-size:10px}
   .ws-chartwrap{height:250px}
@@ -1084,13 +1117,18 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
   .ws-filterbar{padding:7px;gap:5px}
   .ws-filterbar input[type=text]{flex:1 1 100%;max-width:none;order:-1}
   .ws-filterbar select{flex:1 1 92px}
-  .ws-filterbar .ws-shown{flex-basis:100%;margin-left:0;text-align:right}
+  /* r412：窄屏计数器与展开体都吃满一行，DOM 顺序是「触发钮 → 计数 →
+     展开体」，换行后就变成计数夹在触发钮与它展开的内容之间——展开
+     中间常驻一条无关信息，正是用户反复报的「展开中间还有元素」。
+     用 order 把展开体提前到计数之前：触发钮正下方永远是它展开的内容。 */
+  .ws-filterbar .ws-moref{order:10}
+  .ws-filterbar .ws-shown{flex-basis:100%;margin-left:0;text-align:right;order:11}
   .ws-row-main{grid-template-columns:minmax(128px,1.1fr) minmax(88px,.9fr) 63px 62px;grid-template-areas:"id price state act";padding:0}
   .ws-row-act{right:-1px}
   .ws-row-main .ws-rc.ident{padding:8px}.ws-row-main .ws-rc.price{padding:8px 6px}.ws-row-main .ws-rc.state{padding:8px 4px}
   .ws-row-act{padding:0 4px}
   .ws-row-main .ws-rc.time,.ws-row-main .ws-rc.target,.ws-row-main .ws-rc.coverage{display:none}
-  .ws-price b{font-size:15px}
+  .ws-price b{font-size:16px}
   .ws-ident .mark{width:21px;height:21px;font-size:7px}
   .ws-ident .nm b{font-size:11px}.ws-ident .nm span{font-size:10px}
   .ws-detail{padding:8px}
@@ -1129,7 +1167,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  /* 衔接「停X」小字：下限已配置且未达=警示色，达标 .ok 覆写为绿；
     下限未配置（=0）无警示语义，渲染式不落 .lay（走 .stl 基类中性灰） */
  .stl.lay{color:var(--stl)}
- .kpi .num{font-family:var(--num);font-size:clamp(24px,2.4vw,31px);font-weight:600;margin:3px 0 1px;
+ .kpi .num{font-family:var(--num);font-size:var(--price-lg);font-weight:600;margin:3px 0 1px;
            letter-spacing:-1px;font-variant-numeric:tabular-nums}
  .kpi.d .num{color:var(--blue)}.kpi.t .num{color:var(--orange-txt)}
  /* 达标卡数字随语义转绿（绿卡上蓝/橙大数字信号混杂）；文字级令牌
@@ -1153,13 +1191,20 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
         box-shadow:inset 0 0 0 1px var(--ctlbd),var(--sh1);font-weight:600}
  button.warn:hover{background:var(--headbg);filter:none;
         box-shadow:inset 0 0 0 1px var(--ctlbd),var(--sh2)}
+/* 三处走势画布同一高度函数：都用同一条 clamp(240,max(38vh,28vw),360)。
+   航线走势原本就是它；关注/雷达曾写死 200/178——同一产品三种高度。
+   clamp 保留：宽短屏抬到 360、窄高窗回落 38vh，是首屏取大语义。 */
  canvas{width:100%;height:clamp(240px,max(38vh,28vw),360px);display:block}   /* 高度取大（r236 P1-1 重落）：r235 旧式的取小语义对名目标带零实效——1024-1919 宽短带 28vw 恒大于 38vh、取小恒落在 38vh（1440×700 仍 1246×266=4.68:1），且窄高窗反向变矮（760×900 342→240）。取大语义：宽短带真正抬升到 360 上限、窄高窗复原 38vh、横短屏由 clamp 下限 240 承载（竖屏手机 38vh 主导）；≥1866 走随 wrap 封顶同拍的连续坡带（见尾区） */
- #chart{cursor:pointer}   /* C-1：画布可点=看该轮明细（cursor affordance） */
+ #chart{cursor:crosshair}   /* 三处走势统一 crosshair（可读数）；点按跳明细由 title/aria 说明 */
  .legend{display:flex;gap:16px;font-size:12px;color:var(--mut);margin-top:6px;flex-wrap:wrap}
  /* 图例分组缝（r256 美感1）：lgDirect/lgTrans=数据系列、lgZone 起=
     阈值参考组，「行情 vs 阈值」扫读分组（16px 基础 gap+14px=30px 缝） */
  .legend #lgZone{margin-left:14px}
  .legend b{display:inline-block;width:18px;height:4px;border-radius:var(--r-xs);vertical-align:middle;margin-right:5px;box-shadow:inset 0 0 0 1px var(--line)}
+/* 健康时间线的图例必须与它解释的格子同形：格子是 6×15 竖条，
+   旧图例却沿用走势图的 18×4 横线，读作两种不同的东西。 */
+.legend.hlegend b{width:6px;height:15px;border-radius:var(--r-xs);margin-right:6px}
+.legend.hlegend{gap:12px 18px}
  .tabs{display:flex;gap:6px;margin:10px 0;align-items:center;flex-wrap:wrap}
  .tabs span{padding:6px 14px;border-radius:var(--r3);cursor:pointer;font-size:12px;
    background:var(--headbg);color:var(--mut);border:1px solid var(--ctlbd);
@@ -1187,13 +1232,17 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  table{border-collapse:collapse;width:100%;font-size:13px;background:var(--card)}
  th{position:sticky;top:0;background:var(--headbg);color:var(--tx2);font-weight:600;
     font-size:11px;letter-spacing:var(--ls1);z-index:3}
- th,td{padding:7px 10px;text-align:left;white-space:nowrap;border-bottom:1px solid var(--line)}
+ /* 单元格内边距落 8/12 阶（原 7px 10px 都不在 4/6/8/12/16/24 上）。
+    本规则只作用于桌面档：≤900 卡片布局由 `#ftable tbody tr[data-k]>td{padding:0}`
+    接管（ID 选择器压过这里），窄档实测本来就读 0，不受影响。
+    紧凑档仍为 6px 8px，与舒适档保持 2px/4px 的档差。 */
+ th,td{padding:8px 12px;text-align:left;white-space:nowrap;border-bottom:1px solid var(--line)}
  /* 列宽节奏锚点：富余宽度给航班/中转列，防「类别虚胖、航班独大」
     （1512px 实测航班列曾 321px/29% 而类别列 93px 只装 46px 内容） */
  #ftable th:nth-child(1),#ftable td:nth-child(1){width:96px}
  #ftable th:nth-child(2),#ftable td:nth-child(2){width:64px}
  #ftable th:nth-child(4),#ftable td:nth-child(4){width:24%}
- #ftable .stl.xday{white-space:nowrap;font-family:var(--num);font-weight:650;color:var(--tx2)}
+ #ftable .stl.xday{white-space:nowrap;font-family:var(--num);font-weight:600;color:var(--tx2)}
  tbody tr{transition:background .12s}
  tbody tr:hover{background:var(--hover)}
  /* 空态行不吃 hover 高亮（整行提示文字，非可点数据行） */
@@ -1202,7 +1251,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  tr.qual{background:rgba(var(--okrgb),.08);box-shadow:inset 3px 0 0 var(--green)}
  tr.qual:hover{background:rgba(var(--okrgb),.14)}
  tr.qual td{color:var(--tx)}
- tr.qual td.price{color:var(--ok-txt);font-weight:800}   /* --green 对绿 tint 底 4.19~4.35:1 欠 AA（13px/800 非大字）→ --ok-txt 5.18~6.36 全过；P2-3 同族收编 */
+ tr.qual td.price{color:var(--ok-txt);font-weight:700}   /* --green 对绿 tint 底 4.19~4.35:1 欠 AA（13px/800 非大字）→ --ok-txt 5.18~6.36 全过；P2-3 同族收编 */
  html[data-theme="dark"] tr.qual{background:rgba(67,192,114,.13)}
  /* qual 行内 .stl 子行（--mut）对绿 tint 底 4.48 擦线差 0.02：暗色单点
     提亮（不动全局 --mut 影响面；亮色 4.7 全过不动）；.stoptag 同底同
@@ -1218,7 +1267,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
     仅移动卡可见面有对比度暴露 */
  html[data-theme="dark"] #ftable tr.qual .mdat{color:#8ba0b4}
  html[data-theme="dark"] tr.qual:hover{background:rgba(67,192,114,.2)}
- .tag{border-radius:var(--pill);padding:3px 10px;font-size:11px;color:#fff;font-weight:600;
+ .tag{border-radius:var(--pill);padding:3px 8px;font-size:11px;color:#fff;font-weight:600;
    letter-spacing:var(--ls05)}
  .pdot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;
    vertical-align:1px;background:var(--mut)}
@@ -1228,7 +1277,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .t-d{background:var(--fill)}.t-t{background:var(--fill-t)}   /* 直飞蓝/中转橙色相语义不变，实心底换高对比对：tag 白字 11px 暗/亮两主题 ≥4.5:1（--blue/--orange 直用曾暗色 2.5:1） */
  .t-i{background:var(--fill-i)}   /* 国际 tag（r325）：紫系第三色相，白字 AA 双主题预验 */
  .t-c{background:var(--fill-c)}   /* 日历价 tag（r51）：青灰第四色相——日历价非具体航班，与直飞/中转航班行视觉分档 */
- .price{font-weight:800;font-family:var(--num);letter-spacing:-.3px}
+ .price{font-weight:700;font-family:var(--num);letter-spacing:-.3px}
  .price .fire{display:inline-block;width:19px;text-align:left;white-space:nowrap}
  .fire .ic{width:12px;height:12px;color:var(--red);opacity:1;vertical-align:-2px;margin-right:2px}   /* 达标🔥定宽占位：qual 行与非 qual 行￥共起点（首扫读列数位共线） */
  /* 时刻/日期/时长/中转列数字即主角（补中转列 8：
@@ -1305,7 +1354,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .srow .sctl input[type=time],.srow .sctl input:not([type]){width:118px}
  .srow .sctl input[type=time]{text-align:center;padding:0 8px}
  .srow .sctl .btn2{height:34px}
- .srow .sctl input.keyin{width:116px;font-size:19px;font-weight:700;font-family:var(--num)}   /* r339：直飞价=keyin 放大突出（决策第一锚点）；特异性 (0,3,1)+源码序后置压过上方 13px/96px 基线（A2 审计 V1：旧 .srow .keyin (0,2,0) 全视口死档实锤） */
+ .srow .sctl input.keyin{width:116px;font-size:18px;font-weight:700;font-family:var(--num)}   /* r339：直飞价=keyin 放大突出（决策第一锚点）；特异性 (0,3,1)+源码序后置压过上方 13px/96px 基线（A2 审计 V1：旧 .srow .keyin (0,2,0) 全视口死档实锤） */
  .sunit{color:var(--mut);font-size:11px;font-family:var(--num)}
  .switch{appearance:none;-webkit-appearance:none;width:36px;height:20px;
    border-radius:var(--pill);background:var(--ctlbd);position:relative;cursor:pointer;
@@ -1547,7 +1596,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
     曾挂 --stl，其改暗橙红后擦边色跨端失配，收口；
      随 C_NEAR 加深过一次；再次随 C_NEAR 加深
     （白卡 4.97:1/斑马行 4.65:1 过 AA），暗色 --warn 不动） */
- td.price.near{color:var(--warn);font-weight:800}
+ td.price.near{color:var(--warn);font-weight:700}
  /* 行情破线第四档：实绿 + 点线下划，DPR1 下也保持清晰字形。
     空心描边在 15px/800 上会发糊，语义改由下划线与图例承担。 */
  .price.brk{color:var(--ok-txt);text-decoration:underline dotted rgba(var(--okrgb),.8);text-underline-offset:2px}
@@ -1586,7 +1635,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .mchip-link:hover{border-color:var(--blue);color:var(--tx)}
  /* ===== header 图标按钮（玻璃拟态配套） ===== */
  .hbtn{cursor:pointer;font-size:17px;line-height:1;background:var(--headbg);
-       border:1px solid var(--ctlbd);border-radius:var(--r3);padding:8px 11px;
+       border:1px solid var(--ctlbd);border-radius:var(--r3);padding:8px 12px;
        user-select:none;transition:.15s;color:var(--tx2)}
  .hbtn:hover{background:var(--hover);transform:translateY(-1px)}
  .hbtn:active{transform:scale(.95)}
@@ -1599,12 +1648,14 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  /* 图表容器 + 空状态 */
  .chartwrap{position:relative}
  .chart-empty{position:absolute;inset:0;display:flex;flex-direction:column;gap:6px;
-        align-items:center;justify-content:center;color:var(--mut);font-size:14px;text-align:center}
+        align-items:center;justify-content:center;color:var(--mut);font-size:13px;text-align:center;
+        line-height:1.6}   /* 行高与另两图空态同档（.ws-empty/ .spmon-empty 都是 1.6） */
+ .chart-empty b{font-size:13px;font-weight:600;color:var(--tx)}
  .chart-empty span{font-size:12px}
  /* 无用户引导（空状态即教学） */
  .hero{text-align:center;padding:44px 20px}
  .hero .hicon{font-size:44px}
- .hero h2{margin:10px 0 6px;font-size:19px}
+ .hero h2{margin:10px 0 6px;font-size:18px}
  .hero p{color:var(--mut);margin:4px 0}
  .hero ol{text-align:left;display:inline-block;margin:12px 0 16px;color:var(--tx2);
         font-size:14px;line-height:2}
@@ -1622,7 +1673,8 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  a.vw:focus-visible,a.numlink:focus-visible,.kpisum a:focus-visible,#foot a:focus-visible,
  .demoBar a:focus-visible,.verbar a:focus-visible,.pvbody a:focus-visible,
  #chart:focus-visible,.kpi.clk:focus-visible{   /* clk 整卡可点带 tabindex（收编全站蓝环） */
-  box-shadow:0 0 0 2px var(--blue);outline:none;
+  /* 三图焦点环同一形态：inset 2px 贴图内缘（外扩环在贴边画布上会被裁掉） */
+  box-shadow:inset 0 0 0 2px var(--blue);outline:none;
   transition:box-shadow 0s}   /* 环即时呈现（审计 P2-6）：基座 .15s transition 曾把焦点环拖成淡入，Tab 巡航滞后 ~150ms */
  th.srt:focus-visible{box-shadow:inset 0 0 0 2px var(--blue);outline:none}/* 表头排序：inset 环贴格不外溢 */
  /* 开关焦点环显式接管：.switch 族 checkbox（appearance:none 剥了 UA
@@ -1673,7 +1725,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .hbadge.mid{color:var(--warn-deep);border-color:var(--warnbd);background:var(--warnbg)}   /* 11.5px 小字亮色 4.36:1 欠 AA → --warn-deep 6.55:1；暗色两令牌同值外观不变 */
  .hbadge.bad{color:var(--red);border-color:var(--redbd);background:var(--redbg)}
  .hact{margin-left:9px;height:22px;padding:0 8px;border:1px solid var(--warnbd);border-radius:6px;
-  background:var(--warnbg);color:var(--warn-deep);font-size:10px;font-weight:650;cursor:pointer;vertical-align:1px}
+  background:var(--warnbg);color:var(--warn-deep);font-size:10px;font-weight:600;cursor:pointer;vertical-align:1px}
  .hact:hover{border-color:var(--warn);color:var(--tx)}
  .hlh{background:repeating-linear-gradient(45deg,var(--maint) 0 2px,var(--maint-soft) 2px 4px)}
  /* ===== 来源接入：网页版停服后的取数路径（健康页顶部，先讲路再讲格） ===== */
@@ -1786,18 +1838,24 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .pvmask.on .pvcard{transform:translateY(0)}
  .pvhead{display:flex;justify-content:space-between;align-items:center;gap:10px;
         padding:12px 16px;border-bottom:1px solid var(--line);font-weight:700;font-size:14px}
- .pvx{cursor:pointer;color:var(--mut);font-size:16px;padding:2px 8px;border-radius:6px;user-select:none;transition:background .12s ease}
+/* 标题里的小标签与图标：与全站「图标 + 文字 + 次要计数」同一档，
+   不用 emoji（emoji 在深色下自带彩色底，破坏扁平语言） */
+#pvTitle{display:inline-flex;align-items:center;gap:7px;min-width:0}
+#pvTitle .ic{width:15px;height:15px;color:var(--r-ink-3);flex:none}
+#pvTitle .pvhead-n{font-size:11px;font-weight:400;color:var(--r-ink-3);
+  padding:1px 7px;border-radius:var(--pill);background:var(--r-surface-2)}
+ .pvx{cursor:pointer;color:var(--mut);font-size:16px;padding:2px 8px;border-radius:var(--r3);user-select:none;transition:background .12s ease}
  .pvx:hover{background:var(--hover)}
  .pvbody{padding:14px 16px;overflow-y:auto;font-size:13px;line-height:1.75;color:var(--tx)}   /* 水平 16 与 pvhead/pvfoot 三段同内衬（P2-5：曾 18px 凸出 2px 肉眼可辨） */
- .pvbody .md-h1{font-size:17px;font-weight:800;margin:8px 0 10px}
- .pvbody .md-h2{font-size:15px;font-weight:800;margin:14px 0 8px;color:var(--blue)}
+ .pvbody .md-h1{font-size:17px;font-weight:700;margin:8px 0 10px}
+ .pvbody .md-h2{font-size:16px;font-weight:700;margin:14px 0 8px;color:var(--blue)}
  .pvbody .md-h3{font-size:13px;font-weight:700;margin:10px 0 6px}
  .pvbody .md-q{border-left:3px solid var(--blue);background:var(--rowalt);border-radius:0 8px 8px 0;
         padding:6px 12px;margin:6px 0;color:var(--tx2)}
  .pvbody .md-hr{border:none;border-top:1px solid var(--line);margin:10px 0}
  .pvbody .md-p{margin:6px 0}
  .pvbody .md-li{margin:6px 0;padding-left:16px;color:var(--tx)}
- .pvbody .md-g{font-size:15px;letter-spacing:var(--ls2)}
+ .pvbody .md-g{font-size:16px;letter-spacing:var(--ls2)}
  .pvbody img{max-width:100%;border-radius:8px;border:1px solid var(--line);display:block;margin:6px 0}
  .pvbody a{color:var(--blue);text-decoration:none}
  .pvbody a:hover{text-decoration:underline}   /* 真实可点链接悬停零反馈，与 .toast:hover/a.vw:hover 同律 */
@@ -1838,12 +1896,12 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
     维持「非可点」语义诚实 */
  .calcell:hover{border-color:var(--line2)}
  .calcell .cd{font-size:11px;font-weight:600}
- .calcell .cp{font-size:13px;font-weight:800;margin-top:2px;
+ .calcell .cp{font-size:13px;font-weight:700;margin-top:2px;
   font-family:var(--num);font-variant-numeric:tabular-nums}
  .calcell .cx{font-size:11px;margin-top:1px;font-variant-numeric:tabular-nums}
  .calcell.best{outline:2px solid var(--green);outline-offset:-2px}
  .calcell.best.qhit{outline-color:var(--cal-best-stroke)}   /* best×真达标绿底叠加态：绿描边压绿底零对比隐形（双主题实锤），换专色令牌 */
- .calcell.best .cx{font-weight:800}
+ .calcell.best .cx{font-weight:700}
  /* 删日历格 none 死规则——renderCal 格类只产 calcell/best/qhit，
     无数据格走内联 bg，none 类无生产点 */
  /* ===== 日志原文弹层 ===== */
@@ -1856,7 +1914,11 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
     wrap 承担——四 chip 平铺同层时窄档折行后模式档与时间窗档混排
     （「K线 48h」同行，组间语义断裂）。不复用 .wingrp：其窄档媒体块
     放宽为可折行（时段筛选组语义），组界会再断 */
- .mdgrp{display:inline-flex;align-items:center;white-space:nowrap}
+ /* 组内缝 2px 与另两图的 `.mon-range{gap:2px}` 同档：三个档位切换控件
+    本质是同一个控件（同样的 11px/600 chip、8px 圆角、26px 高），
+    航线图此前组内 gap:normal → 实测相邻 chip 间距 0px，另两图 2px，
+    读作「一个是连体按钮、一个是分段按钮」。 */
+ .mdgrp{display:inline-flex;align-items:center;white-space:nowrap;gap:2px}
  .rngchip{padding:5px 14px;border-radius:var(--r3);cursor:pointer;font-size:12px;
    background:var(--headbg);color:var(--mut);border:1px solid var(--line);
    user-select:none;font-weight:600;transition:.15s}
@@ -1932,6 +1994,27 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
    .cfgnav{position:static;flex-direction:row;flex-wrap:wrap;
      max-height:none;overflow:visible}
    .cfgnav-t{display:none}
+   /* 搜索框收成与标签同高的一行内联件：曾整块占 48px 独立行，
+      390 档导航因此 110px 高、正文再被推低一屏。 */
+   /* 搜索框与导航片同左缘（门禁钉：左缘差 <1px），
+      高度压到与标签同档；命中行不占独立行。 */
+   #cfgview .cfgsearchwrap{flex:1 1 100%;padding:0;margin:0}
+   #cfgview .cfgsearch{height:30px;width:100%;font-size:12px}
+   #cfgview .cfghit{display:none}
+   #cfgview .cfgnav .cnav{flex:1 1 0;min-width:0;justify-content:center;padding:7px 6px;font-size:12px}
+   #cfgview .cfgnav .cnav .cnavn{display:none}
+   #cfgview #cfgNavFoot{display:none}
+   #cfgview .cfglayout{gap:8px}
+   /* ≤360：搜索收成行内小件并与其他标签同一行（触控块会把标签
+      撑到 50px，三片换行后导航又变三行）。 */
+   @media(max-width:360px){
+     #cfgview .cfgnav{flex-wrap:nowrap;gap:4px}
+     #cfgview .cfgsearchwrap{flex:0 0 30px}
+     #cfgview .cfgsearch{width:30px;padding:0 6px;font-size:0}
+     #cfgview .cfgsearch::placeholder{font-size:0}
+     #cfgview .cfgnav .cnav{flex:1 1 0;padding:8px 2px;font-size:11px;gap:3px}
+     #cfgview .cfgnav .cnav .ic{width:12px;height:12px}
+   }
    /* 空态 .cfghit（0 宽）占 flex 行首吃 column-gap：搜索框与首个
       导航片左缘错位 4px（760 实测 22.8 vs 26.8）；命中态文本更宽
       错位面更大（r322 实测 55.4px）。flex-basis:100% 独占一行，
@@ -1964,7 +2047,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .lgslots{display:flex;flex-direction:column;gap:6px;flex:1 1 auto}
  .lgslot{border-top:1px dashed var(--line);padding-top:6px;display:flex;flex-direction:column;gap:4px;flex:1 1 auto}
  .lgslot:first-child{border-top:0;padding-top:0}
- .lgslot-h{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:650;color:var(--tx2)}
+ .lgslot-h{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--tx2)}
  .lgslot-h .lgdot{margin-left:auto}
  .lgslot .lgsub{font-size:11px;color:var(--mut)}
  .lgslot .btn2{margin-top:auto;white-space:nowrap}
@@ -1986,7 +2069,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .lglanes{display:grid;grid-template-columns:1fr 1fr;gap:10px}
  .lglane{border:1px solid var(--line);border-radius:var(--r10);padding:9px 10px;
    display:flex;flex-direction:column;gap:5px;background:var(--bg2)}
- .lglane-h{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:650;color:var(--tx)}
+ .lglane-h{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--tx)}
  .lglane-h .lgdot{margin-left:auto}
  .lglane-sub{font-size:11px;color:var(--mut)}
  .lglane .btn2{width:100%;justify-content:center;white-space:nowrap;margin-top:4px}
@@ -2000,12 +2083,36 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .lgcard.stale{border-color:var(--warnbd)}
  .lgcard.stale .lgsub{color:var(--warn)}
  .lgcard .lgname{font-size:13px;font-weight:700;display:flex;align-items:center;gap:8px}
- .lgtag{font-size:10px;font-weight:600;line-height:16px;padding:0 5px;border-radius:var(--pill);
+ /* 状态胶囊族统一横向内边距 6px（全族同一档，落在 4/6/8 阶上）。
+    此前同一种「≤21px 高、pill 圆角、1px 描边的小状态标」出现 5/6/7/8 四种
+    横向内边距：.chsess 与 .ws-state 是 6，.monwatch-state/.hslot/.hdiag-st
+    是 7，.glip 是 8，.chlink-auth/.lgtag 是 5，读作四个不同控件。
+    6px 是全族众数、也是阶上的最近值；1440/900/390 实测统一后高度不变、
+    无裁切、无横向溢出。 */
+ .lgtag{font-size:10px;font-weight:600;line-height:16px;padding:0 6px;border-radius:var(--pill);
   color:var(--blue);border:1px solid color-mix(in srgb,var(--blue) 26%,var(--line));
   background:color-mix(in srgb,var(--blue) 6%,var(--card));white-space:nowrap}
  .lgcard .lgsub{font-size:11px;color:var(--mut)}
  .lgcard .btn2{margin-top:auto}
  .glgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+/* 只读参数说明（r521）：整行宽、两列（键路径 / 说明）。用既有发丝线与
+   弱色阶，不新造色值；窄档退成单列。 */
+.glnote{margin-top:12px;padding:12px 14px;border:1px solid var(--line);
+ border-radius:var(--r2);background:var(--r-surface-2)}
+.glnote .gn-t{font-size:11px;font-weight:600;color:var(--r-ink-3);margin-bottom:8px}
+.glnote .gn-r{display:grid;grid-template-columns:120px 84px minmax(0,1fr);
+ gap:8px;align-items:baseline;font-size:12px;color:var(--r-ink-2);
+ padding:4px 0;border-bottom:1px solid color-mix(in srgb,var(--r-hair) 60%,transparent)}
+.glnote .gn-r:last-child{border-bottom:0}
+.glnote .gn-k{color:var(--r-ink-2)}
+.glnote .gn-v{font-family:var(--num);font-weight:600;color:var(--r-ink)}
+.glnote .gn-p{font-family:var(--num);font-size:11px;color:var(--r-ink-3);
+ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.glnote .gn-h{font-size:11px;color:var(--r-ink-3);min-width:0}
+@media (max-width:760px){
+ .glnote .gn-r{grid-template-columns:minmax(0,1fr);gap:2px}
+ .glnote .gn-p{white-space:normal;overflow-wrap:anywhere}
+}
  .glabs{font-size:10px;color:var(--mut);font-family:var(--num);
 overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx3/--mono 令牌归位（绝对路径可读性） */
  .glcell{border:1px solid var(--line);border-radius:var(--r2);padding:12px 14px;
@@ -2013,7 +2120,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
  .glcell:hover{border-color:var(--line2)}
  .glcell .glab{font-size:11px;letter-spacing:var(--ls1);color:var(--mut);
    text-transform:uppercase;white-space:nowrap}
- .glcell input:not(.switch){margin-top:6px;font-family:var(--num);font-size:17px;font-weight:600;
+ .glcell input:not(.switch){margin-top:6px;font-family:var(--num);font-size:16px;font-weight:600;
    width:100%;border:none;background:transparent;color:var(--tx);padding:2px 0 0;
    border-bottom:1px dashed var(--ctlbd);border-radius:0}
  .glcell input:not(.switch):hover{border-bottom-color:var(--mut)}
@@ -2066,6 +2173,22 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
     min-content=一字一行竖排（审计 P1）；flex-wrap 让胶囊
     放不下时换行而不是挤压标题 */
  .uhead2{flex-wrap:wrap}
+ /* 宽档：胶囊容器不生成盒子，胶囊仍是卡头的直接 flex 子项（换行节奏不变） */
+ .uhead2 .upills{display:contents}
+ /* r436：窄档改为「名字行 + 胶囊行」两段网格——原先胶囊与删除/折叠同在一条
+    flex 流里，760 及以下胶囊一多，`.uhead-end` 整块被挤到第二、三行
+   （实测 760/600/520/460/390/360 六档删除钮顶边比名字低 57~72px），
+   用户读作「删除按钮孤零零挂在那里」。名字、删除、chevron 恒在同一条线上，
+   胶囊独占下面的行。只在会挤开的窄档启用：宽档 flex 更紧凑（卡头 60px vs 88px）。 */
+ @media(max-width:860px){
+  .uhead2{display:grid;grid-template-columns:auto minmax(0,1fr) auto;
+    grid-template-areas:"ava name end" "pills pills pills";
+    column-gap:12px;row-gap:8px;align-items:center}
+  .uhead2 .uava{grid-area:ava}
+  .uhead2 b{grid-area:name;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .uhead2 .upills{grid-area:pills;display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0}
+  .uhead2 .uhead-end{grid-area:end;margin-left:0;justify-self:end}
+ }
  .uhead2 b{flex:1;min-width:8em;font-size:14px}
  .uava{width:30px;height:30px;border-radius:var(--r3);flex:none;display:inline-flex;
    align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;
@@ -2084,7 +2207,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
  .upill.warn{color:var(--warn-deep);border-color:var(--warnbd);background:var(--warnbg)}   /* 「● 未保存」11px 亮色 3.9:1 欠 AA → --warn-deep 6.21:1；暗色 --warn≡--warn-deep 同值（#d9b34a）零外观变化 */
  .udirty{display:none}
  .uhead2 .uact{width:28px;height:28px;padding:0;border:1px solid transparent;
-   border-radius:7px;background:transparent;color:var(--mut);box-shadow:none;
+   border-radius:var(--r3);background:transparent;color:var(--mut);box-shadow:none;
    display:inline-flex;align-items:center;justify-content:center;flex:none;
    transition:color .15s,background .15s,border-color .15s}
  .uhead2 .uact:hover{color:var(--red);background:var(--redbg);border-color:var(--redbd)}
@@ -2119,17 +2242,37 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
  body.cwform-open .savebar{display:none}
  .savebar .dot{width:8px;height:8px;border-radius:50%;background:var(--warn);
    animation:pulse 1.4s ease-in-out infinite}
- /* ===== 推送记录列表（状态色条卡片：绿=成功 红=失败） ===== */
- .plitem{padding:9px 12px;border-radius:var(--r3);cursor:pointer;font-size:13px;
-        margin:6px 0 2px;background:var(--rowalt);border:1px solid var(--line);
-        border-left:3px solid var(--green);display:flex;gap:8px;
-        align-items:center;transition:background .15s,border-color .15s}
+ /* ===== 推送记录列表（状态色条：绿=成功 红=失败） =====
+    r455：行是可展开的（点条目看全文），但三处都不像——
+   ① 没有 chevron、没有 aria-expanded，全站其它折叠面都有，用户看不
+      出这行能点，只能凭手指去试；
+   ② 行与展开体各自带 1px 边框，卡片里套两个描边盒子，正对用户说的
+      「折叠起来了，但是有很多分割线，很不干净」；
+   ③ ✅/⚠️ 是 emoji，深色下自带彩色底，同 #pvTitle 注里已立过的规矩
+      （emoji 破扁平语言），改成与全站一致的状态色条 + 文字。
+   行改成「无色块 + 发丝下划线」的列表项，展开体去掉外框只留左侧
+   状态条延续，层级靠缩进与底色深浅，不靠描边。 */
+ .plitem{padding:9px 12px 9px 9px;border-radius:0;cursor:pointer;font-size:13px;
+        margin:0;background:transparent;border:0;
+        border-left:3px solid var(--green);border-bottom:1px solid var(--r-hair);
+        display:flex;gap:8px;
+        align-items:center;transition:background .15s}
  .plitem:hover{background:var(--hover)}
  .plitem.bad{border-left-color:var(--red)}
+ /* 折叠多态：箭头未展开朝右，展开态原地转 90°，行高与位置都不动 */
+ .plitem .plchev{flex:none;width:11px;height:11px;color:var(--r-ink-3);
+  stroke-width:2;transition:transform .18s ease-out}
+ .plitem[aria-expanded="true"] .plchev{transform:rotate(90deg);color:var(--blue)}
+ .plitem[aria-expanded="true"]{background:var(--hover);border-bottom-color:transparent}
+ .plst{flex:none;font-size:10px;line-height:16px;padding:0 6px;border-radius:var(--pill);
+  white-space:nowrap;background:var(--r-red-soft);color:var(--red);font-weight:600}
  .plts{color:var(--mut);font-size:11px;white-space:nowrap;font-variant-numeric:tabular-nums}
  .plch{font-size:10px;color:var(--mut);border:1px solid var(--line);border-radius:var(--pill);padding:0 6px;line-height:16px;white-space:nowrap}
- .pldesp{border:1px solid var(--line);border-radius:0 var(--r10) var(--r10) var(--r10);
-        background:var(--headbg);padding:4px 14px;margin:0 0 10px}
+ .pldesp{background:transparent;border:0;
+        border-left:3px solid var(--green);
+        border-bottom:1px solid var(--r-hair);
+        padding:2px 14px 8px 12px;margin:0}
+ .plitem.bad+.pldesp{border-left-color:var(--red)}
  /* ===== 细滚动条（主题化；Firefox 走 scrollbar-*） ===== */
  ::-webkit-scrollbar{width:9px;height:9px}
  ::-webkit-scrollbar-thumb{background:var(--line);border-radius:var(--r-sm)}
@@ -2176,6 +2319,38 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
   .grid{grid-template-columns:repeat(2,minmax(0,1fr));max-width:var(--kpiw);
    justify-content:flex-start}}
  .kpisum{max-width:var(--kpiw)}   /* 用户卡「全线最低」行与 KPI 行同宽 */
+ /* r419 概览卡动作区：动作跟着对象走，放卡头右侧。窄屏折到第二行右对齐，
+    不挤占用户名的省略位。 */
+ .uhead .uact2{margin-left:auto;display:inline-flex;align-items:center;gap:12px;
+  flex:0 0 auto;white-space:nowrap}
+ /* 跳转链迁到卡头后仍要满足四条既有门禁：hover 下划线、≥36 触控高、
+    ::after 命中区外扩、词缀单形 ▸。旧实现靠 .kpisum a 的 12px 内联
+    padding 撑高；换到 flex 卡头后改成 inline-flex + min-height，视觉
+    高度不变但命中盒达标。 */
+ .uhead .uact2 a{position:relative;display:inline-flex;align-items:center;
+  min-height:36px;color:var(--blue);font-size:12px;font-weight:600;
+  text-decoration:none;padding:0 2px}
+ .uhead .uact2 a::after{content:'';position:absolute;inset:-6px -4px}
+ .uhead .uact2 a:hover{text-decoration:underline}
+ /* r433：窄屏折行时曾 `flex-basis:100%` + `justify-content:flex-end`——
+   这一行被撑满 324px，两个链接却全挤到最右（实测 x=227/310，左侧空出
+   199px 纯背景），与上一行的姓名/航线左缘完全对不上，读作「用户明细
+   按钮排在那里很别扭」。
+   r444：改成「左缘起排」后仍独占一行（390 实测 dy=+56，
+   「查看明细 ▸ / 走势 ▸」整体掉到卡名下方），用户仍是同一句抱怨。
+   复测 390：卡名右缘 105、卡右缘 368，右侧空 263px —— 这行**放得下**，
+   当初判「放不下」是错的。窄档改回与卡名同行、靠右：动作贴着它
+   作用的对象（这张用户卡），不再自占一行。 */
+ @media(max-width:600px){
+  /* r444：`.uhead` 是 wrap 容器，`.uroutes`（航线串）实测 267px + 卡名 77px
+     = 344px > 容器 324px，把「查看明细/走势」整行挤到下一行（dy=+56）。
+     flex 子项默认 `min-width:auto` —— 只写 overflow:hidden 收不动，
+     必须显式 min-width:0 才真的能省略。 */
+  .uhead .uroutes{min-width:0!important;flex:1 1 0!important;
+   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
+  .uhead .uname{flex:0 0 auto}
+  .uhead .uact2{flex-basis:auto;margin-left:auto;justify-content:flex-end;
+   gap:12px;flex:0 0 auto}}
  /* 行内明细/走势链接触控外扩（#foot a::after 同款族
     收编：实测 h=16 全站最小可点件之一，纯命中区视觉零变化，
     与相邻「｜」分隔 ~20px 不吃邻命中） */
@@ -2209,7 +2384,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
  html[data-density="compact"] .ucard{padding:14px}
  html[data-density="compact"] .srow{padding:8px 10px;min-height:38px}
  html[data-density="compact"] th,html[data-density="compact"] td{padding:6px 8px}
- html[data-density="compact"] .kpi .num{font-size:27px}
+ html[data-density="compact"] .kpi .num{font-size:22px}
  html[data-density="compact"] .chcard{padding:8px 10px}
  /* compact 同步收窄航线卡/通道卡内衬（基础 padding 约 -30%）：srow 行高
     收了而外层卡不收，折叠体内留白比例反而变大 */
@@ -2635,7 +2810,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
   .grid{gap:8px}
   .ucard{padding:12px 12px}
   header{padding:10px 10px}
-  header h1{font-size:15px;letter-spacing:.6px}
+  header h1{font-size:14px;letter-spacing:.6px}
   .wrap{padding:0 10px 14px}
   header{margin:0 -10px 4px}
  }
@@ -2763,7 +2938,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
   grid-template-areas:"price price price" "flight flight flight" "dep arr arr";
   gap:5px 9px;padding:10px 11px;border-bottom:1px solid var(--line)}
  #ftable tbody tr[data-k]>td{display:block;width:auto;min-width:0;padding:0;border:0;white-space:normal}
- #ftable tbody tr[data-k]>td.price{grid-area:price;font-size:19px;line-height:1.2}
+ #ftable tbody tr[data-k]>td.price{grid-area:price;font-size:18px;line-height:1.2}
  #ftable tbody tr[data-k]>td:nth-child(4){grid-area:flight}
  #ftable tbody tr[data-k]>td:nth-child(5){grid-area:dep}
  #ftable tbody tr[data-k]>td:nth-child(6){grid-area:arr}
@@ -2951,10 +3126,10 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
     结果集切 no-transfer 类；xrow colspan=9 不受扰——display:none 列
     零宽，colspan 多余一格无视觉影响，行为钉验横贯） */
  #ftable.no-transfer th:nth-child(8),#ftable.no-transfer td:nth-child(8){display:none}
- /* 明细价格主判据字号阶梯：cozy 档 15px 与次要字段拉开主次
+ /* 明细价格主判据字号阶梯：cozy 档 16px 与次要字段拉开主次
     （compact 档保持基础字号——密度档语义优先）；1440 零横滚为
     前提钉守护（uitest EN-7 三钉） */
- :root:not([data-density=compact]) #ftable td.price{font-size:15px}
+ :root:not([data-density=compact]) #ftable td.price{font-size:16px}
  /* 配置即时校验：输入越界标红边+行内提示（与 saveCfg 共用
     GLB_RANGES 单源表，防两处漂移） */
  .glcell input.invalid{border-bottom-color:var(--red)!important}
@@ -2979,6 +3154,16 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
  #montabs.xhint::after{opacity:1}
  #montab-details .tabs>#fltBtn{position:sticky;right:0;z-index:1;
   box-shadow:0 0 0 4px var(--card)}}
+ /* r441：390 档明细筛选条 nowrap 横滚，实测 client 348 / scroll 633 ——
+    285px 溢出、4 个筛选 tab（中转·全部/仅达标/直挂/只看关注）整颗在屏外，
+    首屏既看不见也点不到，只在滚动后才点亮 xhint 渐隐。540 以下改成
+    折行：所有筛选项一次可见，「筛选」钮仍在末行右缘。
+    源序必须在 2930/2987 两个 ≤760 块之后才能盖住 nowrap/overflow-x。 */
+ @media(max-width:540px){
+ #montab-details .tabs{flex-wrap:wrap!important;overflow-x:visible!important;
+  row-gap:4px}
+ #montab-details .tabs>#fltBtn{position:static!important;margin-left:auto;
+  box-shadow:none}}
  @media(max-width:380px){
  #searchview .srx-dtabs{flex-wrap:wrap!important;overflow-x:visible!important;row-gap:3px}
  .mdgrp{display:flex;flex-wrap:wrap;white-space:normal}
@@ -3110,7 +3295,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 .cp-search input{flex:1;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--tx);font-size:14px}
 .cp-search input:hover{border-color:var(--mut)}
 .cp-search input:focus{outline:none;border-color:var(--blue)}
-.cp-x{border:none;background:none;color:var(--mut);font-size:15px;cursor:pointer;padding:0 6px;min-height:36px}
+.cp-x{border:none;background:none;color:var(--mut);font-size:14px;cursor:pointer;padding:0 6px;min-height:36px}
 .cp-body{overflow:auto;padding:6px 12px 12px;max-height:min(430px,64vh)}
 .cp-hot{display:flex;flex-wrap:wrap;gap:6px;padding:4px 0 10px;border-bottom:1px dashed var(--line);margin-bottom:8px}
 .cp-lab{font-size:12px;color:var(--mut);align-self:center;margin-right:2px}
@@ -3140,7 +3325,8 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
    双击缩放，保留平移与捏合（表格横滚/页面滚动零变化）。置尾晚于
    全部触控块——媒体块无「更严更后胜」（LESSONS 二十一§1）===== */
 @media(pointer:coarse){
- #paceBox a[onclick]{display:inline-flex;align-items:center;min-height:36px;padding:0 6px}
+ #paceBox .pace-row .ac button{min-height:36px}
+ #paceBox .pace-tools .g :is(button,a),#paceBox .pace-tools .g select{height:36px}
  #paceBox select{min-height:36px}
  button,.hbtn,.mtab,nav span,#tabs span,.chip,.mchip,.rngchip,.huser,
  .pill,th.srt,canvas,.cp-city,.cp-abc span,#ftable tr,
@@ -3197,7 +3383,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
    回答「配置整体健康吗」，日期编排回答「区间/逐日都可以」，路径卡
    回答「文件在哪、多大、改到哪、何时生效」。 */
  .cfgchrome{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
-   margin:2px 0 10px;padding:9px 12px;border:1px solid var(--line);
+   margin:2px 0 12px;padding:9px 12px;border:1px solid var(--line);
    border-radius:var(--r2);background:var(--card)}
  .cfgchrome .cc-t{font-size:11px;letter-spacing:var(--ls1);color:var(--mut);
    text-transform:uppercase;font-weight:700}
@@ -3230,7 +3416,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
  .cfgstat:first-child{border-left:0}
  .cfgstat .sl{display:block;font-size:10px;letter-spacing:var(--ls1);color:var(--mut);
    white-space:nowrap}
- .cfgstat .sv{display:inline-block;font-family:var(--num);font-size:20px;font-weight:700;
+ .cfgstat .sv{display:inline-block;font-family:var(--num);font-size:18px;font-weight:700;
    line-height:1.25;margin-top:1px;font-variant-numeric:tabular-nums;color:var(--tx)}
  .cfgstat .ss{display:block;font-size:11px;color:var(--mut);margin-top:1px;
    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -3294,7 +3480,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
  .rline{background:var(--card);box-shadow:var(--sh1);transition:border-color .15s,box-shadow .15s}
  .rline:hover{border-color:var(--line2);box-shadow:var(--sh2)}
  .cfgtoolbar.rline:hover{border-color:var(--line);border-bottom-color:var(--line);box-shadow:none}
- .rhead{padding:2px 0 8px;border-bottom:1px solid var(--line);margin-bottom:2px}
+ .rhead{padding:2px 0 8px;border-bottom:0;margin-bottom:2px}
  .rhead .rop{gap:8px;row-gap:6px}   /* r346：4px 相邻动作易误触（开关/删除） */
  .rhead .ropbtn{padding:4px 8px;font-size:11px}
  .rhead .ractions{display:inline-flex;align-items:center;border:1px solid var(--ctlbd);
@@ -3428,7 +3614,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
  .storehead .sh-path{font-family:var(--num);font-size:11px;color:var(--mut);
    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
  .storehead .sh-meta{flex-basis:100%;font-size:11px;color:var(--mut);
-   font-family:var(--num);overflow-wrap:anywhere;padding-top:4px;border-top:1px dashed var(--line)}
+   font-family:var(--num);overflow-wrap:anywhere;padding-top:4px;border-top:0}
  .storehead .sh-meta b{color:var(--tx2);font-weight:600}
  .pathgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
  @media(max-width:900px){.pathgrid{grid-template-columns:minmax(0,1fr)}}
@@ -3510,7 +3696,11 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
  .rc-empty{padding:12px;border:1px dashed var(--line);border-radius:var(--r3);color:var(--mut);
    font-size:12px;text-align:center}
  /* ===== r342 明细：筛选摘要 + 智能预设 ===== */
- .fltsum{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin:5px 0 0;
+ /* r412：摘要从「触发钮与面板之间」移到面板之后。它在触发钮下方时，展开
+    就是「按钮 → 一条已生效条件 → 真正的筛选面板」——中间常驻一段无关
+    内容，正是用户反复报的「展开中间还有元素」。摘要改为面板下方的结果
+    说明（先说条件、再看到结果），间距也改到下方。 */
+ .fltsum{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin:6px 0 0;
    padding:3px 8px;border:1px solid transparent;border-radius:var(--r3);
    background:color-mix(in srgb,var(--line) 5%,var(--headbg));font-size:11px;color:var(--mut)}
  .fltsum:empty{display:none}
@@ -3558,11 +3748,13 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
    .rcmask{padding:8px}
    .dcompose-h{gap:6px}
    .dctab{padding:0 9px}
-   .dcsum{font-size:9px}
+   .dcsum{font-size:10px}
  }
 /* ===== 生产 · 多平台实时检索（r348 证据工作台） ===== */
 #searchview{--srx-gap:12px;--srx-r:10px;--srx-soft:var(--rowalt,#f5f8fb);
- --srx-mono:var(--num);padding:0 0 36px}
+ --srx-mono:var(--num);padding:0}
+/* r390 检索页没有吸底 savebar（配置页才有，那边用 --sbh 垫底），
+   这 36px 纯背景在滚到底时读作「页面没排完」。留白交给页脚。 */
 #searchview *{min-width:0}
 #searchview button:focus-visible,#searchview [role=button]:focus-visible,#searchview a:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 #searchview button{font:inherit}
@@ -3594,7 +3786,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 }
 #searchview .srx-hero-act label{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--mut)}
 #searchview .srx-btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;height:32px;padding:0 11px;
- border:1px solid var(--ctlbd);border-radius:8px;background:var(--card);color:var(--tx2);font-size:12px;font-weight:550;
+ border:1px solid var(--ctlbd);border-radius:var(--r3);background:var(--card);color:var(--tx2);font-size:12px;font-weight:600;
  cursor:pointer;white-space:nowrap;transition:border-color .15s,background .15s,color .15s}
 #searchview .srx-btn svg{width:14px;height:14px;flex:none}
 #searchview .srx-btn:hover{border-color:var(--blue);color:var(--blue);background:var(--hover)}
@@ -3605,19 +3797,43 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-hero-act select{height:32px;border:1px solid var(--ctlbd);border-radius:8px;background:var(--card);color:var(--tx2);font-size:12px;padding:0 8px}
 
 /* 检索带 / 探针 */
-#searchview .srx-probe{background:var(--card);border:1px solid var(--line);border-radius:var(--srx-r);padding:8px 12px 9px;margin:0 0 8px}
+#searchview .srx-probe{background:transparent;border:0;padding:8px 0 9px;margin:0 0 8px}
 #searchview .srx-probehead{display:flex;align-items:center;gap:7px;flex-wrap:nowrap;margin-bottom:7px;min-height:26px}
-#searchview .srx-probehead b{font-size:13px;font-weight:650;letter-spacing:.1px;flex:none}
+#searchview .srx-probehead b{font-size:13px;font-weight:600;letter-spacing:.1px;flex:none}
 #searchview .srx-probehint{font-size:11px;color:var(--mut);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #searchview .srx-probeacts{margin-left:auto;display:inline-flex;align-items:center;gap:5px;flex:none}
-#searchview .srx-probeacts button{height:26px;padding:0 8px;border:1px solid var(--line2);border-radius:6px;background:var(--card);color:var(--tx2);font-size:11px;display:inline-flex;align-items:center;justify-content:center;gap:4px;cursor:pointer;white-space:nowrap}
+#searchview .srx-probeacts button{height:26px;padding:0 8px;border:1px solid var(--line2);border-radius:var(--r3);background:var(--card);color:var(--tx2);font-size:11px;display:inline-flex;align-items:center;justify-content:center;gap:4px;cursor:pointer;white-space:nowrap}
 #searchview .srx-probeacts button:hover{border-color:var(--blue);color:var(--blue)}
-#searchview .srx-probeacts .srx-probe-toggle{border-color:transparent;background:transparent;margin-left:0}
-#searchview .srx-probeacts .srx-probe-toggle:hover{background:var(--hover);border-color:transparent}
+#searchview .srx-probe{position:relative}
+/* r433：折叠钮曾是 `position:absolute; right:10px`（右上角）。绝对定位后
+   它不占流，而操作簇 `.srx-probeacts` 是 `margin-left:auto` 贴右——展开态
+   两者落在同一块区域，实测「收起探针」(x 1120–1184) 与「探针会话」
+   (1132–1194)、「快捷筛选」(1065–1127) **矩形重叠**，截图里就是一个
+   「收起探针」的字压在「特价雷达」按钮上（用户实报「展开后有一个
+   收起探针的样式」）。
+   改法：**行内 + order:9 恒定末位**。acts 右缘固定（1194），末位即最右，
+   两态折叠钮都在 x=1130 同一处；其它按钮依次排在它左边，互不重叠。
+   （试过 order:-1 排最前：不重叠但展开态被推到最左，横移 198px，已弃。） */
+#searchview .srx-probeacts .srx-probe-toggle{position:static!important;order:9!important;margin:0!important;
+ height:26px;border-radius:var(--r3);z-index:auto!important;padding:0 9px!important;flex:0 0 auto!important}
+#searchview .srx-probeacts .srx-probe-toggle:hover{border-color:var(--blue);color:var(--blue)}
+/* r434：折叠钮带一个随态翻转的 chevron——否则展开态它和「特价雷达/探针会话」
+   同层级同长相，读作「又多了一颗按钮」，而不是「同一颗按钮变成了收起态」。
+   文字两态宽度不同（展开 4 字 / 收起 4 字，实际等宽），箭头只做方向指示，
+   用 transform 旋转而非替换字符，两态宽度与坐标恒等。 */
+#searchview .srx-probe-toggle .srx-chev{width:5px;height:5px;margin-right:4px;flex:0 0 auto;
+ border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;
+ transition:transform .15s ease;transform:rotate(-135deg) translate(-1px,-1px)}
+/* 收起态（内容在上方、按钮在下方）箭头朝下；展开态朝上——方向跟着「内容在哪」走 */
+#searchview .srx-probe:not(.open) .srx-probe-toggle .srx-chev{transform:rotate(45deg) translate(-1px,1px)}
+/* r433：这段原是给「绝对定位在右上角的折叠钮」让位（padding-right 78px）
+   与微调 top/right。折叠钮已改为行内 + order:-1（见上），不再有绝对定位
+   的钮压在这里：78px 的让位变成纯空白，top/right 也无效果。整段撤除，
+   窄档两态都由 acts 自己的换行规则决定。 */
 #searchview .srx-probe:not(.open) .srx-probeform,#searchview .srx-probe:not(.open) .srx-probestatus{display:none}
 #searchview .srx-probehead em{margin-left:2px;font-style:normal;font-family:var(--srx-mono);font-size:10px;
  color:var(--mut);border:1px solid var(--line);border-radius:5px;padding:2px 7px}
-#searchview.srx-probe-on .srx-probe{border-color:rgba(var(--blue-rgb),.38);box-shadow:inset 3px 0 0 var(--blue)}
+#searchview.srx-probe-on .srx-probe{box-shadow:inset 3px 0 0 var(--blue)}
 #searchview .srx-probeform{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 #searchview .srx-probeform>label{display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--mut)}
 #searchview .srx-probeform>label input{width:118px;height:30px;border:1px solid var(--ctlbd);border-radius:7px;
@@ -3666,23 +3882,106 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 /* 价带 */
 #searchview .srx-band{background:var(--card);border:1px solid var(--line);border-radius:var(--srx-r);padding:4px 11px;margin:0 0 7px}
 #searchview .srx-band-empty{display:flex;align-items:center;gap:8px;flex-wrap:wrap;grid-column:1/-1;width:100%;min-height:24px;font-size:11px;color:var(--tx2)}
-#searchview .srx-band-empty button,#searchview .srx-band-collapse{height:26px;padding:0 9px;border:1px solid var(--ctlbd);border-radius:6px;background:var(--card);color:var(--blue);font-size:11px;cursor:pointer;white-space:nowrap}
+#searchview .srx-band-empty button,#searchview .srx-band-collapse{height:26px;padding:0 9px;border:1px solid var(--ctlbd);border-radius:var(--r3);background:var(--card);color:var(--blue);font-size:11px;cursor:pointer;white-space:nowrap}
 #searchview .srx-band-collapse{grid-column:1/-1;justify-self:start;margin-top:2px}
+/* r434：空价带内的出发日候选——和筛选区同一套 chip 观感，就地可选，不跳区 */
+#searchview .srx-band-empty .srx-band-picks{display:flex;align-items:center;gap:4px;flex-wrap:wrap;min-width:0}
+#searchview .srx-band-empty .srx-band-picks .srx-chip{height:26px;padding:0 9px;border:1px solid var(--ctlbd);border-radius:var(--r3);background:var(--card);color:var(--tx2);font-size:11px;cursor:pointer;white-space:nowrap}
+#searchview .srx-band-empty .srx-band-picks .srx-chip.on{background:var(--blue);border-color:var(--blue);color:#fff}
 #searchview.srx-probe-on .srx-brief,#searchview.srx-probe-on .srx-band{display:none!important}
 @media(max-height:980px){#searchview.srx-probe-on .srx-audit,#searchview.srx-probe-on .srx-capbar{display:none!important}}
 #searchview .srx-probe.has-task .srx-probestatus{display:none}
 @media(max-width:1100px){#searchview .srx-probehint{display:none}}
 @media(max-width:760px){
  #searchview .srx-probehead{flex-wrap:wrap;gap:5px 7px}
- #searchview .srx-probeacts{width:100%;margin-left:0;justify-content:flex-end}
+ /* r424：窄档下 `.srx-probeacts` 整行换到第二行，而「展开/收起探针」留在
+    第一行——探针一展开，内容之上还常驻「组合 / 特价雷达 / 探针会话」整行，
+    正是用户报的「展开的中间还有元素」。触发器必须始终是按钮行的最后一颗：
+    把它移进按钮行，整行一起换行。 */
+ /* r424 三步归零：
+    ①绝对定位 → 触发器留第一行，其余三颗整行排它下面（展开中间夹常驻元素）；
+    ②改回行内但不定宽 → 收起态只它一颗、展开多三颗，被挤到第二行（位移 38px）；
+    ③只给展开态定宽 → 收起态仍是右上角，两态基准不同（位移 330px）。
+    定案：窄档**两态都**独占最后一行（收起态其余按钮隐藏，故只有它一行）。 */
+ #searchview .srx-probeacts{width:100%;margin-left:0;justify-content:flex-end;padding-right:0}
  #searchview .srx-probeacts button{flex:1 1 auto}
+ /* r428：三颗动作钮曾被压到 18px、整行从 -57 起溢到容器左侧（出了屏
+    仍可点）——`flex:1 1 auto` 允许缩到 min-content 之下，而末行 356px
+    的折叠钮又抢走整行。窄屏给按钮一个可读下限并允许换行。 */
+ @media(max-width:760px){
+  #searchview .srx-probeacts{flex-wrap:wrap!important;gap:5px!important}
+  #searchview .srx-probeacts button{flex:1 1 auto!important;
+   min-width:84px!important;white-space:nowrap!important}
+ }
+ @media(max-width:760px){
+  /* acts 容器本身也要占满整行：否则收起态只剩 toggle 一颗时 acts 收缩到
+     64px，toggle 的 width:100% 就只有 64px，展开后 acts 变 356px 才铺满
+     → 同一颗钮两态宽度/位置都变（实测位移 330px）。 */
+  #searchview .srx-probeacts{width:100%!important;flex:0 0 100%!important;
+   margin-left:0!important;padding-right:0!important}
+  /* r433：折叠钮若留在 actions 流里（无论 order 9 还是 -1），窄档展开态
+     多出三颗动作钮后都会把它推下去——实测 760/390 纵移 **31px**
+     （probeH 79→350），用户读作「展开和收起都不在同一个位置，明显不是
+     一个按钮多态的设计」。
+     窄档改法：脱离 acts 流，锚在**卡头右上角**（probehead 高度两态恒定
+     30px，所以锚点不动），动作钮继续在下方整行排布，互不遮挡。
+     这与宽档「行内 order:9」是两种必要形态：宽档一行放得下，窄档放不下。 */
+  #searchview .srx-probeacts .srx-probe-toggle{position:absolute!important;
+   top:6px!important;right:8px!important;left:auto!important;order:0!important;
+   flex:0 0 auto!important;width:auto!important;margin:0!important;
+   justify-content:center;text-align:center;font-size:11px!important}
+  /* r437 尝试（已回退）：把三颗动作钮挪到表单之后需要把 probehead 摊平成
+     flex 子项，代价是标题/小标/说明行三个绝对定位元素互相叠字、卡头塌成
+     1px；只搬 DOM 不改结构又会让宽档动作簇掉到左下、触发器跟着跑到卡头
+     下方。三条路线全部实测失败，已还原 r433 形态（触发器锚卡头右上角 +
+     动作行在切换器下方）。这一行常驻钮是这张卡的固有结构，不再动它。 */
+  #searchview .srx-probe:not(.open) .srx-probeacts{padding-right:78px!important}
+  #searchview .srx-probe.open .srx-probeacts{padding-right:0!important}
+  /* r437b（窄档专用，宽档规则一律不碰）：`.srx-probe` 本身是 containing
+     block，窄档改成列 flex；`.srx-probehead` 仍是它的一整块（不动内部绝对
+     定位），只把**动作簇**从卡头里提到表单之后再排回来。
+     实现：窄档给 probehead 一个 flex 容器不够（动作簇在它内部），所以用
+     `order` 让 head 与 form 交换：head 永远第一，动作簇视觉上跟到表单后。 */
+  @media(max-width:760px){
+   #searchview .srx-probe{display:flex;flex-direction:column}
+   /* 动作簇在 probehead 内部，order 不能跨层——窄档把卡头摊平，它的四个
+      子元素（标题 / 小标 / 说明 / 动作簇）直接成为 .srx-probe 的 flex 子项。
+      标题与小标用行内排列，触发器仍是绝对定位锚卡头右上角。 */
+   #searchview .srx-probehead{display:contents}
+   #searchview .srx-probehead>b{order:0;padding-right:96px;line-height:1.5}
+   #searchview .srx-probehead>em{order:0;margin:0!important;padding:3px 0 0 8px;flex:0 0 auto}
+   #searchview .srx-probehead>.srx-probe-mini,
+   #searchview .srx-probehead>.srx-probehint{display:none!important}
+   #searchview .srx-probeform{order:1}
+   #searchview .srx-probe .srx-probeacts{order:2;position:static!important;
+    top:auto!important;right:auto!important;left:auto!important;
+    width:100%!important;margin:6px 0 0!important;padding-right:0!important;
+    display:flex!important;flex-wrap:wrap!important;gap:5px!important;
+    justify-content:flex-end}
+  }
+
+  /* 模态小标（监控数据 / DEMO · 合成）收起态被 display:none，展开态出现——
+     它和标题同处第一行，一出现就把下面的按钮行整体压下 12px（实测
+     390 档位移 12px）。窄档两态都保留占位（visible 而非 none），
+     行高恒定，按钮不跳。≤900 档有一条同特异性规则先把它 none 掉，
+     这里必须 !important 才盖得住。 */
+  #searchview .srx-probe:not(.open) .srx-probehead>em{display:block!important;visibility:hidden}
+  /* ≤900 档还有一条「收起态 probehead margin-bottom:0」——展开态是 8px，
+     卡头一开合就整体上下挪 8px。窄档两态统一 8px：下面本来就紧跟表单，
+     这点外边距不会造成空档。 */
+  #searchview .srx-probe:not(.open) .srx-probehead{margin-bottom:8px!important}
+  /* ≤900 档收起态把探针卡的上内边距压成 0（展开态是 6px），卡头整体
+     因此上移 6px——与「说明小标」的 2px 叠加正好是实测的 8px 位移。
+     窄档两态统一 6px 上内边距。 */
+  #searchview .srx-probe:not(.open){padding-top:6px!important}
+ }
 }
 #searchview .srx-band-h{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:6px}
-#searchview .srx-band-h b{font-size:14px;font-weight:650;letter-spacing:.1px}
+#searchview .srx-band-h b{font-size:14px;font-weight:600;letter-spacing:.1px}
 #searchview .srx-band-h span{font-size:11px;color:var(--mut)}
 #searchview .srx-band-h .srx-axis{margin-left:0;display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
 #searchview .srx-bandnav{margin-left:auto;display:inline-flex;align-items:center;gap:3px}
-#searchview .srx-bandnav button{width:28px;height:26px;padding:0;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--tx2);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+#searchview .srx-bandnav button{width:28px;height:26px;padding:0;border:1px solid var(--line);border-radius:var(--r3);background:var(--card);color:var(--tx2);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
 #searchview .srx-bandnav button:hover{border-color:var(--blue);color:var(--blue)}
 #searchview .srx-bandnav button:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
 #searchview .srx-bandnav button svg{width:14px;height:14px}
@@ -3711,7 +4010,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 /* 短桌面（1280×800 / 1024×768）：首屏先给完整数据行。
    五源现势卡在 1360+ 仍保留；短屏收起，渠道事实仍在 KPI/镜像/校准册。 */
 @media(min-width:1101px) and (max-height:820px){
- #searchview .srx-band-note{font-size:9px;margin-top:4px}
+ #searchview .srx-band-note{font-size:10px;margin-top:4px}
  #searchview .srx-band-note a{display:none}
  #searchview .srx-band-h{margin-bottom:5px}
  #searchview .srx-day{min-height:36px;gap:1px}
@@ -3730,11 +4029,11 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-src:hover{border-color:var(--line2);transform:translateY(-1px)}
 #searchview .srx-src.on{border-color:var(--pc,var(--blue));box-shadow:inset 0 0 0 1px var(--pc,var(--blue))}
 #searchview .srx-src.off{opacity:.7}
-#searchview .srx-src-h{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:650;white-space:nowrap;color:var(--tx)}
+#searchview .srx-src-h{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;white-space:nowrap;color:var(--tx)}
 #searchview .srx-src-h .p{width:18px;height:18px;border-radius:5px;background:var(--pc,var(--mut));color:#fff;
  display:inline-flex;align-items:center;justify-content:center;font-size:10px;flex:none}
 #searchview .srx-src-h .st{margin-left:auto;font-family:var(--srx-mono);font-size:11px;color:var(--mut);font-weight:400;white-space:nowrap;flex:none}
-#searchview .srx-src-big{display:block;font-family:var(--srx-mono);font-size:18px;font-weight:650;line-height:1.15;margin:4px 0 2px;font-variant-numeric:tabular-nums}
+#searchview .srx-src-big{display:block;font-family:var(--srx-mono);font-size:18px;font-weight:600;line-height:1.15;margin:4px 0 2px;font-variant-numeric:tabular-nums}
 #searchview .srx-src-sub{display:block;font-size:11px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #searchview .srx-src-bar{display:block;height:2px;background:var(--line);border-radius:2px;margin-top:7px;overflow:hidden}
 #searchview .srx-src-bar i{display:block;height:100%;background:var(--pc,var(--blue));border-radius:2px}
@@ -3746,7 +4045,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-capbar{display:flex;align-items:center;gap:6px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin;padding:5px 8px;margin:0 0 8px;
  border:1px solid var(--line);border-radius:9px;background:linear-gradient(180deg,var(--card),var(--srx-soft));font-size:12px;color:var(--tx2)}
 #searchview .srx-capbar[hidden]{display:none}
-#searchview .srx-capbar .caplead{display:inline-flex;align-items:center;gap:5px;font-weight:650;color:var(--tx);white-space:nowrap;flex:none}
+#searchview .srx-capbar .caplead{display:inline-flex;align-items:center;gap:5px;font-weight:600;color:var(--tx);white-space:nowrap;flex:none}
 #searchview .srx-capbar .capchip{display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border:1px solid var(--line);border-radius:var(--pill);
  background:var(--card);white-space:nowrap;font-size:11px;line-height:18px;flex:none}
 #searchview .srx-capbar .sessdot{width:5px;height:5px;border-radius:50%;background:var(--green);flex:none}
@@ -3758,8 +4057,8 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-capbar .capchip.auth{border-color:var(--warnbd);background:var(--warnbg);color:var(--warn-deep)}
 #searchview .srx-capbar .sp{flex:1;min-width:6px}
 #searchview .srx-capbar .capdiv{width:1px;height:16px;background:var(--line2);margin:0 1px}
-#searchview .srx-capbar button{height:25px;padding:0 10px;border:1px solid var(--blue);border-radius:6px;background:transparent;
- color:var(--blue);font-size:11px;font-weight:650;cursor:pointer;white-space:nowrap}
+#searchview .srx-capbar button{height:25px;padding:0 10px;border:1px solid var(--blue);border-radius:var(--r3);background:transparent;
+ color:var(--blue);font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap}
 #searchview .srx-capbar button:hover{background:rgba(var(--blue-rgb),.07)}
 @media(max-width:760px){
  #searchview .srx-capbar{gap:5px;padding:6px 8px}
@@ -3775,12 +4074,12 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-kpi-empty{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:7px 11px;border:1px solid var(--line);border-radius:8px;background:var(--srx-soft);font-size:11px;color:var(--tx2)}
 #searchview .srx-kpi-empty b{color:var(--tx);font-size:12px}
 #searchview .srx-kpi-empty .acts{display:flex;gap:6px;margin-left:auto}
-#searchview .srx-kpi-empty button{height:26px;padding:0 9px;border:1px solid var(--ctlbd);border-radius:6px;background:var(--card);color:var(--blue);font-size:11px;cursor:pointer}
+#searchview .srx-kpi-empty button{height:26px;padding:0 9px;border:1px solid var(--ctlbd);border-radius:var(--r3);background:var(--card);color:var(--blue);font-size:11px;cursor:pointer}
 #searchview .srx-kpi{position:relative;text-align:left;background:var(--card);border:1px solid var(--line);border-radius:9px;
  padding:7px 10px 8px;cursor:pointer;transition:border-color .15s,transform .15s;overflow:hidden}
 #searchview .srx-kpi:hover{border-color:var(--line2);transform:translateY(-1px)}
 #searchview .srx-kpi .k{display:block;font-size:10px;letter-spacing:var(--ls1);text-transform:uppercase;color:var(--mut);white-space:nowrap}
-#searchview .srx-kpi .v{display:block;font-family:var(--srx-mono);font-size:19px;font-weight:650;line-height:1.2;margin-top:2px;color:var(--tx);font-variant-numeric:tabular-nums}
+#searchview .srx-kpi .v{display:block;font-family:var(--srx-mono);font-size:18px;font-weight:600;line-height:1.2;margin-top:2px;color:var(--tx);font-variant-numeric:tabular-nums}
 #searchview .srx-kpi .s{display:block;font-size:10px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
 #searchview .srx-kpi.ok .v{color:var(--ok-txt)}
 #searchview .srx-kpi.warn .v{color:var(--warn-deep)}
@@ -3812,16 +4111,28 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-chip .dot{width:6px;height:6px;border-radius:50%;background:var(--pc,var(--mut));flex:none}
 #searchview .srx-chip.off,.srx-chip:disabled{opacity:.38;cursor:not-allowed;filter:saturate(.45)}
 #searchview .srx-tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-left:auto}
-#searchview .srx-tools input[type=text]{width:190px;height:30px;border:1px solid var(--ctlbd);border-radius:7px;
+#searchview .srx-tools input[type=text]{width:190px;height:30px;border:1px solid var(--ctlbd);border-radius:var(--r3);
  background:var(--card);color:var(--tx);padding:0 9px;font-size:11px}
 #searchview .srx-tools label{display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--mut);white-space:nowrap}
 #searchview .srx-tools select{height:30px;border:1px solid var(--ctlbd);border-radius:7px;background:var(--card);color:var(--tx2);font-size:11px;padding:0 6px}
 #searchview .srx-facets{display:flex;align-items:center;gap:4px;flex-wrap:wrap;min-width:0;flex:1}
-#searchview .srx-more{min-height:26px;padding:0 9px;border:1px dashed var(--line2);border-radius:6px;background:transparent;
- color:var(--tx2);font-size:10px;cursor:pointer;white-space:nowrap}
-#searchview .srx-more:hover{border-color:var(--blue);color:var(--blue)}
+#searchview .srx-more{min-height:27px;padding:0 10px;border:0;border-radius:var(--pill);
+ background:var(--r-surface-2);color:var(--r-ink-2);font-size:12px;font-weight:600;
+ cursor:pointer;white-space:nowrap}
+#searchview .srx-more:hover{background:var(--r-surface-3);color:var(--r-ink)}
+#searchview .srx-more[aria-expanded="true"]{background:var(--r-blue-soft);color:var(--r-blue)}
+#searchview .srx-more .n{margin-left:4px;font-family:var(--srx-mono);font-size:11px;color:inherit;opacity:.72}
 #searchview .srx-fmore{display:none;border-top:1px dashed var(--line);margin-top:6px;padding-top:8px;
  grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 18px}
+/* r469：触发器在「快筛」行末尾（x≈1329），面板却是整行 1319px 宽、左缘 91，
+   与按钮差了 1238px；两者之间还隔着「渠道」一行（41px）——用户原话
+   「展开独立占了一行、非常割裂」。面板改为**顶到触发器正下方、右对齐到
+   触发器所在列**：留出左列标签宽度（与 .srx-line 的 60px 标签列同律），
+   并把与按钮的纵向缝隙压到 6px，读作「这一块的展开体」而不是另一段。 */
+#searchview .srx-fmore{margin-left:60px;margin-top:0;padding-top:6px}
+@media(max-width:760px){
+ #searchview .srx-fmore{margin-left:0}
+}
 #searchview .srx-fmore.open{display:grid}
 #searchview .srx-fgrp{display:flex;flex-direction:column;gap:5px;min-width:0}
 #searchview .srx-fgrp>b{font-size:10px;letter-spacing:var(--ls1);text-transform:uppercase;color:var(--mut);font-weight:600}
@@ -3849,7 +4160,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srf-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:9px;align-items:start}
 #searchview .srf-card{grid-column:span 4;min-width:0;border:1px solid var(--line);border-radius:var(--r10);background:var(--card);padding:10px 11px;display:flex;flex-direction:column;gap:7px}
 #searchview .srf-card>header{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:6px}
-#searchview .srf-card>header b{font-size:11px;font-weight:650;letter-spacing:.02em;color:var(--tx)}
+#searchview .srf-card>header b{font-size:11px;font-weight:600;letter-spacing:.02em;color:var(--tx)}
 #searchview .srf-card>header span{font-size:10px;color:var(--mut)}
 #searchview .srf-common{grid-column:span 8}
 #searchview .srf-time{grid-column:span 4}
@@ -3869,15 +4180,15 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srf-opt .srf-ic{width:18px;height:18px;flex:none;border-radius:50%;object-fit:contain}
 #searchview .srf-opt .srf-ic-all{width:16px;height:16px;fill:currentColor;stroke:none;padding:1px;color:var(--tx2)}
 #searchview .srf-optlab{line-height:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
-#searchview .srf-opt i{font-style:normal;font-family:var(--srx-mono);font-size:9px;color:var(--mut);margin-left:2px;min-width:17px;height:16px;display:inline-flex;align-items:center;justify-content:center;padding:0 4px;border-radius:var(--pill);background:var(--srx-soft)}
-#searchview .srf-opt.on{border-color:var(--blue);background:rgba(var(--blue-rgb),.09);color:var(--blue);font-weight:650}
+#searchview .srf-opt i{font-style:normal;font-family:var(--srx-mono);font-size:10px;color:var(--mut);margin-left:2px;min-width:17px;height:16px;display:inline-flex;align-items:center;justify-content:center;padding:0 4px;border-radius:var(--pill);background:var(--srx-soft)}
+#searchview .srf-opt.on{border-color:var(--blue);background:rgba(var(--blue-rgb),.09);color:var(--blue);font-weight:600}
 #searchview .srf-opt.on i{background:rgba(var(--blue-rgb),.12);color:var(--blue)}
 #searchview .srf-opt.off{opacity:.42;cursor:not-allowed}
 #searchview .srf-opt:disabled{pointer-events:none}
 #searchview .srf-airq{display:flex;align-items:center;gap:6px;height:28px;padding:0 7px;border:1px solid var(--ctlbd);border-radius:6px;background:var(--srx-soft);min-width:0}
 #searchview .srf-airq .ic{width:13px;height:13px;color:var(--mut);flex:none}
 #searchview .srf-airq .srf-q{height:auto;border:0;background:transparent;padding:0;flex:1;min-width:0}
-#searchview .srf-labn{font-style:normal;font-weight:400;color:var(--mut);font-family:var(--srx-mono);font-size:9px;margin-left:2px}
+#searchview .srf-labn{font-style:normal;font-weight:400;color:var(--mut);font-family:var(--srx-mono);font-size:10px;margin-left:2px}
 #searchview .srf-row{display:grid;gap:6px 8px;min-width:0}
 #searchview .srf-3{grid-template-columns:repeat(3,minmax(0,1fr))}
 #searchview .srf-fsel{display:flex;flex-direction:column;gap:3px;font-size:10px;color:var(--mut);min-width:0}
@@ -3895,7 +4206,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srf-active{font-size:11px;color:var(--tx2);line-height:1.5;word-break:break-word}
 #searchview .srf-foot{display:flex;align-items:center;gap:6px;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:7px}
 #searchview .srf-foot .sp{flex:1;min-width:6px}
-#searchview .srf-foot button{height:26px;padding:0 9px;border:1px solid var(--line2);border-radius:6px;background:var(--card);color:var(--tx2);font-size:10px;cursor:pointer}
+#searchview .srf-foot button{height:26px;padding:0 9px;border:1px solid var(--line2);border-radius:var(--r3);background:var(--card);color:var(--tx2);font-size:10px;cursor:pointer}
 #searchview .srf-foot button:hover{border-color:var(--blue);color:var(--blue)}
 @media(max-width:1100px){
  #searchview .srf-common,#searchview .srf-history,#searchview .srf-display{grid-column:span 12}
@@ -3923,7 +4234,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-listhead{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;
  min-height:48px;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--card);position:relative;z-index:5}
 #searchview .srx-listhead>div{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
-#searchview .srx-listhead b{font-size:14px;font-weight:650;letter-spacing:.1px;white-space:nowrap}
+#searchview .srx-listhead b{font-size:14px;font-weight:600;letter-spacing:.1px;white-space:nowrap}
 #searchview .srx-listhead .cnt{font-family:var(--srx-mono);font-size:11px;color:var(--tx2);font-weight:600;font-variant-numeric:tabular-nums}
 #searchview .srx-listhead .meta{font-size:11px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:36vw}
 #searchview .srx-lhact{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-left:auto}
@@ -3932,7 +4243,10 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
  gap:6px;align-items:center;min-height:28px;padding:5px 10px;border-bottom:1px solid var(--line);background:var(--headbg);color:var(--mut);
  font-size:10px;letter-spacing:var(--ls1);text-transform:uppercase;position:relative;z-index:4}
 #searchview .srx-thead span:nth-child(5){text-align:right}
-#searchview .srx-rows{display:flex;flex-direction:column}
+/* r433：去掉行线后由容器提供真实行间距（此前 .srx-row 之间 gapAfter=0，
+   68px 行高全靠 13px 内边距撑，线一撤相邻行就黏成一片）。
+   2px 是「看得出分组、又不拉长列表」的最小可见值；呼吸感靠行内 11px 内边距。 */
+#searchview .srx-rows{display:flex;flex-direction:column;row-gap:2px}
 #searchview .srx-row{display:grid;grid-template-columns:26px minmax(0,1.3fr) minmax(122px,.95fr) minmax(60px,.85fr) 76px 118px;
  gap:6px;align-items:center;padding:10px 10px;border-bottom:1px solid var(--line);cursor:pointer;min-width:0;position:relative}
 #searchview .srx-row{scroll-margin-top:calc(var(--hdh,54px) + 82px)}
@@ -3946,34 +4260,39 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-plat{width:27px;height:27px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;
  background:var(--pc,#5a6c7d);color:#fff;font-size:11px;font-weight:700;flex:none}
 #searchview .srx-fl{min-width:0}
-#searchview .srx-fl b{display:block;font-size:14px;font-weight:650;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.3px}
+#searchview .srx-fl b{display:block;font-size:14px;font-weight:600;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.3px}
 #searchview .srx-fl .sub{display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:10px;color:var(--mut);margin-top:3px;min-width:0}
 #searchview .srx-fl .sub span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 #searchview .srx-times{display:grid;grid-template-columns:auto auto auto auto;align-items:baseline;gap:3px;min-width:0}
-#searchview .srx-times b{font-family:var(--srx-mono);font-size:15px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.3px}
+#searchview .srx-times b{font-family:var(--srx-mono);font-size:16px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.3px}
 #searchview .srx-times i{font-style:normal;font-size:10px;color:var(--mut)}
 #searchview .srx-times .arr{text-align:right;white-space:nowrap}
-#searchview .srx-times .xday{font-family:var(--srx-mono);font-size:10px;line-height:11px;color:var(--tx2);letter-spacing:0;align-self:start;margin-top:1px;font-weight:650;font-variant-numeric:tabular-nums}
+#searchview .srx-times .xday{font-family:var(--srx-mono);font-size:10px;line-height:11px;color:var(--tx2);letter-spacing:0;align-self:start;margin-top:1px;font-weight:600;font-variant-numeric:tabular-nums}
 #searchview .srx-times span{grid-column:1/-1;font-size:11px;color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #searchview .srx-badges{display:flex;align-items:center;gap:4px;flex-wrap:wrap;min-width:0}
+/* r456：小签族一律「无描边 + 柔底」。1512 检索视图原 431 条可见边框里
+   312 条来自 102 枚小签（每枚四边），其中 47 枚（state/plain/risk）是
+   纯空心轮廓——同屏 4 排小方框，正是用户说的「很多分割线、不干净」。
+   语义靠底色的冷暖与词面承载，不靠描边；保留 .cal 的虚线，因为
+   「日历价非具体航班」是要看得出来的一类例外，虚线本身有含义。 */
 #searchview .srx-b{display:inline-flex;align-items:center;height:18px;min-height:18px;padding:0 5px;border-radius:4px;
- border:1px solid var(--line);background:transparent;color:var(--mut);font-size:10px;white-space:nowrap;line-height:1}
-#searchview .srx-b.state{height:20px;min-height:20px;padding:0 6px;font-weight:650;letter-spacing:.01em}
-#searchview .srx-b.ok{color:var(--ok-txt);background:var(--okbg);border-color:rgba(var(--okrgb),.25);font-weight:600}
-#searchview .srx-b.warn{color:var(--warn-deep);background:var(--warnbg);border-color:var(--warnbd)}
-#searchview .srx-b.bad{color:var(--red);background:var(--redbg);border-color:var(--redbd)}
-#searchview .srx-b.info{color:var(--blue);background:rgba(var(--blue-rgb),.08);border-color:rgba(var(--blue-rgb),.22)}
-#searchview .srx-b.intl{color:#5b3e99;background:rgba(107,79,160,.09);border-color:rgba(107,79,160,.25)}
-#searchview .srx-b.cal{color:var(--mut);border-style:dashed}
-#searchview .srx-b.risk{color:var(--warn-deep);border-color:var(--warnbd)}
+ border:0;background:var(--r-surface-2);color:var(--mut);font-size:10px;white-space:nowrap;line-height:1}
+#searchview .srx-b.state{height:20px;min-height:20px;padding:0 6px;font-weight:600;letter-spacing:.01em}
+#searchview .srx-b.ok{color:var(--ok-txt);background:var(--okbg);font-weight:600}
+#searchview .srx-b.warn{color:var(--warn-deep);background:var(--warnbg)}
+#searchview .srx-b.bad{color:var(--red);background:var(--redbg)}
+#searchview .srx-b.info{color:var(--blue);background:rgba(var(--blue-rgb),.08)}
+#searchview .srx-b.intl{color:#5b3e99;background:rgba(107,79,160,.09)}
+#searchview .srx-b.cal{color:var(--mut);border:1px dashed var(--line2)}
+#searchview .srx-b.risk{color:var(--warn-deep);background:var(--r-surface-2)}
 #searchview .srx-price{text-align:right;min-width:0}
-#searchview .srx-price b{display:block;font-family:var(--srx-mono);font-size:19px;font-weight:700;letter-spacing:-.5px;line-height:1.1;font-variant-numeric:tabular-nums}
+#searchview .srx-price b{display:block;font-family:var(--srx-mono);font-size:18px;font-weight:700;letter-spacing:-.5px;line-height:1.1;font-variant-numeric:tabular-nums}
 #searchview .srx-price .s{display:block;font-size:10px;color:var(--mut);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
 #searchview .srx-price .s.ok{color:var(--ok-txt)}
 #searchview .srx-price .s.warn{color:var(--warn-deep)}
 #searchview .srx-price .s:empty{display:none}
 #searchview .srx-rowact{display:flex;align-items:center;justify-content:flex-end;gap:2px}
-#searchview .srx-rowact button{width:26px;height:26px;flex:0 0 auto;padding:0;box-sizing:border-box;border:1px solid transparent;border-radius:6px;background:transparent;
+#searchview .srx-rowact button{width:26px;height:26px;flex:0 0 auto;padding:0;box-sizing:border-box;border:1px solid transparent;border-radius:var(--r3);background:transparent;
  color:var(--mut);cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
 #searchview .srx-rowact button:hover{border-color:var(--line2);color:var(--blue)}
 #searchview .srx-rowact svg{width:13px;height:13px}
@@ -3990,7 +4309,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-exp .kv span{color:var(--mut);white-space:nowrap}
 #searchview .srx-exp .kv b{font-family:var(--srx-mono);font-weight:500;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #searchview .srx-exp .acts{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
-#searchview .srx-exp .acts button{height:26px;padding:0 8px;border:1px solid var(--line2);border-radius:5px;background:transparent;
+#searchview .srx-exp .acts button{height:26px;padding:0 8px;border:1px solid var(--line2);border-radius:var(--r3);background:transparent;
  color:var(--tx2);font-size:10px;cursor:pointer}
 #searchview .srx-exp .acts button:hover{border-color:var(--blue);color:var(--blue)}
 #searchview .srx-group{border-bottom:1px solid var(--line);background:var(--headbg);padding:6px 12px;display:flex;
@@ -4002,15 +4321,19 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-empty{padding:34px 16px;text-align:center;color:var(--mut);font-size:11px;line-height:1.65}
 #searchview .srx-empty b{display:block;font-size:13px;color:var(--tx);margin-bottom:5px}
 #searchview .srx-empty .acts{display:flex;justify-content:center;gap:6px;flex-wrap:wrap;margin-top:10px}
-#searchview .srx-empty .acts button{height:28px;padding:0 10px;border:1px solid var(--line2);border-radius:6px;background:transparent;
+#searchview .srx-empty .acts button{height:28px;padding:0 10px;border:1px solid var(--line2);border-radius:var(--r3);background:transparent;
  color:var(--tx2);font-size:11px;cursor:pointer}
 #searchview .srx-empty .acts button:hover{border-color:var(--blue);color:var(--blue)}
 #searchview .srx-skel{height:54px;border-radius:7px;background:linear-gradient(90deg,var(--headbg),var(--hover),var(--headbg));
  background-size:200% 100%;animation:srxsk 1.2s ease-in-out infinite;margin:7px 10px}
 @keyframes srxsk{to{background-position:-200% 0}}
-#searchview .srx-more-rows{display:block;width:calc(100% - 24px);margin:8px 12px 10px;height:30px;border:1px dashed var(--line2);
- border-radius:6px;background:transparent;color:var(--tx2);font-size:11px;cursor:pointer}
-#searchview .srx-more-rows:hover{border-color:var(--blue);color:var(--blue)}
+/* 「加载更多」是同页的次级动作，必须与 .srx-btn 同族（12px/600、圆角 9、
+   软面底、无边框）。旧样式是 11px/400 虚线框 + 另一条 !important 又把
+   圆角清零，两处规则互相拆台。 */
+#searchview .srx-more-rows{display:block;width:calc(100% - 24px);margin:8px 12px 10px;height:30px;
+ border:0;border-radius:var(--r3);background:var(--r-surface-2);color:var(--r-ink-2);
+ font-size:12px;font-weight:600;cursor:pointer}
+#searchview .srx-more-rows:hover{background:var(--r-surface-3);color:var(--r-ink)}
 
 /* 矩阵 */
 #searchview .srx-matrix{overflow-x:auto;position:relative}
@@ -4024,24 +4347,24 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-mx th:first-child,#searchview .srx-mx td:first-child{width:190px;max-width:190px;white-space:normal;overflow-wrap:anywhere}
 #searchview .srx-mxcards{display:none}
 #searchview .srx-mxcard{border:1px solid color-mix(in srgb,var(--line) 55%,transparent);border-radius:var(--r10);padding:10px;background:var(--card)}
-#searchview .srx-mxcard-h .fname{display:flex;align-items:center;gap:3px;font-size:12px;font-weight:650}
+#searchview .srx-mxcard-h .fname{display:flex;align-items:center;gap:3px;font-size:12px;font-weight:600}
 #searchview .srx-mxcard-h .fsub{font-size:10px;color:var(--mut);margin-top:3px}
 #searchview .srx-mxcard-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;margin-top:8px}
 #searchview .srx-mxcell{display:flex;flex-direction:column;gap:4px;min-width:0}
-#searchview .srx-mxcell .pn{display:flex;align-items:center;justify-content:center;gap:2px;font-size:9px;color:var(--mut);min-width:0}
+#searchview .srx-mxcell .pn{display:flex;align-items:center;justify-content:center;gap:2px;font-size:10px;color:var(--mut);min-width:0}
 #searchview .srx-mxcell .pn i{font-style:normal;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #searchview .srx-mxcell .mcell{width:100%;min-width:0;padding:0 2px}
 @media(max-width:600px){#searchview .srx-matrix{display:none}#searchview .srx-mx-hint{display:none}#searchview .srx-mxcards{display:grid;gap:8px}}
 #searchview .srx-mx th{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);font-weight:600;
- text-align:center;padding:8px 5px;border-bottom:1px solid var(--line);background:var(--headbg);position:sticky;top:0;z-index:3}
+ text-align:center;padding:8px 6px;border-bottom:1px solid var(--line);background:var(--headbg);position:sticky;top:0;z-index:3}
 #searchview .srx-mx th span{color:var(--tx2)!important}
 #searchview .srx-mx th:first-child{text-align:left;min-width:140px;position:sticky;left:0;z-index:4;box-shadow:1px 0 0 var(--line)}
-#searchview .srx-mx td{border-bottom:1px solid var(--line);padding:7px 5px;text-align:center;font-family:var(--srx-mono);font-size:11px}
+#searchview .srx-mx td{border-bottom:1px solid var(--line);padding:8px 6px;text-align:center;font-family:var(--srx-mono);font-size:11px}
 #searchview .srx-mx td:first-child{text-align:left;font-family:inherit;position:sticky;left:0;z-index:2;background:var(--card);box-shadow:1px 0 0 var(--line)}
 #searchview .srx-mx tr:hover td:first-child{background:var(--hover)}
 #searchview .srx-mx tr:hover td{background:var(--hover)}
 #searchview .srx-mx .mcell{display:inline-flex;align-items:center;justify-content:center;min-width:46px;height:27px;padding:0 6px;
- background:var(--card);color:var(--tx);border:1px solid var(--line);box-shadow:none;font-weight:650;
+ background:var(--card);color:var(--tx);border:1px solid var(--line);box-shadow:none;font-weight:600;
  border:1px solid transparent;border-radius:5px;cursor:pointer;font-family:var(--srx-mono);font-size:11px}
 #searchview .srx-mx .mcell.low{color:var(--ok-txt);font-weight:700;border-color:rgba(var(--okrgb),.3);background:rgba(var(--okrgb),.06)}
 #searchview .srx-mx .mcell.sel{border-color:var(--blue);box-shadow:inset 0 0 0 1px var(--blue)}
@@ -4053,19 +4376,51 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 /* 镜像 */
 #searchview .srx-mirror{background:var(--card);border:1px solid var(--line);border-radius:var(--srx-r);overflow:hidden;min-width:0}
 #searchview .srx-mrail{display:flex;align-items:center;gap:4px;min-height:48px;padding:8px 10px;border-bottom:1px solid var(--line);overflow-x:auto}
-@media(max-width:1400px){#searchview .srx-mrail{flex-wrap:wrap;overflow:visible;row-gap:5px}}
-@media(max-width:760px){#searchview .srx-mrail{flex-wrap:wrap;overflow:visible;row-gap:5px}}
+/* r387：镜像工具条内容宽约 650px，1440 档轨宽仅 622 → 右侧「四源」被
+   裁掉 28px（用户实报「收起」竖排、末项出画）。换行阈值抬到 1500，
+   与内容实测宽度对齐；更宽时单行且不滚动。
+   r420：换行方案本身有问题——1500 以下 wrap 时 6 个渠道胶囊刚好占满第一行，
+   把「收起镜像」单独挤到第二行（实测 bandSizes=[6,1]、railH 76px），
+   等于「折叠钮自己占了一行」，正是用户反复报的形状。改成两段式：
+   左段渠道胶囊可横向滚动、右段（收起镜像 + 列表/详情/四源/打开原页）
+   永远不换行并贴右，整条恒为一行。 */
+#searchview .srx-mrail{gap:4px}
+@media(max-width:1500px){
+ #searchview .srx-mrail{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden}
+ #searchview .srx-mrail>.srx-mtab{flex:0 0 auto}
+ #searchview .srx-mrail>.srx-foldbtn,
+ #searchview .srx-mrail>.srx-mtools{position:sticky;right:0;background:var(--card);
+  flex:0 0 auto;z-index:1}
+ #searchview .srx-mrail>.srx-mtools{box-shadow:-6px 0 6px -6px rgba(16,24,40,.18);padding-left:4px}
+}
+/* r425：窄屏两颗 sticky right:0 会叠在一起——工具组（列表/详情/四源）
+   压住「收起/展开镜像」，点它命中的是工具按钮，折叠完全不生效（390/460
+   实测 elementFromPoint 落在 BUTTON 而非 .srx-foldbtn）。轨道本来就装不下
+   （scrollWidth 660 > 356），右段只能钉一颗：让工具组回到流内、跟随内容
+   横向滚动，折叠钮独占右侧粘附位。 */
+@media(max-width:900px){
+ #searchview .srx-mrail>.srx-mtools{position:static!important}
+ #searchview .srx-mrail>.srx-foldbtn{z-index:3}
+}
+@media(max-width:760px){
+ #searchview .srx-mrail{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden}
+ #searchview .srx-mrail>.srx-mtab{flex:0 0 auto}
+}
 #searchview .srx-mrail::-webkit-scrollbar{height:4px}
 #searchview .srx-mtab{display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;min-height:28px;padding:0 8px;
- border:1px solid var(--ctlbd);border-radius:6px;background:transparent;color:var(--tx2);font-size:11px;cursor:pointer;white-space:nowrap}
+ border:1px solid var(--ctlbd);border-radius:var(--r3);background:transparent;color:var(--tx2);font-size:11px;cursor:pointer;white-space:nowrap}
 #searchview .srx-mtab:hover{border-color:var(--line2);background:var(--hover)}
 #searchview .srx-mtab.on{border-color:var(--pc,var(--blue));color:var(--tx);background:rgba(var(--blue-rgb),.06);font-weight:600}
-#searchview .srx-mtab .p{width:18px;height:18px;border-radius:5px;background:var(--pc,var(--mut));color:#fff;display:inline-flex;
- align-items:center;justify-content:center;font-size:9px;flex:none}
+/* 渠道图标底座的圆角跟尺寸等比（与 .bic-ota 的 calc(var(--bic)*.26) 同一语言）：
+   侧栏 18px→5px、列表行 22px→6px 原本是两个硬编码值，比率为 27.8% / 27.3%，
+   读作「同一套图标在两处圆角不一样」。统一按 .273 反而**恰好保留原视觉**
+   （18*.273=4.91→5、22*.273=6.01→6），只是把意图写明。 */
+#searchview .srx-mtab .p{width:18px;height:18px;border-radius:calc(18px * .273);background:var(--pc,var(--mut));color:#fff;display:inline-flex;
+ align-items:center;justify-content:center;font-size:10px;flex:none}
 #searchview .srx-mtab .n{font-family:var(--srx-mono);font-size:10px;color:var(--mut)}
 #searchview .srx-mtab.off{opacity:.9;color:var(--tx2)}
 #searchview .srx-mtools{display:flex;align-items:center;gap:4px;margin-left:auto;flex:none}
-#searchview .srx-mtools button{height:26px;padding:0 8px;border:1px solid var(--line2);border-radius:5px;background:transparent;
+#searchview .srx-mtools button{height:26px;padding:0 8px;border:1px solid var(--line2);border-radius:var(--r3);background:transparent;
  color:var(--tx2);font-size:10px;cursor:pointer}
 #searchview .srx-mtools button:hover{border-color:var(--blue);color:var(--blue)}
 #searchview .srx-mtools button.on{background:var(--fill);border-color:transparent;color:#fff}
@@ -4074,7 +4429,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-mchrome .dots{display:inline-flex;gap:3px;flex:none}
 #searchview .srx-mchrome .dots i{width:5px;height:5px;border-radius:50%;background:var(--line2)}
 #searchview .srx-mchrome .host{font-family:var(--srx-mono);font-size:10px;color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#searchview .srx-mchrome .tag{margin-left:auto;border:1px solid var(--line);border-radius:4px;padding:0 5px;white-space:nowrap;color:var(--mut);background:var(--card);font-size:10px}
+#searchview .srx-mchrome .tag{margin-left:auto;border:1px solid var(--line);border-radius:var(--pill);padding:0 8px;white-space:nowrap;color:var(--mut);background:var(--card);font-size:10px}
 #searchview .srx-mbody{padding:10px 11px 11px}
 #searchview .srx-msearch{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:10px;color:var(--tx2);margin-bottom:6px}
 #searchview .srx-msearch b{font-family:var(--srx-mono);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -4087,16 +4442,16 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-mrow:hover{border-color:var(--line2);background:var(--hover)}
 #searchview .srx-mrow.sel{border-color:var(--pc,var(--blue));box-shadow:inset 3px 0 0 var(--pc,var(--blue))}
 #searchview .srx-mrow.peer{border-color:var(--blue);border-style:dashed}
-#searchview .srx-mrow .p{width:22px;height:22px;border-radius:6px;background:var(--pc,var(--mut));color:#fff;display:inline-flex;
+#searchview .srx-mrow .p{width:22px;height:22px;border-radius:calc(22px * .273);background:var(--pc,var(--mut));color:#fff;display:inline-flex;
  align-items:center;justify-content:center;font-size:10px;flex:none}
 #searchview .srx-mrow .m{min-width:0}
-#searchview .srx-mrow .m b{display:block;font-size:12px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#searchview .srx-mrow .m b{display:block;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #searchview .srx-mrow .m span{display:block;font-size:10px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
 #searchview .srx-mrow .pr{text-align:right;flex:none}
 #searchview .srx-mrow .pr b{display:block;font-family:var(--srx-mono);font-size:14px;font-weight:700;letter-spacing:-.3px;font-variant-numeric:tabular-nums}
 #searchview .srx-mrow .pr span{display:block;font-size:10px;color:var(--mut);margin-top:1px;white-space:nowrap}
 #searchview .srx-mrow .pr span.ok{color:var(--ok-txt)}
-#searchview .srx-mrow .op{width:26px;height:26px;padding:0;box-sizing:border-box;border:1px solid transparent;border-radius:5px;background:transparent;color:var(--mut);
+#searchview .srx-mrow .op{width:26px;height:26px;padding:0;box-sizing:border-box;border:1px solid transparent;border-radius:var(--r3);background:transparent;color:var(--mut);
  display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
 #searchview .srx-mrow .op:hover{border-color:var(--line2);color:var(--blue)}
 #searchview .srx-mrow .op svg{width:13px;height:13px;display:block}
@@ -4104,15 +4459,15 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-mempty{padding:20px 10px;text-align:center;color:var(--mut);font-size:10px;line-height:1.6;border:1px dashed var(--line2);border-radius:7px}
 #searchview .srx-mempty b{display:block;color:var(--tx2);font-size:11px;margin-bottom:4px}
 #searchview .srx-mdet .h{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:7px}
-#searchview .srx-mdet .h b{font-family:var(--srx-mono);font-size:15px}
+#searchview .srx-mdet .h b{font-family:var(--srx-mono);font-size:16px}
 #searchview .srx-mdet .h span{display:block;font-size:10px;color:var(--mut);margin-top:3px}
-#searchview .srx-mdet .h .price{font-family:var(--srx-mono);font-size:19px;color:var(--tx);font-variant-numeric:tabular-nums}
+#searchview .srx-mdet .h .price{font-family:var(--srx-mono);font-size:18px;color:var(--tx);font-variant-numeric:tabular-nums}
 #searchview .srx-mdet .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 9px}
 #searchview .srx-mdet .kv{display:flex;align-items:baseline;justify-content:space-between;gap:5px;font-size:10px;line-height:1.6;border-bottom:1px dotted var(--line);padding-bottom:3px}
 #searchview .srx-mdet .kv span{color:var(--mut);white-space:nowrap}
 #searchview .srx-mdet .kv b{font-family:var(--srx-mono);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #searchview .srx-mdet .acts{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}
-#searchview .srx-mdet .acts button{height:27px;padding:0 8px;border:1px solid var(--line2);border-radius:5px;background:transparent;color:var(--tx2);font-size:10px;cursor:pointer}
+#searchview .srx-mdet .acts button{height:27px;padding:0 8px;border:1px solid var(--line2);border-radius:var(--r3);background:transparent;color:var(--tx2);font-size:10px;cursor:pointer}
 #searchview .srx-mdet .acts button:hover{border-color:var(--blue);color:var(--blue)}
 #searchview .srx-mfoot{font-size:10px;color:var(--mut);line-height:1.55;margin-top:8px;border-top:1px dashed var(--line);padding-top:6px}
 #searchview .srx-four{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
@@ -4131,19 +4486,22 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
  padding:12px 14px;border-bottom:1px solid var(--line);position:relative;z-index:7;background:var(--card)}
 #searchview .srx-dtop{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;min-width:0}
 #searchview .srx-dtitle{min-width:0}
-#searchview .srx-dtitle b{font-family:var(--srx-mono);font-size:16px;font-weight:650;letter-spacing:-.3px}
+#searchview .srx-dtitle b{font-family:var(--srx-mono);font-size:16px;font-weight:600;letter-spacing:-.3px}
 #searchview .srx-dtitle span{display:block;font-size:11px;color:var(--mut);margin-top:3px;line-height:1.45}
 #searchview .srx-dtitle b{display:flex;align-items:center;flex-wrap:wrap;gap:4px}
 #searchview .srx-dtitle b span{display:inline-flex!important;margin-top:0;font-size:inherit;color:inherit;line-height:1.2}
 #searchview .srx-dprice{text-align:right;flex:none;margin-left:auto}
-#searchview .srx-dprice b{font-family:var(--srx-mono);font-size:23px;font-weight:700;line-height:1;letter-spacing:-.8px;font-variant-numeric:tabular-nums}
+#searchview .srx-dprice b{font-family:var(--srx-mono);font-size:18px;font-weight:700;line-height:1;letter-spacing:-.8px;font-variant-numeric:tabular-nums}
 #searchview .srx-dprice span{display:block;font-size:10px;color:var(--mut);margin-top:4px}
 #searchview .srx-dprice span.ok{color:var(--ok-txt);font-weight:600}
 #searchview .srx-dacts{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}
-#searchview .srx-dacts button{height:28px;padding:0 9px;border:1px solid var(--line2);border-radius:6px;background:transparent;
- color:var(--tx2);font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:4px}
+/* 弹层动作按钮与全站次级按钮同族：12px/600、圆角 r3、浅面底、无边框。
+   旧样式是 11px/400 描边透明底，和同页「刷新/导出」看着像两个组件。 */
+#searchview .srx-dacts button{height:28px;padding:0 10px;border:0;border-radius:var(--r3);
+ background:var(--r-surface-2);color:var(--r-ink-2);font-size:12px;font-weight:600;
+ cursor:pointer;display:inline-flex;align-items:center;gap:4px}
 #searchview .srx-dacts button svg{width:13px;height:13px;flex:none}
-#searchview .srx-dacts button:hover{border-color:var(--blue);color:var(--blue)}
+#searchview .srx-dacts button:hover{background:var(--r-surface-3);color:var(--r-ink)}
 #searchview .srx-dacts .primary{background:var(--fill);border-color:transparent;color:#fff;font-weight:600}
 #searchview .srx-dacts .primary:hover{background:var(--fill2);color:#fff}
 #searchview .srx-close{width:30px;height:30px;border:1px solid var(--line2);border-radius:7px;background:transparent;color:var(--tx2);
@@ -4175,9 +4533,9 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-f .n{color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #searchview .srx-f .v,#searchview .srx-f .mir{font-family:var(--srx-mono);font-size:10px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #searchview .srx-f .v.miss,#searchview .srx-f .mir.miss{color:var(--mut);font-style:italic}
-#searchview .srx-f .r{font-family:var(--srx-mono);font-size:9px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+#searchview .srx-f .r{font-family:var(--srx-mono);font-size:10px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 #searchview .srx-fst{display:inline-flex;align-items:center;justify-content:center;height:18px;padding:0 4px;border-radius:4px;
- border:1px solid var(--line);font-size:9px;white-space:nowrap}
+ border:1px solid var(--line);font-size:10px;white-space:nowrap}
 #searchview .srx-fst.ok{color:var(--ok-txt);background:var(--okbg);border-color:rgba(var(--okrgb),.25)}
 #searchview .srx-fst.miss{color:var(--warn-deep);background:var(--warnbg);border-color:var(--warnbd)}
 #searchview .srx-fst.none,#searchview .srx-fst.wait{color:var(--mut)}
@@ -4196,7 +4554,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-rawempty{padding:12px;border:1px dashed var(--line2);border-radius:6px;color:var(--mut);font-size:10px;text-align:center;line-height:1.55}
 #searchview .srx-prov{display:flex;flex-direction:column;gap:4px;font-size:10px;color:var(--tx2)}
 #searchview .srx-prov .row{display:grid;grid-template-columns:64px minmax(0,1fr);gap:7px;align-items:baseline;min-width:0}
-#searchview .srx-prov .k{font-family:var(--srx-mono);font-size:9px;color:var(--mut);letter-spacing:var(--ls1);text-transform:uppercase}
+#searchview .srx-prov .k{font-family:var(--srx-mono);font-size:10px;color:var(--mut);letter-spacing:var(--ls1);text-transform:uppercase}
 #searchview .srx-prov .v{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px}
 #searchview .srx-prov .v.mono{font-family:var(--srx-mono);font-size:10px}
 #searchview .srx-prov .u{color:var(--blue)}
@@ -4217,7 +4575,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-cmprow:hover{border-color:var(--line2);background:var(--hover)}
 #searchview .srx-cmprow.on{border-color:var(--blue);box-shadow:inset 2px 0 0 var(--blue)}
 #searchview .srx-cmprow .p{width:20px;height:20px;border-radius:5px;background:var(--pc,var(--mut));color:#fff;display:inline-flex;
- align-items:center;justify-content:center;font-size:9px}
+ align-items:center;justify-content:center;font-size:10px}
 #searchview .srx-cmprow{color:var(--tx)}
 #searchview .srx-cmprow .m b{display:block;font-size:11px;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #searchview .srx-cmprow .m span{display:block;font-size:10px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
@@ -4236,7 +4594,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-calcell:hover{border-color:var(--line2);background:var(--hover)}
 #searchview .srx-calcell.sel{border-color:var(--blue);box-shadow:inset 0 0 0 1px var(--blue)}
 #searchview .srx-calcell.miss{opacity:.55;border-style:dashed;cursor:pointer}
-#searchview .srx-calcell .d{display:block;font-family:var(--srx-mono);font-size:9px;color:var(--mut);white-space:nowrap}
+#searchview .srx-calcell .d{display:block;font-family:var(--srx-mono);font-size:10px;color:var(--mut);white-space:nowrap}
 #searchview .srx-calcell b{display:block;font-family:var(--srx-mono);font-size:10px;margin-top:2px}
 #searchview .srx-calcell.low b{color:var(--ok-txt)}
 #searchview .srx-calnote{font-size:10px;color:var(--mut);margin-top:6px;line-height:1.55}
@@ -4247,7 +4605,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-savebar .save{height:28px;padding:0 10px;border:1px solid transparent;border-radius:5px;background:var(--fill);color:#fff;font-size:11px;font-weight:600;cursor:pointer}
 #searchview .srx-savebar .prog{font-family:var(--srx-mono);font-size:10px;color:var(--mut);white-space:nowrap}
 #searchview .srx-savebar .nav{display:flex;gap:2px}
-#searchview .srx-savebar .nav button{height:30px;width:30px;padding:0;border:1px solid var(--line2);border-radius:5px;background:transparent;color:var(--tx2);cursor:pointer;line-height:1}
+#searchview .srx-savebar .nav button{height:30px;width:30px;padding:0;border:1px solid var(--line2);border-radius:var(--r3);background:transparent;color:var(--tx2);cursor:pointer;line-height:1}
 
 /* 校准册 / 通用弹层 */
 #searchview .srx-galmask,#searchview .srx-dmask{display:none;position:fixed;inset:0;background:rgba(3,8,15,.55);z-index:91;backdrop-filter:blur(2px)}
@@ -4259,10 +4617,10 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-galhead{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 13px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--card);z-index:3}
 #searchview .srx-galhead b{font-size:14px}
 #searchview .srx-galhead span{font-size:10px;color:var(--mut)}
-#searchview .srx-galhead .x{margin-left:auto;width:36px;height:36px;border:1px solid var(--line2);border-radius:7px;background:transparent;color:var(--tx2);cursor:pointer;font-size:15px}
+#searchview .srx-galhead .x{margin-left:auto;width:36px;height:36px;border:1px solid var(--line2);border-radius:7px;background:transparent;color:var(--tx2);cursor:pointer;font-size:14px}
 #searchview .srx-galrail{display:flex;align-items:center;gap:3px;padding:7px 13px;border-bottom:1px solid var(--line);overflow-x:auto;position:sticky;top:52px;background:var(--card);z-index:2}
 #searchview .srx-galview{display:flex;align-items:center;gap:3px;padding:6px 13px;border-bottom:1px solid var(--line);background:var(--srx-soft);position:sticky;top:96px;z-index:2}
-#searchview .srx-galview button{height:27px;padding:0 9px;border:1px solid var(--line);border-radius:5px;background:transparent;color:var(--tx2);font-size:10px;cursor:pointer}
+#searchview .srx-galview button{height:27px;padding:0 9px;border:1px solid var(--line);border-radius:var(--r3);background:transparent;color:var(--tx2);font-size:10px;cursor:pointer}
 #searchview .srx-galview button.on{background:var(--fill);border-color:transparent;color:#fff;font-weight:600}
 #searchview .srx-galframe{padding:10px 13px 14px;min-height:240px}
 #searchview .srx-modal{display:none;position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:92;
@@ -4272,7 +4630,7 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-modal-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 13px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--card);z-index:2}
 #searchview .srx-modal-h b{font-size:14px}
 #searchview .srx-modal-h span{font-size:10px;color:var(--mut)}
-#searchview .srx-modal-h .x{margin-left:auto;width:36px;height:36px;border:1px solid var(--line2);border-radius:7px;background:transparent;color:var(--tx2);cursor:pointer;font-size:15px}
+#searchview .srx-modal-h .x{margin-left:auto;width:36px;height:36px;border:1px solid var(--line2);border-radius:7px;background:transparent;color:var(--tx2);cursor:pointer;font-size:14px}
 #searchview .srx-modal-b{padding:12px 14px 16px}
 #searchview .srx-health{width:100%;border-collapse:collapse;font-size:10px;min-width:560px}
 @media(max-width:760px){
@@ -4300,8 +4658,8 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-snap{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:7px;align-items:center;
  border:1px solid var(--line);border-radius:6px;padding:7px 9px;background:var(--srx-soft)}
 #searchview .srx-snap b{font-size:10px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#searchview .srx-snap span{font-size:9px;color:var(--mut);font-family:var(--srx-mono)}
-#searchview .srx-snap button{height:26px;padding:0 8px;border:1px solid var(--line2);border-radius:5px;background:transparent;color:var(--tx2);font-size:10px;cursor:pointer}
+#searchview .srx-snap span{font-size:10px;color:var(--mut);font-family:var(--srx-mono)}
+#searchview .srx-snap button{height:26px;padding:0 8px;border:1px solid var(--line2);border-radius:var(--r3);background:transparent;color:var(--tx2);font-size:10px;cursor:pointer}
 #searchview .srx-snap button:hover{border-color:var(--blue);color:var(--blue)}
 #searchview .srx-footnote{display:flex;align-items:flex-start;gap:9px;margin-top:12px;padding:9px 11px;border:1px solid var(--line);
  border-radius:8px;background:var(--srx-soft);color:var(--mut);font-size:10px;line-height:1.6}
@@ -4336,7 +4694,7 @@ html[data-density="compact"] #searchview .srx-exp{display:none}
  #searchview .srx-mirror .srx-mbody{overflow:visible}
  #searchview .srx-mirror .srx-mlist{max-height:46vh;overflow:auto}
  #searchview .srx-mtabs{display:flex;gap:4px;background:var(--bg);padding:4px 0 8px}
- #searchview .srx-mtabs button{height:29px;padding:0 11px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--tx2);font-size:10px;cursor:pointer}
+ #searchview .srx-mtabs button{height:29px;padding:0 11px;border:1px solid var(--line);border-radius:var(--r3);background:var(--card);color:var(--tx2);font-size:10px;cursor:pointer}
  #searchview .srx-mtabs button.on{background:var(--fill);border-color:transparent;color:#fff;font-weight:600}
  #searchview .srx-grid.mtab-mirror .srx-list{display:none}
  #searchview .srx-grid.mtab-list .srx-mirror{display:none}
@@ -4345,7 +4703,7 @@ html[data-density="compact"] #searchview .srx-exp{display:none}
 @media(max-width:980px){
  #searchview .srx-grid{grid-template-columns:1fr}
  #searchview .srx-mtabs{display:flex;gap:4px;background:var(--bg);padding:4px 0 8px}
- #searchview .srx-mtabs button{height:29px;padding:0 11px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--tx2);font-size:10px;cursor:pointer}
+ #searchview .srx-mtabs button{height:29px;padding:0 11px;border:1px solid var(--line);border-radius:var(--r3);background:var(--card);color:var(--tx2);font-size:10px;cursor:pointer}
  #searchview .srx-mtabs button.on{background:var(--fill);border-color:transparent;color:#fff;font-weight:600}
  #searchview .srx-grid .srx-list,#searchview .srx-grid .srx-mirror{display:block}
  #searchview .srx-grid.mtab-mirror .srx-list{display:none}
@@ -4361,28 +4719,33 @@ html[data-density="compact"] #searchview .srx-exp{display:none}
  #searchview .srx-dgrid{grid-template-columns:1fr}
 }
 @media(max-width:1100px){
- #searchview .srx-mobilebar{display:flex;align-items:center;gap:5px;flex-wrap:wrap;background:var(--card);border:1px solid var(--line);border-radius:7px;padding:6px 9px;margin:0 0 8px}
- #searchview .srx-mbtn{height:26px;padding:0 9px;border:1px solid var(--line2);border-radius:5px;background:transparent;color:var(--tx2);font-size:10px;cursor:pointer}
+ #searchview .srx-mobilebar{display:flex;align-items:center;gap:5px;flex-wrap:nowrap;overflow-x:auto;
+  background:var(--card);border:1px solid var(--line);border-radius:7px;padding:6px 9px;margin:0 0 8px}
+ #searchview .srx-mbtn{height:26px;padding:0 9px;border:1px solid var(--line2);border-radius:var(--r3);background:transparent;color:var(--tx2);font-size:10px;cursor:pointer}
  #searchview .srx-mbtn[aria-expanded="true"]{background:var(--fill);border-color:transparent;color:#fff;font-weight:600}
- #searchview .srx-msum{margin-left:auto;font-family:var(--srx-mono);font-size:10px;color:var(--mut);white-space:nowrap}
- #searchview:not(.show-overview) .srx-band,#searchview:not(.show-overview) .srx-brief,#searchview:not(.show-overview) .srx-audit{display:none}
+ #searchview .srx-msum{margin-left:auto;font-family:var(--srx-mono);font-size:10px;color:var(--mut);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1 1 0;text-align:right}
+ /* r387：价带头右侧已是唯一开合钮（两种形态同一个动作），
+    移动栏再放一颗「展开概览」= 同屏两个同名入口，用户实报
+    「重复且廉价」。移动栏只保留筛选/矩阵，概览交给价带头。 */
+ #searchview .srx-mobilebar [data-mobile="overview"]{display:none!important}
  #searchview:not(.show-filters) .srx-context{display:none}
  #searchview .srx-probe:not(.open) .srx-probeform,#searchview .srx-probe:not(.open) .srx-probestatus{display:none}
 }
 #searchview .srx-restore{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--srx-soft);font-size:11px;color:var(--tx2)}
 #searchview .srx-restore[hidden]{display:none}
-#searchview .srx-restore b{color:var(--tx);font-weight:650;white-space:nowrap}
+#searchview .srx-restore b{color:var(--tx);font-weight:600;white-space:nowrap}
 #searchview .srx-restore span{min-width:0;flex:1;overflow-wrap:anywhere}
-#searchview .srx-restore button{height:26px;padding:0 9px;border:1px solid var(--ctlbd);border-radius:6px;background:var(--card);color:var(--blue);font-size:11px;cursor:pointer;white-space:nowrap}
+#searchview .srx-restore button{height:26px;padding:0 9px;border:1px solid var(--ctlbd);border-radius:var(--r3);background:var(--card);color:var(--blue);font-size:11px;cursor:pointer;white-space:nowrap}
 #searchview .srx-taskbtn{height:26px;padding:0 9px;border:1px solid var(--line2);border-radius:6px;background:var(--card);color:var(--tx2);font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:5px}
 #searchview .srx-taskbtn b{font-family:var(--srx-mono);font-size:11px;color:var(--blue)}
 .chlinks{margin-top:0}
 .chlfoot{margin-top:5px;font-size:10px;color:var(--mut)}
-.chboard{display:flex;flex-direction:column;gap:5px;margin-top:5px}
+.chboard{display:flex;flex-direction:column;gap:6px;margin-top:6px}
 .chband{display:grid;grid-template-columns:156px minmax(0,1fr);gap:8px;padding:7px 9px 7px 10px;border:1px solid var(--line);border-left:3px solid var(--chc,var(--line2));border-radius:var(--r10);background:var(--card)}
 .chband-id{display:flex;flex-direction:column;justify-content:center;gap:3px;min-width:0}
 .chband-name{display:flex;align-items:center;gap:6px;min-width:0;font-size:12px;color:var(--tx)}
-.chband-name b{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chband-name b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chdot{width:6px;height:6px;border-radius:50%;background:var(--mut);flex:none}
 .chdot.ok{background:var(--green)}.chdot.warn{background:var(--orange)}.chdot.bad{background:var(--red)}
 .chband-meta{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
@@ -4403,9 +4766,9 @@ a.chlink:hover{border-color:var(--ctlbd);background:var(--bg2);color:var(--blue)
 .chlink.off{background:var(--bg2);color:var(--mut);border-style:dashed}
 .chlink-top{display:flex;align-items:baseline;gap:4px;min-width:0}
 .chlink-top b{font-size:11px;font-weight:600;white-space:nowrap}
-.chlink-go{margin-left:auto;font-size:9px;color:var(--mut);white-space:nowrap}
+.chlink-go{margin-left:auto;font-size:10px;color:var(--mut);white-space:nowrap}
 .chlink-note{font-size:10px;line-height:1.35;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.chlink-auth{display:inline-flex;align-items:center;height:16px;padding:0 5px;border:1px solid var(--line2);border-radius:var(--pill);background:var(--bg2);color:var(--mut);font-size:9px;font-weight:600;white-space:nowrap;align-self:flex-start}
+.chlink-auth{display:inline-flex;align-items:center;height:16px;padding:0 5px;border:1px solid var(--line2);border-radius:var(--pill);background:var(--bg2);color:var(--mut);font-size:10px;font-weight:600;white-space:nowrap;align-self:flex-start}
 .chlink-auth.req{border-color:var(--warnbd);background:var(--warnbg);color:var(--warn-deep)}
 .chlink-auth.opt{border-color:var(--line2);background:var(--bg2);color:var(--mut)}
 .chlink:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
@@ -4421,7 +4784,7 @@ a.chlink:hover{border-color:var(--ctlbd);background:var(--bg2);color:var(--blue)
  .chlink-note{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
 }
 #searchview .srx-sp{margin:6px 0 0;border:1px solid var(--line);border-radius:var(--r10);background:var(--card);padding:7px 10px}
-#searchview .srx-sp>summary{cursor:pointer;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--tx);font-weight:650}
+#searchview .srx-sp>summary{cursor:pointer;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--tx);font-weight:600}
 #searchview .srx-sp>summary em{font-style:normal;font-weight:400;font-size:11px;color:var(--mut)}
 #searchview .srx-sp>summary span{margin-left:auto;font-size:10px;color:var(--mut)}
 #searchview .srx-spbody{margin-top:6px}
@@ -4430,14 +4793,14 @@ a.chlink:hover{border-color:var(--ctlbd);background:var(--bg2);color:var(--blue)
 #searchview .srx-taskpanel{border-top:1px dashed var(--line);margin-top:6px;padding-top:6px}
 #searchview .srx-taskpanel[hidden]{display:none}
 #searchview .srx-task-sum{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--tx2);min-height:26px}
-#searchview .srx-task-live{display:inline-flex;align-items:center;gap:6px;color:var(--tx);font-weight:650;white-space:nowrap}
+#searchview .srx-task-live{display:inline-flex;align-items:center;gap:6px;color:var(--tx);font-weight:600;white-space:nowrap}
 #searchview .srx-task-live i{width:7px;height:7px;border-radius:50%;background:var(--blue);flex:none}
 #searchview .srx-task-live.done i{background:var(--ok)}#searchview .srx-task-live.err i{background:var(--bad)}#searchview .srx-task-live.warn i{background:var(--warn)}
 #searchview .srx-task-cond{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:46vw;color:var(--tx2)}
 #searchview .srx-task-nums{font-family:var(--srx-mono);font-size:11px;color:var(--tx);white-space:nowrap}
 #searchview .srx-task-time{font-family:var(--srx-mono);font-size:11px;color:var(--mut);white-space:nowrap}
 #searchview .srx-task-sp{flex:1}
-#searchview .srx-task-sum button{height:26px;padding:0 9px;border:1px solid var(--line2);border-radius:6px;background:var(--card);color:var(--tx2);font-size:11px;cursor:pointer}
+#searchview .srx-task-sum button{height:26px;padding:0 9px;border:1px solid var(--line2);border-radius:var(--r3);background:var(--card);color:var(--tx2);font-size:11px;cursor:pointer}
 #searchview .srx-task-sum button.warn{color:var(--warn-deep);border-color:var(--warnbd)}
 #searchview .srx-task-sum button:hover{border-color:var(--blue);color:var(--blue)}
 #searchview .srx-challenges{display:flex;flex-direction:column;gap:4px;margin-top:5px}
@@ -4447,14 +4810,14 @@ a.chlink:hover{border-color:var(--ctlbd);background:var(--bg2);color:var(--blue)
 #searchview .srx-ch.ok{border-color:var(--okbd)}
 #searchview .srx-ch.bad{border-color:var(--badbd)}
 #searchview .srx-ch-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;color:var(--tx)}
-#searchview .srx-ch-head b{font-weight:650}
+#searchview .srx-ch-head b{font-weight:600}
 #searchview .srx-ch-st{font-size:10px;padding:1px 6px;border-radius:var(--pill);border:1px solid var(--line2);color:var(--tx2);white-space:nowrap}
 #searchview .srx-ch-st.warn{color:var(--warn-deep);border-color:var(--warnbd);background:var(--warnbg)}
 #searchview .srx-ch-st.ok{color:var(--ok-txt);border-color:var(--okbd);background:var(--okbg)}
 #searchview .srx-ch-st.bad{color:var(--bad-txt);border-color:var(--badbd);background:var(--badbg)}
 #searchview .srx-ch-meta{font-size:11px;color:var(--tx2);min-width:0;overflow-wrap:anywhere}
 #searchview .srx-ch-acts{display:flex;gap:6px;flex-wrap:wrap}
-#searchview .srx-ch-acts button{height:26px;padding:0 9px;border:1px solid var(--line2);border-radius:6px;background:var(--card);color:var(--tx2);font-size:11px;cursor:pointer}
+#searchview .srx-ch-acts button{height:26px;padding:0 9px;border:1px solid var(--line2);border-radius:var(--r3);background:var(--card);color:var(--tx2);font-size:11px;cursor:pointer}
 #searchview .srx-ch-acts button:hover{border-color:var(--blue);color:var(--blue)}
 #searchview .srx-ch-acts button.quiet{color:var(--mut)}
 #searchview .srx-ch-acts button[disabled]{opacity:.55;cursor:default}
@@ -4518,21 +4881,26 @@ a.chlink:hover{border-color:var(--ctlbd);background:var(--bg2);color:var(--blue)
  #searchview .srx-kpi .s{margin-top:1px}
  #searchview .srx-context{padding:3px 8px}
  #searchview .srx-line{padding:1px 0}
- #searchview .srx-chip{min-height:24px}
+ #searchview .srx-chip{min-height:25px}
 }
 @media(max-width:900px){
  #searchview .srx-brief{display:flex;overflow-x:auto;padding-bottom:4px}
  #searchview .srx-brief .srx-src{flex:0 0 148px}
 }
 @media(max-width:760px){
- #searchview .srx-mobilebar{display:flex;align-items:center;gap:5px;flex-wrap:wrap;background:var(--card);border:1px solid var(--line);border-radius:7px;padding:5px 8px;margin:0 0 8px}
- #searchview .srx-mbtn{height:26px;padding:0 9px;border:1px solid var(--line2);border-radius:5px;background:transparent;color:var(--tx2);font-size:10px;cursor:pointer}
+ #searchview .srx-mobilebar{display:flex;align-items:center;gap:5px;flex-wrap:nowrap;overflow-x:auto;
+  background:var(--card);border:1px solid var(--line);border-radius:7px;padding:5px 8px;margin:0 0 8px}
+
  #searchview .srx-mbtn[aria-expanded="true"]{background:var(--fill);border-color:transparent;color:#fff;font-weight:600}
- #searchview .srx-msum{margin-left:auto;font-family:var(--srx-mono);font-size:10px;color:var(--mut);white-space:nowrap}
- #searchview:not(.show-overview) .srx-band,#searchview:not(.show-overview) .srx-brief,#searchview:not(.show-overview) .srx-audit{display:none}
+ #searchview .srx-msum{margin-left:auto;font-family:var(--srx-mono);font-size:10px;color:var(--mut);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1 1 0;text-align:right}
+ /* r387：价带头右侧已是唯一开合钮（两种形态同一个动作），
+    移动栏再放一颗「展开概览」= 同屏两个同名入口，用户实报
+    「重复且廉价」。移动栏只保留筛选/矩阵，概览交给价带头。 */
+ #searchview .srx-mobilebar [data-mobile="overview"]{display:none!important}
  #searchview:not(.show-filters) .srx-context{display:none}
  #searchview .srx-probe:not(.open) .srx-probeform,#searchview .srx-probe:not(.open) .srx-probestatus{display:none}
- #searchview .srx-chip{min-height:28px}
+ #searchview .srx-chip{min-height:25px}
  #searchview .srx-rowact button{width:28px;height:28px}
  #searchview .srx-mbtn{height:28px}
  #searchview .srx-band-h .srx-axis button{height:28px}
@@ -4560,7 +4928,10 @@ a.chlink:hover{border-color:var(--ctlbd);background:var(--bg2);color:var(--blue)
  #searchview .srx-tools{width:100%;margin-left:0;padding-top:3px}
  #searchview .srx-tools input[type=text]{flex:1 1 150px;width:auto;min-width:120px}
  #searchview .srx-fmore{grid-template-columns:1fr 1fr}
- #searchview .srx-row{grid-template-columns:26px minmax(0,1fr) auto 118px;grid-template-areas:"p f price act" "p t price act" "p b b act";gap:4px 6px;padding:8px 9px 8px 10px}
+ /* r386：每行都是独立 grid 容器，价格列用 auto 会按本行内容算宽——
+     长价行比短价行宽 17px，行间价格左缘参差。固定列宽 + 右对齐。 */
+ #searchview .srx-row{grid-template-columns:26px minmax(0,1fr) 86px 118px;grid-template-areas:"p f price act" "p t price act" "p b b act";gap:4px 6px;padding:8px 9px 8px 10px}
+ #searchview .srx-price{text-align:right;min-width:0}
  #searchview .srx-badges{padding-right:0}
  #searchview .srx-plat{grid-area:p;align-self:start;width:26px;height:26px}
  #searchview .srx-fl{grid-area:f}
@@ -4603,7 +4974,7 @@ a.chlink:hover{border-color:var(--ctlbd);background:var(--bg2);color:var(--blue)
  #searchview .srx-kpi .v{font-size:17px}
  #searchview .srx-fmore{grid-template-columns:1fr}
  #searchview .srx-ladder{grid-template-columns:1fr 1fr}
- #searchview .srx-calcell .d{font-size:9px}
+ #searchview .srx-calcell .d{font-size:10px}
  #searchview .srx-calcell b{font-size:10px}
  #searchview .srx-band-days .srx-empty{position:sticky;left:0;justify-self:start;width:calc(100vw - 52px);max-width:100%}
  #searchview .srx-fhead,#searchview .srx-f{grid-template-columns:60px minmax(0,1fr) 38px;grid-template-areas:"n v st" "n mir st"}
@@ -4613,7 +4984,7 @@ a.chlink:hover{border-color:var(--ctlbd);background:var(--bg2);color:var(--blue)
  #searchview .srx-f .v{grid-area:v}
  #searchview .srx-fst{grid-area:st;justify-self:end}
  #searchview .srx-dtitle b{font-size:13px}
- #searchview .srx-dprice b{font-size:19px}
+ #searchview .srx-dprice b{font-size:18px}
  #searchview .srx-savebar .prog{display:none}
 }
 @media(prefers-reduced-motion:reduce){
@@ -4671,21 +5042,29 @@ a.chlink:hover{border-color:var(--ctlbd);background:var(--bg2);color:var(--blue)
 #searchview input:focus-visible,#searchview select:focus-visible,#searchview textarea:focus-visible{
  outline:2px solid var(--blue);outline-offset:1px;border-color:transparent}
 #searchview button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
-#searchview .srx-citygroup{padding:5px 7px 3px;font-size:9px;letter-spacing:var(--ls1);text-transform:uppercase;color:var(--mut)}
+#searchview .srx-citygroup{padding:5px 7px 3px;font-size:10px;letter-spacing:var(--ls1);text-transform:uppercase;color:var(--mut)}
 #searchview .srx-cityopt{display:flex;align-items:center;gap:7px;width:100%;min-height:32px;padding:4px 7px;border:0;border-radius:6px;
  background:transparent;color:var(--tx2);text-align:left;cursor:pointer}
 #searchview .srx-cityopt:hover,#searchview .srx-cityopt.active{background:var(--hover);color:var(--tx)}
 #searchview .srx-cityopt b{font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#searchview .srx-cityopt .c{font-family:var(--srx-mono);font-size:9px;color:var(--mut);flex:none}
-#searchview .srx-cityopt .r{margin-left:auto;font-size:9px;color:var(--mut);border:1px solid var(--line);border-radius:3px;padding:0 3px;flex:none}
+#searchview .srx-cityopt .c{font-family:var(--srx-mono);font-size:10px;color:var(--mut);flex:none}
+#searchview .srx-cityopt .r{margin-left:auto;font-size:10px;color:var(--mut);border:1px solid var(--line);border-radius:3px;padding:0 3px;flex:none}
 #searchview .srx-cityopt.intl .r{color:#6b4fa0;border-color:rgba(107,79,160,.3)}
 #searchview .srx-citymore{display:block;width:100%;min-height:28px;margin-top:3px;border:1px dashed var(--line2);border-radius:5px;background:transparent;
- color:var(--tx2);font-size:9px;cursor:pointer}
+ color:var(--tx2);font-size:10px;cursor:pointer}
 #searchview .srx-citymore:hover{border-color:var(--blue);color:var(--blue)}
-#searchview .srx-citynone{padding:10px 8px;font-size:9px;color:var(--mut);line-height:1.5}
+#searchview .srx-citynone{padding:10px 8px;font-size:10px;color:var(--mut);line-height:1.5}
 
 @media(min-width:981px){
  #searchview .srx-grid{height:clamp(480px,calc(100vh - 250px),760px);min-height:480px;align-items:stretch}
+ /* r473：折叠镜像后内容已 display:none（mbody 574→0），但整格仍是
+    `height:100%` + 外层 clamp 固定高，实测折叠前后 grid/list/mirror
+    三者都是 650px——留一大块空白，用户读作「收不回去」。
+    只让**镜像自己**别再吃满格：网格与列表栏保持原高（列表是滚动容器，
+    放开会把 3490px 的行全摊开、页面被撑长——实测过，比原问题更糟），
+    镜像收到工具条高度即可。 */
+ #searchview .srx-grid:has(.srx-mirror.srx-folded){align-items:start}
+ #searchview .srx-mirror.srx-folded{height:auto!important;max-height:none!important}
  #searchview .srx-list,#searchview .srx-mirror{height:100%;min-height:0;display:flex;flex-direction:column;overflow:hidden}
  #searchview .srx-mirror{position:static;top:auto;max-height:none;z-index:auto}
  #searchview .srx-rows{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain}
@@ -4743,7 +5122,7 @@ html[data-theme="dark"] #searchview .srx-wcount{color:var(--blue)}
 #searchview .srx-wtoolbar b{font-size:12px}
 #searchview .srx-wtoolbar span{font-size:11px;color:var(--mut)}
 #searchview .srx-wtoolbar .sp{margin-left:auto}
-#searchview .srx-wtoolbar button{height:28px;padding:0 9px;border:1px solid var(--line2);border-radius:6px;background:var(--card);
+#searchview .srx-wtoolbar button{height:28px;padding:0 9px;border:1px solid var(--line2);border-radius:var(--r3);background:var(--card);
  color:var(--tx2);font-size:11px;cursor:pointer}
 #searchview .srx-wtoolbar button:hover{border-color:var(--blue);color:var(--blue)}
 #searchview .srx-wroutes{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin:0 0 8px}
@@ -4751,13 +5130,15 @@ html[data-theme="dark"] #searchview .srx-wcount{color:var(--blue)}
  border-radius:var(--pill);background:var(--card);color:var(--tx2);font-size:11px;cursor:pointer;white-space:nowrap}
 #searchview .srx-wroute:hover{border-color:var(--line2);background:var(--hover)}
 #searchview .srx-wroute i{font-style:normal;font-family:var(--srx-mono);font-size:10px;color:var(--mut);border:1px solid var(--line);border-radius:var(--pill);min-width:17px;height:17px;display:inline-flex;align-items:center;justify-content:center;padding:0 4px}
-#searchview .srx-wroute.on{border-color:var(--blue);background:rgba(var(--blue-rgb),.07);color:var(--blue);font-weight:650}
+#searchview .srx-wroute.on{border-color:var(--blue);background:rgba(var(--blue-rgb),.07);color:var(--blue);font-weight:600}
 #searchview .srx-wroute.on i{color:var(--blue);border-color:rgba(var(--blue-rgb),.28)}
 #searchview .srx-wfilters{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin:0 0 9px}
 #searchview .srx-wfilters input,#searchview .srx-wfilters select{height:28px;border:1px solid var(--ctlbd);border-radius:6px;background:var(--card);color:var(--tx2);font-size:11px;padding:0 7px}
 #searchview .srx-wfilters input{flex:1 1 180px;max-width:280px;min-width:130px}
-#searchview .srx-wreset{height:28px;padding:0 8px;border:1px dashed var(--line2);border-radius:6px;background:transparent;color:var(--tx2);font-size:10px;cursor:pointer}
-#searchview .srx-wreset:hover{border-color:var(--blue);color:var(--blue)}
+/* 同 .cfgw-reset：清除类按钮归入次级族，不用虚线框（曾 10px 虚线，
+   与同屏 12px 软面按钮并存）。 */
+#searchview .srx-wreset{height:28px;padding:0 10px;border:0;border-radius:var(--r3);background:var(--r-surface-2);color:var(--r-ink-2);font-size:12px;font-weight:600;cursor:pointer}
+#searchview .srx-wreset:hover{background:var(--r-surface-3);color:var(--r-ink)}
 #searchview .srx-wshown{margin-left:auto;font-family:var(--srx-mono);font-size:10px;color:var(--mut);white-space:nowrap}
 #searchview .srx-wgroup{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
 #searchview .srx-wgroup>header{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:2px 2px 6px}
@@ -4774,7 +5155,7 @@ html[data-theme="dark"] #searchview .srx-wcount{color:var(--blue)}
  flex:none;background:var(--warnbg);color:var(--warn-deep);border:1px solid var(--warnbd)}
 #searchview .srx-wstar svg{width:14px;height:14px}
 #searchview .srx-wid{min-width:0;flex:1 1 260px}
-#searchview .srx-wid b{display:block;font-family:var(--srx-mono);font-size:15px;font-weight:650;letter-spacing:-.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#searchview .srx-wid b{display:block;font-family:var(--srx-mono);font-size:16px;font-weight:600;letter-spacing:-.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #searchview .srx-wid span{display:block;font-size:11px;color:var(--mut);margin-top:3px;line-height:1.45;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #searchview .srx-wstate{display:inline-flex;align-items:center;gap:5px;height:23px;padding:0 8px;border-radius:var(--pill);
  border:1px solid var(--line);background:var(--srx-soft);color:var(--mut);font-size:11px;font-weight:600;white-space:nowrap}
@@ -4785,7 +5166,7 @@ html[data-theme="dark"] #searchview .srx-wcount{color:var(--blue)}
 #searchview .srx-wstate.out{color:var(--warn-deep);border-color:var(--warnbd);background:var(--warnbg)}
 #searchview .srx-wstate.out i{background:var(--orange)}
 #searchview .srx-wprice{margin-left:auto;text-align:right;flex:none}
-#searchview .srx-wprice b{display:block;font-family:var(--srx-mono);font-size:21px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.4px}
+#searchview .srx-wprice b{display:block;font-family:var(--srx-mono);font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.4px}
 #searchview .srx-wprice span{display:block;font-size:10px;color:var(--mut);margin-top:2px;white-space:nowrap}
 #searchview .srx-wprice span.ok{color:var(--ok-txt);font-weight:600}
 #searchview .srx-wmeta{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;padding:0 12px 9px}
@@ -4795,18 +5176,18 @@ html[data-theme="dark"] #searchview .srx-wcount{color:var(--blue)}
 #searchview .srx-wcell b.ok{color:var(--ok-txt)}
 #searchview .srx-wcell b.warn{color:var(--warn-deep)}
 #searchview .srx-wchan{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:0 12px 9px;font-size:10px;color:var(--mut)}
-#searchview .srx-wchan>span{letter-spacing:var(--ls1);text-transform:uppercase;font-size:9px}
+#searchview .srx-wchan>span{letter-spacing:var(--ls1);text-transform:uppercase;font-size:10px}
 #searchview .srx-wchip{display:inline-flex;align-items:center;gap:4px;min-height:26px;padding:0 8px;border:1px solid var(--ctlbd);
  border-radius:var(--pill);background:transparent;color:var(--mut);font-size:11px;cursor:pointer;white-space:nowrap}
 #searchview .srx-wchip .dot{width:5px;height:5px;border-radius:50%;background:var(--pc,var(--mut));flex:none}
-#searchview .srx-wchip:has(input:checked){border-color:var(--ctlbd);color:var(--tx2);background:var(--srx-soft);font-weight:550}
+#searchview .srx-wchip:has(input:checked){border-color:var(--ctlbd);color:var(--tx2);background:var(--srx-soft);font-weight:600}
 #searchview .srx-wchip:has(input:checked) .dot{background:var(--pc,var(--blue));box-shadow:0 0 0 2px rgba(var(--blue-rgb),.10)}
 #searchview .srx-wchip input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 #searchview .srx-wchip:focus-within{outline:2px solid var(--blue);outline-offset:2px}
 #searchview .srx-wtarget{display:inline-flex;align-items:center;gap:4px;margin-left:auto;font-size:10px;color:var(--mut)}
 #searchview .srx-wtarget input{width:78px;height:28px;border:1px solid var(--ctlbd);border-radius:6px;background:var(--card);
  color:var(--tx);padding:0 7px;font-size:11px;font-family:var(--srx-mono)}
-#searchview .srx-wtarget button{height:28px;padding:0 8px;border:1px solid var(--line2);border-radius:6px;background:var(--card);
+#searchview .srx-wtarget button{height:28px;padding:0 8px;border:1px solid var(--line2);border-radius:var(--r3);background:var(--card);
  color:var(--tx2);font-size:10px;cursor:pointer}
 #searchview .srx-wtarget button:hover{border-color:var(--blue);color:var(--blue)}
 #searchview .srx-wtrend{margin:0 12px 9px;padding:7px 9px 5px;border:1px solid var(--line);border-radius:7px;background:var(--srx-soft)}
@@ -4815,8 +5196,8 @@ html[data-theme="dark"] #searchview .srx-wcount{color:var(--blue)}
 #searchview .srx-wtrend .lg i{width:6px;height:6px;border-radius:50%;background:var(--blue);display:inline-block;margin-right:3px}
 #searchview .srx-wtrend .empty{display:flex;align-items:center;justify-content:center;height:58px;font-size:10px;color:var(--mut);text-align:center;line-height:1.5}
 #searchview .srx-wfoot{display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:8px 12px;border-top:1px solid var(--line);background:var(--headbg)}
-#searchview .srx-wfoot .sp{margin-left:auto;font-size:9px;color:var(--mut)}
-#searchview .srx-wfoot button{height:28px;padding:0 9px;border:1px solid var(--line2);border-radius:6px;background:var(--card);
+#searchview .srx-wfoot .sp{margin-left:auto;font-size:10px;color:var(--mut)}
+#searchview .srx-wfoot button{height:28px;padding:0 9px;border:1px solid var(--line2);border-radius:var(--r3);background:var(--card);
  color:var(--tx2);font-size:11px;cursor:pointer}
 #searchview .srx-wfoot button:hover{border-color:var(--blue);color:var(--blue)}
 #searchview .srx-wfoot button.danger:hover{border-color:var(--redbd);color:var(--red);background:var(--redbg)}
@@ -5155,14 +5536,16 @@ body:has(#citypanel[style*="display: flex"]) .savebar{
  border-radius:var(--pill);background:var(--card);color:var(--tx2);font-size:12px;cursor:pointer;white-space:nowrap;transition:border-color .15s,background .15s,color .15s}
 .cfgw-route:hover{border-color:var(--line2);background:var(--hover)}
 .cfgw-route i{font-style:normal;font-family:var(--num);font-size:10px;color:var(--mut);border:1px solid var(--line);border-radius:var(--pill);min-width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;padding:0 5px}
-.cfgw-route.on{border-color:var(--blue);background:rgba(var(--blue-rgb),.07);color:var(--blue);font-weight:650}
+.cfgw-route.on{border-color:var(--blue);background:rgba(var(--blue-rgb),.07);color:var(--blue);font-weight:600}
 .cfgw-route.on i{color:var(--blue);border-color:rgba(var(--blue-rgb),.28);background:var(--card)}
 .cfgw-filters{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:0 0 10px}
 .cfgw-filters input,.cfgw-filters select{height:30px;border:1px solid var(--ctlbd);border-radius:6px;background:var(--card);color:var(--tx2);font-size:12px;padding:0 8px}
 .cfgw-filters input{flex:1 1 190px;max-width:280px;min-width:140px}
 .cfgw-filters select{max-width:158px}
-.cfgw-reset{height:30px;padding:0 9px;border:1px dashed var(--line2);border-radius:6px;background:transparent;color:var(--tx2);font-size:11px;cursor:pointer}
-.cfgw-reset:hover{border-color:var(--blue);color:var(--blue)}
+/* 「清除筛选」属次级按钮族：与同屏 .btn2 同档（12px/600/圆角 r3/软面底），
+   不再单独用虚线框——虚线在扁平语言里只表示「空位/占位」。 */
+.cfgw-reset{height:30px;padding:0 10px;border:0;border-radius:var(--r3);background:var(--r-surface-2);color:var(--r-ink-2);font-size:12px;font-weight:600;cursor:pointer}
+.cfgw-reset:hover{background:var(--r-surface-3);color:var(--r-ink)}
 .cfgw-shown{margin-left:auto;font-size:11px;color:var(--mut);font-family:var(--num);white-space:nowrap}
 .cfgw-group{margin-bottom:12px}
 .cfgw-group-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:3px 2px 7px}
@@ -5204,7 +5587,7 @@ body:has(#citypanel[style*="display: flex"]) .savebar{
 .cwf-hint{font-size:11px;line-height:1.55;color:var(--mut);flex:1 1 260px;min-width:0}
 .cwf-hint.err{color:var(--red);font-weight:600}
 .cwf-field>span.cwf-citybox{display:block;overflow:visible;white-space:normal;text-transform:none;letter-spacing:0;font-size:inherit;color:inherit}
-.cwf-field>span.cwf-quick{display:flex;overflow:visible;white-space:normal;text-transform:none;letter-spacing:0;color:var(--mut);font-size:9px;align-items:center;gap:4px;margin-top:4px}
+.cwf-field>span.cwf-quick{display:flex;overflow:visible;white-space:normal;text-transform:none;letter-spacing:0;color:var(--mut);font-size:10px;align-items:center;gap:4px;margin-top:4px}
 .ws-empty-hero{margin:0 var(--ws-pad) var(--ws-pad);padding:26px 20px;border:1px dashed var(--line2);border-radius:9px;background:linear-gradient(180deg,var(--card),var(--headbg));text-align:center}
 .ws-empty-hero b{display:block;font-size:16px;letter-spacing:-.2px;color:var(--tx)}
 .ws-empty-hero p{margin:6px auto 0;max-width:620px;font-size:11px;line-height:1.65;color:var(--mut)}
@@ -5216,7 +5599,7 @@ body:has(#citypanel[style*="display: flex"]) .savebar{
 .cw-item.out{border-style:dashed}
 .cw-head{display:flex;align-items:flex-start;gap:9px;flex-wrap:wrap;padding:10px 12px 8px}
 .cw-ident{min-width:0;flex:1 1 260px}
-.cw-ident b{display:block;font-family:var(--num);font-size:14px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cw-ident b{display:block;font-family:var(--num);font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cw-ident span{display:block;font-size:11px;color:var(--mut);margin-top:3px;line-height:1.45;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media(max-width:900px){.cw-ident span{white-space:normal;overflow:visible;text-overflow:clip}}
 .cw-state{display:inline-flex;align-items:center;gap:5px;height:23px;padding:0 8px;border-radius:var(--pill);border:1px solid var(--line);
@@ -5232,7 +5615,7 @@ body:has(#citypanel[style*="display: flex"]) .savebar{
 .cw-meta .sp{margin-left:auto}
 .cw-meta .cw-note{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:normal;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;border:1px solid var(--line);border-radius:4px;padding:0 4px}
 .cw-actions{display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:8px 12px;border-top:1px solid var(--line);background:var(--headbg)}
-.cw-actions button{height:28px;padding:0 8px;border:1px solid var(--ctlbd);border-radius:5px;background:var(--card);color:var(--tx2);font-size:11px;cursor:pointer}
+.cw-actions button{height:28px;padding:0 8px;border:1px solid var(--ctlbd);border-radius:var(--r3);background:var(--card);color:var(--tx2);font-size:11px;cursor:pointer}
 .cw-actions button:hover{border-color:var(--blue);color:var(--blue)}
 .cw-actions button.danger{color:var(--red);border-color:var(--redbd)}
 .cw-actions button.danger:hover{color:var(--red);border-color:var(--redbdh);background:var(--redbg)}
@@ -5269,8 +5652,8 @@ body:has(#citypanel[style*="display: flex"]) .savebar{
 .cwf-cityopt{display:flex;align-items:center;gap:6px;width:100%;min-height:30px;padding:4px 7px;border:0;border-radius:5px;background:transparent;color:var(--tx2);font-size:11px;text-align:left;box-shadow:none;cursor:pointer}
 .cwf-cityopt:hover,.cwf-cityopt.on{background:var(--hover);color:var(--tx);filter:none;box-shadow:none}
 .cwf-cityopt b{font-size:11px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cwf-cityopt .c{font-family:var(--num);font-size:9px;color:var(--mut);flex:none}
-.cwf-cityopt .r{margin-left:auto;font-size:9px;color:var(--mut);border:1px solid var(--line);border-radius:3px;padding:0 3px;flex:none}
+.cwf-cityopt .c{font-family:var(--num);font-size:10px;color:var(--mut);flex:none}
+.cwf-cityopt .r{margin-left:auto;font-size:10px;color:var(--mut);border:1px solid var(--line);border-radius:3px;padding:0 3px;flex:none}
 .cwf-citynone{padding:9px 7px;font-size:10px;color:var(--mut);line-height:1.5}
 .cwf-citymore{width:100%;margin-top:4px;height:32px;border:1px dashed var(--ctlbd);border-radius:6px;
  background:var(--headbg);color:var(--blue);font-size:11px;cursor:pointer}
@@ -5282,7 +5665,7 @@ body:has(#citypanel[style*="display: flex"]) .savebar{
  cursor:not-allowed;opacity:1;-webkit-text-fill-color:var(--mut)}
 .cwf-pick{padding:9px 0 0;margin-top:8px;border-top:1px dashed var(--line)}
 .cwf-pick-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:7px;min-width:0}
-.cwf-pick-h b{font-size:11px;font-weight:650}
+.cwf-pick-h b{font-size:11px;font-weight:600}
 .cwf-pick-h span{font-size:10px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cwf-pick-h .sp{margin-left:auto}
 .cwf-pick-h select#cwKnown{flex:0 1 220px;width:auto;max-width:220px;min-width:0;height:28px;border:1px solid var(--ctlbd);border-radius:6px;background:var(--card);color:var(--tx2);font-size:10px;padding:0 7px}
@@ -5295,13 +5678,13 @@ body:has(#citypanel[style*="display: flex"]) .savebar{
 .cwf-cand b{grid-area:code;font-family:var(--num);font-size:12px;white-space:normal;overflow-wrap:anywhere;line-height:1.3;min-width:0}
 .cwf-cand .tm{grid-area:time;font-family:var(--num);font-size:10px;color:var(--tx2);white-space:nowrap}
 .cwf-cand .mt{grid-area:meta;font-size:10px;color:var(--mut);white-space:normal;overflow:visible;text-overflow:clip;line-height:1.35}
-.cwf-cand .pr{grid-area:price;font-family:var(--num);font-size:14px;font-weight:650;white-space:nowrap;text-align:right}
+.cwf-cand .pr{grid-area:price;font-family:var(--num);font-size:14px;font-weight:600;white-space:nowrap;text-align:right}
 .cwf-cand .ch{grid-area:chan;font-size:10px;color:var(--mut);white-space:nowrap;text-align:right}
 .cwf-cands-empty{padding:10px 9px;border:1px dashed var(--line2);border-radius:7px;font-size:10px;color:var(--mut);line-height:1.55}
 .cwf-targetrow{display:grid;grid-template-columns:minmax(150px,.55fr) minmax(0,1.45fr);gap:9px;margin-top:9px}
 .cwf-quick{display:flex;align-items:center;gap:4px;flex-wrap:wrap;align-content:flex-start}
-.cwf-quick span{font-size:9px;color:var(--mut);white-space:nowrap}
-.cwf-quick button{height:24px;padding:0 7px;border:1px solid var(--ctlbd);border-radius:5px;background:var(--card);color:var(--tx2);font-size:10px;box-shadow:none;cursor:pointer}
+.cwf-quick span{font-size:10px;color:var(--mut);white-space:nowrap}
+.cwf-quick button{height:24px;padding:0 7px;border:1px solid var(--ctlbd);border-radius:var(--r3);background:var(--card);color:var(--tx2);font-size:10px;box-shadow:none;cursor:pointer}
 .cwf-quick button:hover{border-color:var(--blue);color:var(--blue);filter:none;box-shadow:none}
 .cwf-note{width:100%;min-height:54px;border:1px solid var(--ctlbd);border-radius:6px;background:var(--card);color:var(--tx);font:11px/1.5 inherit;padding:6px 8px;resize:vertical}
 .cwf-switches{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:9px}
@@ -5329,9 +5712,13 @@ body:has(#citypanel[style*="display: flex"]) .savebar{
  .bic>img{width:100%;height:100%;display:block;object-fit:cover}
  .bic::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
       background:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,0) 44%)}
+ /* 两类渠道图标共用同一档光环描边 .12：方形（bic-ota，落在白卡上）与
+    圆形（bic-air，自带近白径向底）底色不同，原先 .10 / .13 让同一行里
+    两种图标一浅一深（合成后与白的亮度差 23.1 vs 34.3，肉眼可辨）。
+    0.12 让两者落在 27.7 / 32.1，差 <5。 */
  .bic-ota{border-radius:calc(var(--bic) * .26);
-      box-shadow:0 0 0 1px rgba(15,23,42,.10),0 1px 2px rgba(15,23,42,.08),inset 0 0 0 1px rgba(255,255,255,.18)}
- .bic-air{border-radius:50%;background:radial-gradient(circle at 32% 22%,#fff,#f1f5fa 72%);box-shadow:0 0 0 1px rgba(15,23,42,.13),0 1px 3px rgba(15,23,42,.10),inset 0 0 0 1px rgba(15,23,42,.04)}
+      box-shadow:0 0 0 1px rgba(15,23,42,.12),0 1px 2px rgba(15,23,42,.08),inset 0 0 0 1px rgba(255,255,255,.18)}
+ .bic-air{border-radius:50%;background:radial-gradient(circle at 32% 22%,#fff,#f1f5fa 72%);box-shadow:0 0 0 1px rgba(15,23,42,.12),0 1px 3px rgba(15,23,42,.10),inset 0 0 0 1px rgba(15,23,42,.04)}
  .bic-air>img{object-fit:contain;padding:7%}
  .bic-air::before{content:"";position:absolute;inset:0;border-radius:50%;pointer-events:none;box-shadow:inset 0 0 0 1px rgba(15,23,42,.08)}
  @supports (color:color-mix(in srgb,red 50%,transparent)){.bic-air{box-shadow:0 0 0 1px color-mix(in srgb,var(--ac,#5a6c7d) 34%,transparent),0 1px 3px rgba(15,23,42,.12),inset 0 0 0 1px rgba(255,255,255,.35)}}
@@ -5339,8 +5726,8 @@ body:has(#citypanel[style*="display: flex"]) .savebar{
       line-height:var(--bic);text-align:center;border-radius:calc(var(--bic) * .26);
       background:var(--headbg);color:var(--tx2);box-shadow:inset 0 0 0 1px var(--line)}
  .bic.bic-fb::after{display:none}
- html[data-theme="dark"] .bic-ota{box-shadow:0 0 0 1px rgba(255,255,255,.16),0 1px 2px rgba(0,0,0,.45),inset 0 0 0 1px rgba(255,255,255,.10)}
- html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18),0 1px 2px rgba(0,0,0,.35),inset 0 0 0 1px rgba(255,255,255,.08)}
+ html[data-theme="dark"] .bic-ota{box-shadow:0 0 0 1px rgba(255,255,255,.17),0 1px 2px rgba(0,0,0,.45),inset 0 0 0 1px rgba(255,255,255,.10)}
+ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.17),0 1px 2px rgba(0,0,0,.35),inset 0 0 0 1px rgba(255,255,255,.08)}
  .bic-air.bic-iata{display:inline-flex;align-items:center;justify-content:center;background:var(--ac,#5a6c7d);
       color:#fff!important;font-size:calc(var(--bic) * .34);letter-spacing:-.2px;border-radius:50%;box-shadow:none;text-shadow:0 1px 1px rgba(0,0,0,.25)}
  /* 机型图标：真实机族上视金属剪影；共享 Sprite 渐变，16px 仍可辨机族 */
@@ -5512,6 +5899,16 @@ html[data-theme="dark"] .bic-plane{filter:none!important}
  #montabs .mtab:hover{background:var(--hover);color:var(--tx2)}
  #montabs .mtab.on{background:var(--blue);color:#fff;border-color:transparent;box-shadow:0 2px 8px -2px var(--glow)}
  #searchview .srx-hero-act{background:color-mix(in srgb,var(--line) 7%,var(--card));border-radius:var(--r10);padding:2px 5px;gap:2px}
+ /* r424：展开后 hero 文案列被压窄、工具行整体下移 12px（实测 t 160→172）——
+    「展开位置都发生了偏移」。给工具行一个与两态较高者一致的最小高度，
+    开合只改变按钮数量，不改变这一行的纵向位置。 */
+ #searchview .srx-hero-act{min-height:34px;align-items:center}
+ /* r424：hero 是 flex 行，文案列从 45→67px 时 align-items:center 会把整条
+    工具行一起往下居中 12px（实测 act.t 158→170）。让工具行贴 hero 顶部，
+    展开只让文案列向下长高，触发器纵坐标两态一致。此处有更靠后的同特异性
+    align-items 规则，必须 !important 才定得住。 */
+ #searchview .srx-hero{align-items:flex-start!important}
+ #searchview .srx-hero-act{align-self:flex-start!important}
  @media(min-width:901px){#searchview .srx-probe{padding:6px 12px 7px;margin-bottom:8px}#searchview .srx-hero{margin-bottom:6px}#searchview .srx-brief{margin-bottom:4px}#searchview .srx-context{padding:3px 10px;margin-bottom:4px}#searchview .srx-listhead{min-height:44px;padding:6px 12px}}
  #searchview .srx-hero-act .srx-btn{border-color:transparent;background:transparent;height:30px;padding:0 9px}
  #searchview .srx-hero-act .srx-btn:hover{background:var(--card);border-color:transparent;color:var(--blue);box-shadow:0 1px 2px rgba(6,12,20,.08)}
@@ -5544,6 +5941,15 @@ html[data-theme="dark"] .bic-plane{filter:none!important}
   #searchview .srx-band-days{grid-template-columns:repeat(14,56px)}
   #searchview .srx-probe:not(.open) .srx-probehead>span:not(.srx-probeacts):not(.srx-probe-mini),
   #searchview .srx-probe:not(.open) .srx-probehead>em{display:none}
+  /* r433：上面这条把收起态的「DEMO · 合成」小标整块 display:none，展开态
+     才出现——900 档实测 em 从 h=0 变成 h=24、纵向跳 256px（用户实报
+     「展开的时候 demo 合成的位置抖动偏移了」）。≤760 块里已用
+     visibility:hidden 保占位，但那条 media 不覆盖 761–900，于是这段
+     正好漏在缝里。这里同样改为「保留占位、只隐藏」，行高两态恒定。 */
+  #searchview .srx-probe:not(.open) .srx-probehead>em{display:block!important;visibility:hidden!important}
+  /* r358 契约：收起态探针必须压成一行（零下边距）。r424 修位移时曾把它
+     改成 8px 去对齐展开态——方向反了：应让展开态也归零，间距交给表单的
+     margin-top，这样既守住 r358 的紧凑，又消除开合的 8px 位移。 */
   #searchview .srx-probe:not(.open) .srx-probehead{margin-bottom:0}
   #searchview .srx-brief.xhint:not(.xend){-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 22px),transparent);mask-image:linear-gradient(to right,#000 calc(100% - 22px),transparent)}
   #searchview .srx-band-days.xhint:not(.xend){-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 22px),transparent);mask-image:linear-gradient(to right,#000 calc(100% - 22px),transparent)}
@@ -5552,7 +5958,11 @@ html[data-theme="dark"] .bic-plane{filter:none!important}
  @media(max-width:600px){
   #searchview .srx-hero-act{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px;background:transparent;padding:0}
   #searchview .srx-hero-act .srx-btn{height:32px;border-color:color-mix(in srgb,var(--line) 65%,transparent);background:var(--card);justify-content:flex-start}
-  #searchview .srx-hero-act .srx-btn:last-child{grid-column:1/-1}
+  /* r435：` :last-child{grid-column:1/-1}` 本意是让 7 个动作的最后一格铺满，
+     但「展开更多工具」正是 last-child —— 它被拉成整行 362px 宽，
+     开合后从 x=376 跳到 x=12（横移 364px）、纵向再挪 102px，同时违反
+     「位置不偏移」和「触发器不独占一行」两条约束。排除触发器。 */
+  #searchview .srx-hero-act .srx-btn:not(.srx-more-btn):last-child{grid-column:1/-1}
   .grouplab .chev{order:6;margin-left:auto}
  }
  @media(max-width:460px){
@@ -5563,6 +5973,13 @@ html[data-theme="dark"] .bic-plane{filter:none!important}
   #searchview .srx-hero-act .srx-btn{flex:0 0 auto;height:32px;
    border:1px solid color-mix(in srgb,var(--line) 65%,transparent);background:var(--card)}
   #searchview .srx-hero-act .srx-btn:last-child{grid-column:auto}
+  /* r424：展开后总宽超出视口，触发器被挤出画布（390 档 186 → 700px）。
+     绝对定位又会让它随横向滚动跑出视口并压住「刷新」。
+     定案：窄档工具栏不横滚，触发器留在行流末尾并固定在右端
+     （right:0 sticky 不需要 auto 外边距即可贴右），开合位置两态一致。 */
+  #searchview .srx-hero-act>.srx-more-btn{position:sticky;right:0;z-index:2;
+   margin:0 0 0 auto;background:var(--card)!important;
+   box-shadow:-8px 0 8px -8px rgba(16,24,40,.2)}
   /* 320 七枚航线 chip 一行一枚把走势图推到 y884：横滚保图可见 */
   #chartRoutes{flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;scrollbar-width:thin}
   #chartRoutes .chip{flex:0 0 auto}
@@ -5570,7 +5987,7 @@ html[data-theme="dark"] .bic-plane{filter:none!important}
  @media(max-width:360px){
   /* 320 航班列只剩 62px（「KY8210/…」截断）：动作列 118→2×36 网格
      75px，让出 43px 给航班号/中转/字段计量；触控仍 36px */
-  #searchview .srx-row{grid-template-columns:24px minmax(0,1fr) auto 75px;gap:4px}
+  #searchview .srx-row{grid-template-columns:24px minmax(0,1fr) 72px 75px;gap:4px}
   #searchview .srx-rowact{display:grid;grid-template-columns:repeat(2,36px);gap:3px;align-self:start}
   #searchview .srx-rowact button{width:36px;height:36px}
  }
@@ -5688,6 +6105,16 @@ html[data-theme="dark"] .bic-plane{filter:none!important}
  #searchview .srx-mbtn{font-size:11px}
  #searchview .srx-msum{font-size:11px;color:var(--tx2)}
  @media(max-width:900px){#searchview .srx-hero-act .srx-btn{font-size:12px}}
+ /* r435：601–900 这一档原来 `flex-wrap:wrap`：收起态只有 2 颗按钮、
+     展开态 9 颗，触发器被从第一行挤到第二行——实测 760 档横移 364px、
+     纵移 102px（用户原话「展开位置都发生了偏移」）。与 ≤560 档统一：
+     单行横滚 + 触发器 sticky 固定右缘，两态坐标恒等。 */
+ @media(min-width:561px) and (max-width:900px){
+  #searchview .srx-hero-act{flex-wrap:nowrap!important;overflow-x:auto!important;overflow-y:visible!important;scrollbar-width:thin}
+  #searchview .srx-hero-act .srx-btn{flex:0 0 auto!important}
+  #searchview .srx-hero-act>.srx-more-btn{position:sticky!important;right:0!important;z-index:2;
+   margin:0 0 0 auto!important;box-shadow:-8px 0 8px -8px rgba(16,24,40,.2)}
+ }
  #searchview .srx-context{padding:2px 10px;margin-bottom:2px}
  @media(min-width:901px){#searchview .srx-probe{padding:5px 12px 6px}#searchview .srx-kpi{padding:4px 8px 5px}#searchview .srx-listhead{min-height:42px}#searchview .srx-thead{min-height:27px}#searchview .srx-row{padding:8px 10px}}
  /* r359 微信式扁平：大面用底色分层，不再给每张卡描边；
@@ -5697,8 +6124,8 @@ html[data-theme="dark"] .bic-plane{filter:none!important}
  #cfgview .ractions{border-color:transparent;background:color-mix(in srgb,var(--line) 9%,var(--card))}
  #cfgview .ractions>*+*{border-left-color:transparent}
  .ws-ranges{border-color:transparent;background:color-mix(in srgb,var(--line) 7%,var(--card));padding:2px}
- .ws-ranges button{border-right:0;border-radius:5px;height:26px}
- .ws-ranges button.on{background:var(--fill);color:#fff}
+ .ws-ranges button{border-right:0;border-radius:var(--r3);height:26px}
+ .ws-ranges button.on{background:var(--r-blue-soft);color:var(--r-blue)}
 
 /* r367 文本变化不移动按钮/健康轨（v1.5.283 收口） */
 .lggrid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;align-items:stretch}
@@ -5744,7 +6171,11 @@ body{background:var(--r-canvas)!important;color:var(--r-ink);font-size:14px;line
  font-family:"Segoe UI Variable Text","Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 ::selection{background:rgba(26,99,216,.16)}
-.wrap{max-width:min(1716px,max(1180px,92vw));padding:0 clamp(12px,2.4vw,36px) 34px}
+.wrap{max-width:min(1716px,max(1180px,92vw));padding:0 clamp(12px,2.4vw,36px) 0}
+/* r390 页尾留白：wrap 的 34px 下内边距与页脚 22+10px 外间距叠加，
+   在页面最底部堆出 44px 纯背景（实测 390/1512 三视图一致）。
+   页脚自有 22px 上距 + 10px 下距，wrap 不再重复垫底。 */
+footer{margin-bottom:18px}
 #monview,#searchview,#cfgview{padding-top:12px}
 #hdcard{background:var(--r-surface)!important;border-bottom:1px solid var(--r-hair)!important;
  box-shadow:none;height:58px;min-height:58px;padding:0 clamp(12px,2.4vw,22px);margin:0 calc(-1*clamp(12px,2.4vw,22px)) 0;
@@ -5800,6 +6231,8 @@ body{background:var(--r-canvas)!important;color:var(--r-ink);font-size:14px;line
 #cfgview .ractions{border:0!important;background:transparent!important}
 #cfgview .ractions>*+*{border-left:0!important}
 #cfgview .grouplab{border:0!important;background:var(--r-surface-2)!important;box-shadow:none!important}
+#cfgview .grouplab{margin:8px 0 6px!important}
+#cfgview .cfpanel>.ucard+.ucard{margin-top:8px!important}
 #cfgview .cfgsearch{border:0!important;background:var(--r-surface-2)!important}
 #cfgview .cfgsearch:focus{background:var(--r-surface)!important;box-shadow:0 0 0 3px var(--r-blue-ring)!important}
 #cfgview .uhead2{border:0!important;background:color-mix(in srgb,var(--r-blue) 3%,var(--r-surface))!important}
@@ -5814,7 +6247,7 @@ body{background:var(--r-canvas)!important;color:var(--r-ink);font-size:14px;line
 #opscard .opsbtns>button{height:32px;border:0!important;background:var(--r-surface-2)!important;color:var(--r-ink-2);font-size:13px;font-weight:600;border-radius:9px;padding:0 13px}
 #opscard .opsbtns>button:hover{background:var(--r-surface-3)!important;color:var(--r-ink)}
 #opscard .opsbtns>button.warn{background:var(--r-surface-2)!important;color:var(--r-ink-2)}
-#searchview .srx-btn{height:30px;padding:0 10px;border:0!important;border-radius:8px;background:var(--r-surface-2)!important;
+#searchview .srx-btn{height:30px;padding:0 10px;border:0!important;border-radius:var(--r3);background:var(--r-surface-2)!important;
  color:var(--r-ink-2)!important;font-size:12px;font-weight:600;box-shadow:none;gap:5px}
 #searchview .srx-btn:hover{background:var(--r-surface-3)!important;color:var(--r-ink)!important}
 #searchview .srx-btn.ghost{background:transparent!important;color:var(--r-ink-3)!important}
@@ -5827,7 +6260,7 @@ body{background:var(--r-canvas)!important;color:var(--r-ink);font-size:14px;line
 #searchview .srx-hero-act .srx-btn.srx-keep,#searchview .srx-hero-act:not(.open) .srx-btn[data-sec].srx-keep{display:inline-flex!important}
 #searchview .srx-hero-act label{font-size:12px;color:var(--r-ink-3)}
 #searchview .srx-hero-act select{height:30px;border:0!important;background:var(--r-surface)!important;border-radius:8px;color:var(--r-ink-2);font-size:12px}
-#searchview .srx-rowact button{width:28px;height:28px;border:0!important;background:transparent!important;color:var(--r-ink-3);border-radius:7px}
+#searchview .srx-rowact button{width:28px;height:28px;border:0!important;background:transparent!important;color:var(--r-ink-3);border-radius:var(--r3)}
 #searchview .srx-rowact button:hover{background:var(--r-surface-2)!important;color:var(--r-blue)!important}
 #searchview .srx-probeform .go,#searchview .srx-probeform .exit{border:0!important;border-radius:8px;height:32px;font-size:12px}
 #searchview .srx-probeform .go{background:var(--r-blue)!important;color:#fff!important}
@@ -5836,7 +6269,7 @@ body{background:var(--r-canvas)!important;color:var(--r-ink);font-size:14px;line
 #cfgview input:not([type=checkbox]):not([type=radio]):not(.switch),#cfgview select,#cfgview textarea,
 #cwForm input[type=text],#cwForm input[type=date],#cwForm input[type=time],#cwForm select,
 .cfgw-filters input,.cfgw-filters select,.cfgsearch{
- border:0!important;border-radius:8px!important;background:var(--r-surface-2)!important;box-shadow:none!important;color:var(--r-ink)}
+ border:0!important;border-radius:var(--r3)!important;background:var(--r-surface-2)!important;box-shadow:none!important;color:var(--r-ink)}
 #searchview input:focus,#searchview select:focus,#cfgview input:not([type=checkbox]):not([type=radio]):focus,
 #cfgview select:focus,#cfgview textarea:focus,#cwForm input:focus,#cwForm select:focus,.cfgw-filters input:focus,.cfgw-filters select:focus,.cfgsearch:focus{
  outline:none!important;background:var(--r-surface)!important;box-shadow:0 0 0 3px var(--r-blue-ring)!important}
@@ -5847,7 +6280,7 @@ input[type=checkbox],input[type=radio]{accent-color:var(--r-blue)}
  background:var(--r-blue-soft)!important;color:var(--r-blue)!important;border-color:transparent!important;box-shadow:none!important}
 .rngchip:hover,.srx-chip:hover,.cfgw-route:hover{background:var(--r-surface-3)!important;color:var(--r-ink)!important}
 .rngchip.on:focus-visible{box-shadow:0 0 0 2px var(--blue)!important;outline:none!important}
-#searchview .srx-chip{font-size:12px;min-height:27px;border-radius:var(--pill);padding:0 10px}
+#searchview .srx-chip{font-size:12px;min-height:25px;border-radius:var(--pill);padding:0 10px}
 #searchview .srx-chip.on{background:var(--r-blue-soft)!important;color:var(--r-blue)!important}
 #searchview .srx-chip .n{color:inherit;opacity:.72}
 /* ---------- 顶部视图切换：轻轨 + 白片，不再整条蓝底 ---------- */
@@ -5883,21 +6316,35 @@ input[type=checkbox],input[type=radio]{accent-color:var(--r-blue)}
 .tag{font-size:11px}
 .kpi{border:0!important;background:var(--r-surface-2)!important;border-radius:var(--r-radius)!important;box-shadow:none!important}
 .kpi.hit{background:var(--r-surface)!important}
-.kpi .bar{height:3px;border-radius:var(--pill);background:var(--r-hair);margin-top:8px}
+/* r440：价格条曾是 3px 高、占父块 93~96% 宽（宽高比 100:1 ~ 204:1），
+   读作「一条通栏分割线」而不是「进度」。用户两轮都在说「有很多分割线，
+   很不干净」。改：6px 高（可读的进度条比例）、不再铺满（留右端 24px
+   呼吸 + 上边距 10px 与文字分开），并给出 240px 上限，长卡里不会拉成一根
+   横贯全宽的线。 */
+.kpi .bar{height:6px;border-radius:var(--pill);background:var(--r-hair);
+ margin:10px 0 8px;max-width:240px}
 .kpi .bar i{border-radius:var(--pill)}
 .kpi.hit .bar i{background:var(--r-green)!important}
 /* 滚动性能：320 枚 logo 的伪元素高光/多层浮影逐帧参与合成，是本地
    滚动最重的装饰层；官方 logo 本体与单圈描边保留，质感不靠叠层。 */
 .bic::after,.bic-air::before{display:none!important}
-.bic-ota{box-shadow:0 0 0 1px rgba(15,23,42,.10)!important}
-.bic-air{box-shadow:0 0 0 1px rgba(15,23,42,.13)!important}
-html[data-theme="dark"] .bic-ota{box-shadow:0 0 0 1px rgba(255,255,255,.16)!important}
-html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!important}
+/* 两类渠道图标共用同一档单圈描边（这里是生效层，压过上面的多层阴影）：
+   之前 .10 / .13（深色 .16 / .18）让同一行的方形与圆形 logo 一浅一深——
+   圆形自带近白径向底，按 .13 合成后比方形深 11 级亮度，肉眼能看出「一个
+   有边一个没边」。统一到 .12（深色 .17）：合成后与白底差 27.7 / 32.1，
+   差 <5，视觉等深。 */
+.bic-ota{box-shadow:0 0 0 1px rgba(15,23,42,.12)!important}
+.bic-air{box-shadow:0 0 0 1px rgba(15,23,42,.12)!important}
+html[data-theme="dark"] .bic-ota{box-shadow:0 0 0 1px rgba(255,255,255,.17)!important}
+html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.17)!important}
 #searchview .srx-rowact [data-expbtn]{display:none!important}
 .kpi .fb .bic{--bic:14px;margin-right:3px;vertical-align:-2px}
 .kpi .fb .bic-plane{--pic:14px;margin-right:3px;vertical-align:-3px}
 .demoBar{border:0!important;border-radius:var(--r-radius)!important;background:var(--r-amber-soft)!important;box-shadow:none!important;color:var(--r-amber)}
-#chartcard .legend{font-size:13px;gap:16px;color:var(--r-ink-2)}
+/* 图例缝 12px 与另两图同档（原 16px）：这里是 ID 选择器 (1,1,0)，
+   会压过 `.mon-legend{gap:12px}` 的 (0,1,0)，导致航线图例缝比关注/雷达宽
+   4px，实测同一行图例的项间距 16 vs 12。 */
+#chartcard .legend{font-size:12px;gap:12px;color:var(--r-ink-3)}
 #chartcard .legend b{height:3px;box-shadow:none}
 #chartcard #ringNote{font-size:12px!important;color:var(--r-ink-3)}
 #chartcard #chartRoutes .chip{height:28px}
@@ -5907,9 +6354,19 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 #calcard .calcell:hover{border-color:var(--line2)!important;background:var(--r-surface-3)}
 #calcard .calcell.best{outline:0;box-shadow:inset 0 0 0 2px var(--r-green)}
 #calcard .calcell.best.qhit{box-shadow:inset 0 0 0 2px var(--cal-best-stroke)}
-#calcard .calcell .cd{font-size:12px;color:var(--r-ink-3)}
-#calcard .calcell .cp{font-size:14px;color:var(--r-ink)}
-#calcard .calcell .cx{font-size:12px;color:var(--r-ink-3)}
+/* 日期/差价必须继承格子的 color，不能用固定灰：格子的背景是语义色 tint
+   （破线红 rgba(194,42,46,.51)、达标绿等），而 color 由 JS 按 tint 精确算过
+   （见 calgrid 渲染处注释：--tx 亮 5.22+/暗 5.70~6.97 双主题全过）。
+   这里写死 --r-ink-3 会把灰字压到红底上——实测对比度 **2.09:1**（AA 需 4.5）。 */
+#calcard .calcell .cd{font-size:12px;color:inherit}
+/* 价格同样继承格子 color：白底格子上格子 color 就是深墨（JS 设的），
+   而绿底/红底格子上是白/亮色。写死 --r-ink 会让绿底深字只有 **3.7:1**。
+   `.near`（擦边价）必须用同等特异度声明，否则这条 ID 选择器会把
+   `.calcell .cp.near{color:--warn-deep}`（注释注明双主题 4.66/4.72 过 AA）
+   整个压掉——实测 3 个擦边格确实被压成了深墨，那段校准从未生效。 */
+#calcard .calcell .cp{font-size:14px;color:inherit}
+#calcard .calcell .cp.near{color:var(--warn-deep)}
+#calcard .calcell .cx{font-size:12px;color:inherit}
 #calcard .calcell{border-radius:3px!important}   /* 数据格不是卡：保留语义色，收圆角 */
 #calcard #calStats{font-size:12px;color:var(--r-ink-3)}
 #calcard #calStats b{color:var(--r-ink)}
@@ -5923,13 +6380,13 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 #searchview .srx-eyebrow{gap:7px;font-size:12px;color:var(--r-ink-3)}
 #searchview .srx-live{background:var(--r-green-soft);color:var(--r-green);border:0;padding:2px 8px;border-radius:var(--pill);font-size:11px;font-weight:700}
 #searchview .srx-live i{background:var(--r-green)}
-#searchview .srx-hero h1{font-size:23px;letter-spacing:-.4px;margin:5px 0 3px;color:var(--r-ink)}
+#searchview .srx-hero h1{font-size:18px;letter-spacing:-.4px;margin:5px 0 3px;color:var(--r-ink)}
 #searchview .srx-hero p{font-size:13px;color:var(--r-ink-2);max-width:none}
 #searchview .srx-probe{padding:12px 14px;margin-bottom:10px;border-radius:var(--r-radius)!important}
 #searchview .srx-probehead{gap:8px;margin-bottom:8px}
 #searchview .srx-probehead b{font-size:13px;color:var(--r-ink)}
 #searchview .srx-probehead span,#searchview .srx-probehead em{font-size:12px;color:var(--r-ink-3)}
-#searchview .srx-probe-toggle{height:28px;border:0;background:var(--r-surface-2);color:var(--r-ink-2);font-size:12px;border-radius:7px}
+#searchview .srx-probe-toggle{height:28px;border:0;background:var(--r-surface-2);color:var(--r-ink-2);font-size:12px;border-radius:var(--r3)}
 #searchview .srx-probeform>label{font-size:12px;color:var(--r-ink-3)}
 #searchview .srx-probeform>label input,#searchview .srx-platpick label{background:var(--r-surface-2)}
 #searchview .srx-probestatus{font-size:12px;color:var(--r-ink-3);margin-top:8px}
@@ -5940,7 +6397,7 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 #searchview .srx-band-h .srx-axis{border:0;border-radius:8px;background:var(--r-surface-2);padding:2px}
 #searchview .srx-band-h .srx-axis button{padding:0 9px;height:26px;border:0;border-radius:6px;background:transparent}
 #searchview .srx-band-h .srx-axis button.on{background:var(--r-surface);color:var(--r-blue);box-shadow:0 1px 2px rgba(16,24,40,.08)}
-#searchview .srx-bandnav button{border:0;background:var(--r-surface-2);width:28px;height:28px;border-radius:7px}
+#searchview .srx-bandnav button{border:0;background:var(--r-surface-2);width:28px;height:28px;border-radius:var(--r3)}
 #searchview .srx-bandnav button:hover{background:var(--r-surface-3);color:var(--r-blue)}
 #searchview .srx-band .srx-day{background:var(--r-surface-2);border:0;border-radius:8px;min-height:44px}
 #searchview .srx-band .srx-day .d{font-size:11px;color:var(--r-ink-3)}
@@ -5970,7 +6427,7 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 #searchview .srx-src-a{font-size:11px;color:var(--r-ink-3)}
 #searchview .srx-kpi{padding:8px 10px}
 #searchview .srx-kpi .k{font-size:11px;color:var(--r-ink-3)}
-#searchview .srx-kpi .v{font-size:19px;color:var(--r-ink)}
+#searchview .srx-kpi .v{font-size:18px;color:var(--r-ink)}
 #searchview .srx-kpi .s{font-size:12px;color:var(--r-ink-3)}
 #searchview .srx-context{padding:6px 12px;margin-bottom:10px}
 #searchview .srx-line{padding:5px 0;gap:8px}
@@ -5984,7 +6441,15 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 #searchview .srx-listhead .cnt,#searchview .srx-listhead .meta,#searchview .srx-listhead .srx-mono{font-size:12px;color:var(--r-ink-3)}
 #searchview .srx-lhact .srx-btn{height:28px;font-size:12px}
 #searchview .srx-thead{font-size:11px;color:var(--r-ink-3);letter-spacing:.3px;background:var(--r-surface-2);border-bottom:1px solid var(--r-hair);min-height:30px}
-#searchview .srx-row{padding:11px 12px;gap:10px;border-bottom:1px solid var(--r-hair)}
+/* r433：解析列表每行都画满宽底边（1512 实测 52 条 .srx-row/.srx-mrow），
+   一排 8 行就有 8 条横线贯穿整列，整块读成一个表格框——用户反复报
+   「折叠起来了，但是有很多分割线，很不干净」「整个项目要扁平干净」。
+   此前只用 color-mix 把线压到 45% 透明，线还在，密度没变。
+   微信式列表靠「留白 + 悬停反馈」分组，不靠逐行划线：
+   去掉行线，行间距改由容器 row-gap 提供（真实间隙，
+   实测 0px → 2px；内边距保持 11px 不靠它撑间距）。
+   表头下方保留唯一一条分组线（标题/数据 的语义边界，不是逐行装饰）。 */
+#searchview .srx-row{padding:11px 12px;gap:10px;border-bottom:0}
 #searchview .srx-row:hover{background:var(--r-surface-2)}
 #searchview .srx-row.sel{background:var(--r-blue-soft)}
 #searchview .srx-fl b{font-size:14px;color:var(--r-ink)}
@@ -5995,40 +6460,56 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 #searchview .srx-fl .sub .srx-airline em{display:none}
 #searchview .srx-fl .srx-fieldmeter{display:none}
 #searchview .srx-airline{flex:none}
-#searchview .srx-times b{font-size:15px;color:var(--r-ink)}
+#searchview .srx-times b{font-size:16px;color:var(--r-ink)}
 #searchview .srx-times span{font-size:12px;color:var(--r-ink-3)}
 #searchview .srx-times i{font-size:12px}
 #searchview .srx-times .xday{font-size:11px;color:var(--r-ink-3)}
 #searchview .srx-wcount,#searchview .srx-src-h .n{font-size:11px}
-#searchview .srx-price b{font-size:19px;color:var(--r-ink)}
+#searchview .srx-price b{font-size:18px;color:var(--r-ink)}
 #searchview .srx-price .s{font-size:12px;color:var(--r-ink-3)}
-#searchview .srx-b{font-size:11px;height:20px;min-height:20px;padding:0 7px}
+#searchview .srx-b{font-size:11px;height:20px;min-height:20px;padding:0 6px}   /* 与 .chsess/.ws-state/.monwatch-state 等 ≤21px 状态胶囊同一横向内边距 6px */
 #searchview .srx-b.state{font-size:11px;min-height:22px}
 #searchview .srx-fieldmeter{font-size:11px;color:var(--r-ink-3)}
 #searchview .srx-exp .box b,#searchview .srx-exp .kv{font-size:12px;color:var(--r-ink-2)}
 #searchview .srx-mirror .srx-mchrome{background:var(--r-surface-2);border-bottom:1px solid var(--r-hair)}
 #searchview .srx-mirror .srx-mtabs{gap:2px;padding:4px;background:var(--r-surface-2)}
-#searchview .srx-mirror .srx-mtab{border:0;background:transparent;min-height:28px;border-radius:7px;font-size:12px}
+#searchview .srx-mirror .srx-mtab{border:0;background:transparent;min-height:28px;border-radius:var(--r3);font-size:12px}
 #searchview .srx-mirror .srx-mtab.on{background:var(--r-surface);color:var(--r-blue);box-shadow:0 1px 2px rgba(16,24,40,.08)}
-#searchview .srx-mirror .srx-mrow{padding:9px 11px;border-bottom:1px solid var(--r-hair)}
+/* r433：镜像列表同理——每行一条满宽底线（1512 实测 .srx-mrow 10 条），
+   与左栏 .srx-row 一起把整页读成表格。镜像行本身已有完整圆角边框
+   （4259 行 `border:1px solid var(--line)`）与选中/同行描边，
+   行间底线纯属重复分隔：去掉，靠 4px 行距分组。
+   注意 4259 行是 `border:` 完整写法（含 bottom），本条必须带 !important
+   才压得住——否则 10 条线一条不少（实测踩过）。 */
+#searchview .srx-mirror .srx-mrow{padding:9px 11px;border-bottom:0!important}
 #searchview .srx-mirror .srx-mrow .m b,#searchview .srx-mirror .srx-mrow .m span,#searchview .srx-mirror .srx-mrow .pr span{font-size:12px}
 #searchview .srx-mirror .srx-mrow .m b{font-size:13px;color:var(--r-ink)}
 #searchview .srx-mmore{padding:9px 8px;text-align:center;font-size:11px;color:var(--r-ink-3);border-top:1px dashed var(--r-hair);background:var(--r-surface)}
-#searchview .srx-mmore button{margin-left:6px;height:26px;padding:0 8px;border:0;border-radius:7px;background:var(--r-blue-soft);color:var(--r-blue);font-size:11px;font-weight:600;cursor:pointer}
+#searchview .srx-mmore button{margin-left:6px;height:26px;padding:0 8px;border:0;border-radius:var(--r3);background:var(--r-blue-soft);color:var(--r-blue);font-size:11px;font-weight:600;cursor:pointer}
 #searchview .srx-footnote{font-size:12px;color:var(--r-ink-3);line-height:1.7}
 #searchview .srx-mobilebar{background:var(--r-surface)!important;border:0!important;border-radius:var(--r-radius)!important;box-shadow:none;padding:5px!important}
-#searchview .srx-mbtn{border:0!important;height:28px;border-radius:7px;font-size:12px}
+#searchview .srx-mbtn{border:0!important;height:28px;border-radius:var(--r3)!important;font-size:12px}
 #searchview .srx-msum{font-size:12px;color:var(--r-ink-3)}
 /* ---------- 明细表：轻表头、发丝行、数字优先 ---------- */
 #tablecard .tw{background:var(--r-surface)}
 #ftable th{background:var(--r-surface-2);color:var(--r-ink-3);font-size:11px;font-weight:600;letter-spacing:.3px;border-bottom:1px solid var(--r-hair)}
+/* 吸顶表头必须实底：浅色变量在卡片语境解析成透明，滚动时数据从表头下穿过。 */
+#montab-details .tw thead th:not(:hover){background:var(--r-surface-2,#f1f4f8)!important;
+ background-image:linear-gradient(var(--r-surface-2,#f1f4f8),var(--r-surface-2,#f1f4f8))!important}
+#montab-details .tw thead th{z-index:6!important;isolation:isolate}
 #ftable th:hover{background:var(--r-surface-3)!important}
 #tabs span:hover:not(.on){background:var(--r-surface)!important;color:var(--r-ink)!important}
 #ftable tr.qual td.price{color:var(--ok-txt)!important}
-#ftable td{border-bottom:1px solid var(--r-hair);color:var(--r-ink-2)}
-#ftable tbody tr.zebra:not(:hover){background:transparent}
+#ftable td{border-bottom:0;color:var(--r-ink-2)}
+/* r476：这里曾是 `border-bottom:1px solid var(--r-hair)`——120 行数据画
+   120 条整宽横线（实测明细页 121 条横线，120 条来自 TD），正是用户说的
+   「折叠起来了，但是有很多分割线」。而 1603 行本来就写了斑马纹
+   （tr.zebra → --rowalt），紧接着这里又把它 `background:transparent`
+   清掉——同一张表两套分隔策略互相打架，最后只剩满屏横线。
+   扁平做法：行分隔交给斑马底，行线归零。 */
+#ftable tbody tr.zebra:not(:hover){background:var(--rowalt)}
 #ftable tbody tr:hover{background:var(--r-surface-2)}
-#ftable td.price{color:var(--r-ink);font-weight:800}
+#ftable td.price{color:var(--r-ink);font-weight:700}
 #ftable .fname{font-size:13px;color:var(--r-ink)}
 #ftable .fsub{font-size:12px;color:var(--r-ink-3)}
 #ftable .stl{font-size:12px;color:var(--r-ink-3)}
@@ -6043,7 +6524,7 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 #montab-watch .ws-kpi{border-left:1px solid var(--r-hair)!important;border-radius:0!important;padding:4px 14px}
 #montab-watch .ws-kpi:first-child{border-left:0!important}
 #montab-watch .ws-kpi .k{font-size:12px;color:var(--r-ink-3)}
-#montab-watch .ws-kpi .v b{font-size:22px;color:var(--r-ink)}
+#montab-watch .ws-kpi .v b{font-size:18px;color:var(--r-ink)}
 #montab-watch .ws-kpi .v span,#montab-watch .ws-kpi .f{font-size:12px;color:var(--r-ink-3)}
 #montab-watch .ws-kpi .v span{white-space:normal}
 #montab-watch .ws-state{font-size:11px}
@@ -6054,20 +6535,19 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 #montab-watch .ws-rt-bot .tag{font-size:11px}
 #montab-watch .ws-chart-h b{font-size:14px}
 #montab-watch .ws-chart-h span{font-size:12px;color:var(--r-ink-3)}
-#montab-watch .ws-ranges button{font-size:12px;height:28px}
 #montab-watch .ws-chart-foot{font-size:12px;color:var(--r-ink-3)}
 #montab-watch .ws-legend .ws-lg-lab,#montab-watch .ws-legend .ws-lg{font-size:12px}
 #montab-watch .ws-lg b{font-size:12px}
 #montab-watch .ws-fcell .k{font-size:11px}
 #montab-watch .ws-fcell .s,#montab-watch .ws-fident .nm span{font-size:12px}
 #montab-watch .ws-fident .nm b{font-size:13px}
-#montab-watch .ws-fact .ws-btn{font-size:12px}
+#montab-watch .ws-fact {font-size:12px}
 #montab-watch .ws-tip{font-size:12px}
 #montab-watch .ws-tip .tm{font-size:11px}
 #montab-watch .ws-note b{font-size:12px}
 #montab-watch .ws-live{font-size:11px}
 #montab-watch .ws-previewbar>b,#montab-watch .ws-previewbar>span{font-size:12px}
-#montab-watch .ws-previewbar .ws-btn{height:30px;font-size:12px}
+#montab-watch .ws-previewbar {height:30px;font-size:12px}
 #montab-watch .ws-routebar-h span,#montab-watch .ws-roster-h span,#montab-watch .ws-chart-h span{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.4}
 #montab-watch .ws-filterbar input[type=text],#montab-watch .ws-filterbar input[type=number],#montab-watch .ws-filterbar select{height:30px;font-size:12px}
 #montab-watch .ws-filterbar .ws-seg button{height:30px;font-size:12px}
@@ -6096,6 +6576,50 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 #cfgview .cw-lab,#cfgview .cw-note,#cfgview .cfgwatch-toolbar .cw-sum{font-size:12px}
 #cfgview .cw-meta{font-size:12px}
 #healthcard .scnode em{font-size:12px}
+/* 健康卡内的「节流与干预」子区：与健康时间线同卡同宽，靠 hairline 分块，
+   不另起外框（r374 扁平收口律）；标题用健康卡自己的小字节奏。 */
+/* 分域/分通路小标：第二、三维读数。
+   hrow 是三列网格（64px 名 | 格带 | 120px 徽标）。小标必须**横跨整行**
+   （1/-1），否则会落进 64px 窄列里逐字折行（实测「PC 100% · H5 / 100%」
+   竖排、行高参差）。跨行后从第 2 列起排，与格带左缘对齐。 */
+#healthcard .hrow{grid-template-rows:auto auto}
+#healthcard .hscope{grid-column:2/-1;font-size:10px;color:var(--r-ink-3);
+ font-variant-numeric:tabular-nums;margin-top:-2px;display:flex;
+ gap:4px 12px;flex-wrap:wrap;align-items:baseline}
+/* 宽屏靠 nowrap 保持「国内 100% · 国际 83%」不被拆开；窄屏放开让它换行，
+   否则内容会溢出到容器外（420px 实测溢出）。 */
+@media(min-width:761px){#healthcard .hscope>span{white-space:nowrap}}
+#healthcard .hpath{color:var(--r-ink-3);opacity:.85}
+/* 会话维度（第四维）：同一厂商多个独立会话时逐端并排。色点式文字胶囊
+   与 hbadge/hscope 同族，不用第二种语言。 */
+#healthcard .hslots{grid-column:2/-1;display:flex;gap:6px;flex-wrap:wrap;
+ align-items:center;margin-top:2px;font-size:10px}
+/* 采集停摆标记（r518）：卡头提示「下面是停摆前的历史」。用全站告警色与
+   字号阶 11px，不新造色值；窄档允许折行，避免与轮次计数挤在一行被截断。 */
+#healthcard .hstale{display:inline-flex;align-items:center;margin-right:8px;
+ font-size:11px;color:var(--warn-deep);background:var(--r-amber-soft);
+ padding:0 6px;border-radius:var(--pill);height:18px;white-space:nowrap;
+ font-variant-numeric:tabular-nums}
+#healthcard .hslot{display:inline-flex;align-items:center;height:18px;padding:0 6px;
+ border-radius:var(--pill);background:var(--r-surface-2);color:var(--r-ink-3);
+ white-space:nowrap;font-variant-numeric:tabular-nums}
+#healthcard .hslot.ok{background:var(--r-green-soft);color:var(--ok-txt)}
+#healthcard .hslot.warn{background:var(--r-amber-soft);color:var(--warn-deep)}
+#healthcard .hslot.bad{background:var(--r-red-soft);color:var(--r-red)}
+/* 节流块靠间距分节，不再画通栏横线（用户反复报「分割线多、不干净」） */
+#healthcard .hpace{margin-top:16px;padding-top:0}
+/* 面板为空（未挂接/加载中）时不撑出一段空白：paceBox 内只有一行提示 */
+#healthcard .hpace .pace:empty{display:none}
+#healthcard .hpace-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;
+ margin-bottom:8px}
+#healthcard .hpace-h b{font-size:12px;font-weight:700;color:var(--r-ink)}
+#healthcard .hpacer{font-size:11px;color:var(--r-ink-3);min-width:0}
+/* 提示里的可点片段：像链接但走按钮语义（键盘可达、不跳页） */
+#healthcard .hlink{border:0;background:transparent;padding:0;font:inherit;
+ color:var(--r-blue);cursor:pointer;text-decoration:underline;
+ text-underline-offset:2px;border-radius:3px}
+#healthcard .hlink:hover{color:var(--r-blue-hover)}
+#healthcard .hlink:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 #healthcard .hact{font-size:12px;height:30px}
 #montab-watch .ws-route{background:var(--r-surface-2)!important;border:0!important;border-radius:var(--r-radius)!important;box-shadow:none!important}
 #montab-watch .ws-route.on{background:var(--r-blue-soft)!important;color:var(--r-ink)!important;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--r-blue) 24%,transparent)!important}
@@ -6107,12 +6631,16 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 #montab-watch .ws-route.on .ws-rt-bot span{color:var(--r-ink-3)!important}
 #montab-watch .ws-route.on::before{background:var(--r-blue)!important}
 #montab-watch .ws-sub{font-size:13px;color:var(--r-ink-2)}
-#montab-watch .ws-title{font-size:23px;letter-spacing:-.3px}
+#montab-watch .ws-title{font-size:18px;letter-spacing:-.3px}
 #montab-watch .ws-routebar-h span,#montab-watch .ws-roster-h span,#montab-watch .ws-note{font-size:12px;color:var(--r-ink-3)}
 #montab-watch .ws-legend{font-size:12px;color:var(--r-ink-3)}
 #montab-watch .ws-ranges{background:var(--r-surface-2)!important;border:0!important}
-#montab-watch .ws-ranges button{border:0!important;border-radius:6px!important;height:26px;font-size:12px}
-#montab-watch .ws-ranges button.on{background:var(--r-surface)!important;color:var(--r-blue)!important;box-shadow:0 1px 2px rgba(16,24,40,.08)}
+/* 面板容器只承载排版，不许钉死高度：`#montab-watch{height:26px}` 曾把
+   1625px 高的面板压成 26px，卡片照常溢出绘制、页脚按 26px 排位，
+   实测页脚浮在「关注航班」卡头之上（390 档 y=394）。 */
+#montab-watch{font-size:12px}
+/* 选中态交给 .mon-range 单源（软蓝胶囊、零投影）；此处曾另写白底+投影，
+   与航线/雷达两图的软蓝胶囊并存，读作两套选中语言。 */
 #montab-watch .ws-chart-foot,#montab-watch .ws-meta{font-size:12px;color:var(--r-ink-3)}
 #cfgview .cfgw-route{height:30px;border-radius:var(--pill);font-size:12px;padding:0 11px}
 #cfgview .cfgw-toolbar{background:transparent;border:0;padding:0 0 10px}
@@ -6128,7 +6656,10 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 #cfgview .cw-item{border:0!important;background:transparent!important;border-top:1px solid var(--r-hair)!important;padding:10px 2px!important}
 #cfgview .cw-item:first-child{border-top:0!important}
 #cfgview .cw-actions{border-top:0!important;background:transparent!important;padding:5px 0 2px!important;gap:6px}
-#cfgview .cw-actions button{border:0!important;background:var(--r-surface-2)!important;border-radius:8px;font-size:12px;height:30px;padding:0 10px;color:var(--r-ink-2)}
+/* 曾有一条 `#cfgview{…height:30px;padding:0 10px}`——它其实是某个 30px 小控件的
+   样式，选择器被截断后落到容器上：配置页整体被锁成 30px，内容溢出容器，
+   sticky 约束盒只剩 210px，`cfgnav` 吸顶错位、header 一滚就走。
+   容器样式由 `#cfgview{width:100%;margin:0}` 等既有规则提供，这里不再重复。 */
 #cfgview .cw-actions button:hover{background:var(--r-surface-3)!important;color:var(--r-ink)}
 #cfgview .cw-actions button.danger{background:var(--r-red-soft)!important;color:var(--r-red)!important;border:0!important}
 #cfgview .cwf-field>span{font-size:12px;letter-spacing:0;text-transform:none;color:var(--r-ink-3)}
@@ -6144,22 +6675,73 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 /* ---------- 来源接入：一条去哪儿取数状态带，不做三张占高卡 ----------
    旧版整卡 140px+，健康页首屏被说明抢走；现在桌面单行 44px，
    三节点收成胶囊，长说明默认折叠到「说明」，细节进 title。 */
-#srccap{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;
- margin:0 0 10px!important;padding:8px 12px!important;background:var(--r-surface);
+/* r412：来源接入并入渠道诊断卡后，不再是一张独立卡——去掉自身卡面、
+   圆角与外边距，改为卡内顶部一条扁平信息带。
+   r423：用户实报「来源接入独立一行的设计非常奇怪，也非常割裂」。4% 蓝底
+   虽不画边框，仍把这条只讲去哪儿一路的说明渲染成一整块满宽色带，夹在
+   「渠道诊断」标题与 5 张渠道卡之间，读作第三个区块。改为无底色无圆角的
+   纯说明行：它就是标题行的副行（同一左缘、同色阶），不是一条带。 */
+#healthDiag #srccap{background:transparent;border-radius:0;
+ padding:0;margin:2px 0 10px;flex:none}
+#srccap{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap; margin:0 0 10px!important;padding:8px 12px!important;background:var(--r-surface);
  border:1px solid var(--r-hair);border-radius:var(--r-radius)}
-#srccap .uhead{display:flex;align-items:center;gap:7px;margin:0;flex:0 0 auto;min-width:0}
-#srccap .uhead .muted{font-size:11px;color:var(--r-ink-3);white-space:nowrap;
- overflow:hidden;text-overflow:ellipsis;max-width:330px}
 #srccap .seclab .en{font-size:10px;letter-spacing:.04em;color:var(--r-ink-3)}
-#srccap .scpath{display:flex;align-items:center;gap:4px;margin:0;flex:1 1 auto;
- min-width:0;flex-wrap:wrap;flex-direction:row;justify-content:flex-start}
+/* r423：来源接入 = 卡头的第二段（不是第二行）。卡头显示为
+   「渠道诊断 · 元信息 ｜ PC停服→H5登录后可用→登录态 [说明][查看登录][打开H5]」，
+   路径可压缩、按钮定宽不换行，整条只占一行；空间不足时才整体换行，
+   不会出现「标题一行 + 空带一行」的三段割裂。 */
+/* r426/r427/r432：路径条的三种形态都被用户判为割裂。
+   ① flex:1 1 560px + 同处 wrap 行 → 贴右，左缘 92→529（1280 实测）读作台阶；
+   ② flex-direction:column → 左缘对齐了，但 1280 档标题行右侧空出 673px、
+      路径条占满 1087px 自成一段，用户仍读作「独立一行、非常割裂」（r432 实测）；
+   ③ 现在：行向 + `flex:0 1 auto`，只吃标题行剩余空间，放不下才换行。
+      换行后仍在同一 12px 左缘，且不再是满宽色带（无底色/边框/满宽 padding）。
+   关键约束：`min-width:0` 必须留，否则 .scpath 的 `overflow:hidden` 失效、
+   路径条会被内容撑到 min-content 之上而重新撑满整行。 */
+#healthDiagHead{display:flex;flex-direction:row;align-items:center;
+ flex-wrap:wrap;gap:4px 12px}
+#healthDiagHead>span:first-child{flex:0 1 auto;min-width:0;display:flex;
+ align-items:center;gap:9px;flex-wrap:wrap}
+/* r460：r423 起注释一直写「来源接入与标题同行同左缘」，实测 1512 根本不是：
+   卡头的两个子项只有标题 span 与 .srccap，而卡头继承的 .uhead 是
+   space-between，标题只占 423px，剩下的 682px 全摊成中间空洞，
+   .srccap 被顶到最右（左缘 107→789）。1280 同样（92→573）。
+   改成 start 对齐 + 让路径条紧跟标题之后、吃掉行尾余量：
+   左缘回到标题那条线，空白只留在行尾，不再夹在两段之间。 */
+#healthDiagHead{justify-content:flex-start}
+#healthDiag #srccap{align-self:center;width:auto;flex:0 1 auto;
+ min-width:0;max-width:100%}
+/* 路径条紧随标题：不再让 flex 把它推到最后（见上），需要时按剩余宽度收缩 */
+#healthDiagHead>#srccap{margin-left:0}
+/* r426：路径条 base 曾写 560px——标题+元信息占不满 560 时它会整条换行，
+   成为换行行首（实测 1280 档左缘 92→529），与卡头/诊断体读作 L 形台阶，
+   正是用户复报的「渠道健康里不对齐」。基值降到 0：永远与标题同一行，
+   空间不足时才按 flex 收缩（路径可压，按钮定宽不换行）。 */
+#healthDiag #srccap{display:flex;align-items:center;
+ gap:6px 10px;flex-wrap:nowrap;margin:0}
+/* r432：窄屏（换行档）路径条被 scpath 的 139px 定宽按钮挤出标题行，
+   只剩 324~346px 宽——既没并进标题行，又比它独占一行时更窄，两头不占。
+   换行档让它吃满整行：路径条要么与标题同行，要么就正大光明占满第二行；
+   «挤在标题旁只剩一半宽» 是最差形态。 */
+@media(max-width:1080px){
+ #healthDiag #srccap{flex:1 1 100%;flex-wrap:wrap;row-gap:6px}
+}
+#healthDiag #srccap .scpath{flex:1 1 auto;min-width:0;flex-wrap:nowrap;overflow:hidden;margin:0}
+/* r460：路径条内部节点是 nowrap 胶囊，实测 min-content=448px，而 .scpath
+   的 overflow:hidden 只在 flex-basis 缩到 min-content 以下才生效——于是
+   整条 .srccap 死死卡在 605px，标题行右侧白白空出 259px（1512）。把
+   节点允许截断（文字省略），路径条就能真的按剩余宽度收缩，整条回到
+   「标题后面接着走、末尾自然收边」的形态。 */
+#healthDiag #srccap .scpath .scnode{min-width:0;overflow:hidden}
+#healthDiag #srccap .scpath .scnode>span,
+#healthDiag #srccap .scpath .scnode>b{overflow:hidden;text-overflow:ellipsis;min-width:0}
 #srccap .scnode{display:inline-flex;flex-direction:row;align-items:center;gap:5px;
  flex:0 0 auto;min-height:26px;padding:3px 8px;border:1px solid var(--r-hair);
  border-radius:var(--pill);background:var(--r-surface-2);line-height:1.15}
 #srccap .scnode .sck{display:inline-flex;align-items:center;gap:4px;font-size:11px;
  color:var(--r-ink-3);white-space:nowrap}
 #srccap .scnode .sck .ic{width:12px;height:12px;flex:none}
-#srccap .scnode b{font-size:12px;font-weight:650;line-height:1;white-space:nowrap}
+#srccap .scnode b{font-size:12px;font-weight:600;line-height:1;white-space:nowrap}
 #srccap .scnode em{display:none}
 #srccap .scnode.dead{border-style:dashed;background:transparent}
 #srccap .scnode.dead b{color:var(--r-ink-3);text-decoration:none}
@@ -6171,9 +6753,30 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
  transform:none;width:auto;height:auto;align-self:center}
 #srccap .scfoot{display:flex;align-items:center;justify-content:flex-end;gap:6px;
  flex:0 0 auto;border:0;padding:0;margin:0;flex-wrap:wrap}
-#srccap .scnote{display:none;flex-basis:100%;margin:0;padding:2px 0 0;border:0;
- font-size:11px;color:var(--r-ink-3);line-height:1.45}
-#srccap .scnote.open{display:block}
+/* 说明跟在按钮后面：展开后才占一行，且贴在动作行正下方（曾在按钮
+   之前＝展开在按钮上方，读作「跑到控制台下面去了」）。
+   r412：说明曾是 scfoot 的 flex 子项，展开让它 basis 变 100%，scfoot
+   宽度从 93px 涨到 520px；scfoot 右对齐且宽度随内容，按钮被推左
+   796px（实测 1512 档 1305→509）——正是用户报的「展开位置都发生了
+   偏移」。改为绝对定位在 scfoot 正下方：按钮行几何恒定，卡片向下长高。 */
+/* r423：说明放在卡头之外（.ucard 的直接子元素）：展开只让卡片长高，
+   卡头几何完全不变——窄档 flex 行 align-items:center 曾把按钮顶下 6px。
+   收起态 display:none，不占位。 */
+/* 用户实报「说明的展开是在检索控制台的下面」。r423 把说明移到卡外是有原因
+   的：放进 scfoot 当 flex 子项时，展开让 basis 变 100%，右对齐的行被撑宽，
+   「说明」按钮横移近 800px（实测 1512 1259→856 / 390 211→40）。所以位置
+   保持在卡外，只收紧它与按钮之间的空隙（22→20px，吃掉 srccap 的 10px 底距
+   里的一部分），不让它读作「跑到很远的地方」。 */
+#healthDiag>#scNote{display:none;margin:-8px 0 8px;font-size:11px;
+ color:var(--r-ink-3);line-height:1.5}
+#healthDiag>#scNote.open{display:block}
+#srccap .scfoot{flex-wrap:wrap;row-gap:4px}
+/* r412「不动律」：文案在「说明 / 收起说明」之间切换，宽度变 22px，
+   右对齐的 scacts 会把按钮整体左推。按两态较宽者预留宽度，
+   再把富余量居中——视觉上文字仍居中，几何上按钮不移动。 */
+#srccap .sclink{min-width:62px;text-align:center}
+/* r423：说明已在卡头文档流内，不再需要给绝对定位兜底预留 padding。 */
+@media(max-width:760px){#srccap .sclink{min-width:76px}}
 #srccap .scacts{display:inline-flex;align-items:center;gap:4px;flex:none}
 #srccap .sclink{height:28px;padding:0 5px;border:0;background:transparent;
  color:var(--r-ink-3);font-size:11px;cursor:pointer;border-radius:6px}
@@ -6187,14 +6790,16 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
  #srccap .uhead .muted{display:none}
 }
 @media(max-width:760px){
- #srccap{padding:8px 10px!important;gap:6px}
- #srccap .uhead{flex-basis:100%}
- #srccap .scpath{flex-basis:100%;gap:3px}
+ /* r423：来源接入已是卡头内的一行——窄屏让路径与按钮各自成段换行，
+    不再给小标 flex-basis:100% 制造「空标题行」。 */
+ #healthDiag #srccap{padding:0;gap:6px;flex-wrap:wrap}
+ #healthDiag #srccap .scpath{flex:1 1 100%;gap:3px;overflow:visible}
  #srccap .scnode{min-height:28px}
- #srccap .scfoot{flex-basis:100%;justify-content:flex-end}
+ #healthDiag #srccap .scfoot{flex:0 0 auto;margin-left:auto;justify-content:flex-end}
  #srccap .scacts{width:auto}
  #srccap .scbtn{height:32px;padding:0 10px;flex:0 0 auto}
  #srccap .sclink{height:32px;padding:0 8px;flex:0 0 auto}
+ #srccap .sclink{min-width:76px}
 }
 @media(max-width:560px){
  /* 窄屏两行路径：PC/H5 并排，登录态整行；说明与 H5 靠右，不再拉满 */
@@ -6227,7 +6832,7 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
  #montabs .mtab{height:36px;padding:0 6px;font-size:12px;gap:3px}
  #montabs .mtab i{font-size:10px}
  #montab-details .tabs>#fltBtn{background:var(--r-surface)!important;box-shadow:-10px 0 12px -10px rgba(16,24,40,.35)!important;margin-left:4px}
- #montab-watch .ws-title{font-size:21px}
+ #montab-watch .ws-title{font-size:18px}
  #montab-watch .ws-sub{font-size:12px}
  #hdcard{height:54px;min-height:54px;gap:8px}
  #hdcard h1{font-size:14px;letter-spacing:0;gap:8px}
@@ -6247,11 +6852,18 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
  #montabs .mtab{flex:1 0 auto;height:36px;font-size:12px;padding:0 5px;box-sizing:border-box}
  .ucard,#montab-watch .ws-card,.ws-card{padding:14px 14px;border-radius:12px!important}
  #searchview .srx-hero{padding:6px 2px 8px;margin-bottom:6px;align-items:flex-start}
- #searchview .srx-hero h1{font-size:21px}
+ #searchview .srx-hero h1{font-size:18px}
  #searchview .srx-hero p{display:none}
- #searchview .srx-hero-act{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;width:100%;gap:4px!important;
-  padding:4px!important;overflow:visible!important}
- #searchview .srx-hero-act .srx-btn{width:100%;height:32px!important;font-size:12px!important;justify-content:center;background:var(--r-surface)!important}
+ /* r435：这一档原本是 2 列网格：收起态 2 颗按钮各占一列、展开态 9 颗铺成
+    多行，「展开更多工具」被从第一行挤到第二行——460–900 档实测横移
+    284~364px、纵移 102px（用户原话「展开位置都发生了偏移」，同时
+    「展开独立占了一行」）。与 ≤560 档统一为「单行横滚 + 触发器 sticky」，
+    两态坐标恒等。 */
+ #searchview .srx-hero-act{display:flex!important;flex-wrap:nowrap!important;grid-template-columns:none!important;
+  width:100%;gap:4px!important;padding:4px!important;overflow-x:auto!important;overflow-y:visible!important;scrollbar-width:thin}
+ #searchview .srx-hero-act .srx-btn{flex:0 0 auto!important;width:auto!important;height:32px!important;font-size:12px!important;justify-content:center;background:var(--r-surface)!important}
+ #searchview .srx-hero-act>.srx-more-btn{position:sticky!important;right:0!important;z-index:2;margin:0 0 0 auto!important;
+  box-shadow:-8px 0 8px -8px rgba(16,24,40,.2)}
  #searchview .srx-hero-act .srx-btn:last-child{grid-column:auto!important}
  #searchview .srx-hero-act .srx-btn[data-sec]{display:none}
  #searchview .srx-hero-act.open .srx-btn[data-sec]{display:inline-flex}
@@ -6259,7 +6871,7 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
  #searchview .srx-hero-act.open .srx-more-btn{background:var(--r-surface-2)!important}
  #searchview .srx-probe{padding:8px 12px}
  #searchview .srx-band{padding:9px 11px}
- #searchview .srx-band .srx-day{border-radius:7px}
+ #searchview .srx-band .srx-day{border-radius:var(--r3)}
  #searchview .srx-src{flex:0 0 154px;min-height:60px}
  #searchview .srx-context{padding:5px 11px}
  #searchview .srx-tools{gap:5px}
@@ -6310,7 +6922,7 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
  #hdcard .logo{width:24px!important;height:24px!important}
  .hbtn{width:28px!important;height:28px!important}
  .pill{font-size:11px!important;padding:3px 7px!important;min-height:32px!important}
- #hdcard .huser{width:30px!important;height:32px!important;font-size:15px!important}
+ #hdcard .huser{width:30px!important;height:32px!important;font-size:14px!important}
 }
 @media(pointer:coarse){
  #montabs .mtab{padding-top:9px;padding-bottom:9px}
@@ -6329,7 +6941,7 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
  #searchview .srx-kpi{padding:6px 9px}
  #searchview .srx-context{padding:4px 11px;margin-bottom:5px}
  #searchview .srx-line{padding:3px 0}
- #searchview .srx-chip{min-height:26px}
+ #searchview .srx-chip{min-height:25px}
  #searchview .srx-listhead{min-height:44px;padding:6px 12px}
  #searchview .srx-thead{min-height:26px}
  #tablecard{padding-top:10px;padding-bottom:10px}
@@ -6384,13 +6996,20 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 }
 #searchview .srx-probe-mini{display:none;font-size:11px;color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:52%}
 #searchview .srx-probe.open .srx-probe-mini{display:none!important}
-#searchview .srx-probe:not(.open) .srx-probehead{margin-bottom:0;gap:6px}
+/* r433：收起态 gap 曾写 6px，而展开态由 6158 行的 `gap:8px` 决定——
+   开合时卡头内元素间距差 2px，实测「DEMO · 合成」小标横向抖 2px
+   （用户实报「展开的时候 demo 合成的位置抖动偏移了」，五档全中）。
+   两态 gap 统一 8px；这里只保留「收起态不要下边距」的原意。 */
+#searchview .srx-probe:not(.open) .srx-probehead{margin-bottom:0;gap:8px}
 #searchview .srx-probe:not(.open) .srx-probehead>span:not(.srx-probe-mini):not(.srx-probeacts){display:none}
 #searchview .srx-probe:not(.open) .srx-probe-mini{display:inline-block}
 #searchview .srx-probe:not(.open) .srx-batchtoggle{display:none}
 #searchview .srx-probe:not(.open) .srx-probeacts .srx-taskbtn,
 #searchview .srx-probe:not(.open) .srx-probeacts .srx-sessbtn{display:none}
-#searchview .srx-probe:not(.open) .srx-probeacts .srx-probe-toggle{border-color:var(--line2);background:var(--card);color:var(--tx2);padding:0 9px}
+/* r434：这里原有一条「收起态给折叠钮补边框+卡片底」。补它是因为基线规则
+   把折叠钮写成了透明无边框，展开态就只剩纯文字——用户实报「展开后有一个
+   收起探针的样式…明显不是一个按钮多态的设计」。根因在基线那条，已删；
+   此处不再需要按态补外观：同一颗按钮两态都是同一颗带框按钮。 */
 #searchview .srx-probe:not(.open) #srxBatchWrap{display:none!important}
 @media(max-width:760px){
  #searchview .srx-probe:not(.open) .srx-probeacts{width:auto;margin-left:auto}
@@ -6403,7 +7022,10 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
  #searchview .srx-capbar button{flex:none;min-width:max-content;position:sticky;right:0;background:var(--card);box-shadow:-8px 0 10px var(--card)}
 }
 #searchview .srx-probe:not(.open) .srx-taskpanel{display:none}
-#searchview .srx-probe:not(.open){padding:0 12px}
+/* r424：收起态曾把上下内边距清零（展开态是 6px/8px），卡头因此在开合时
+   整体上移 6px——实测 390 档「展开探针」按钮位移 8px（另 2px 来自模态
+   小标占位）。留出与展开态一致的上内边距，两态基线才对得上。 */
+#searchview .srx-probe:not(.open){padding:6px 12px}
 #searchview .srx-task-stage{font-size:11px;color:var(--tx2);white-space:nowrap}
 #searchview .srx-task-upd{font-size:10px;color:var(--mut);white-space:nowrap}
 #searchview .srx-task-evbar select{height:24px;border:1px solid var(--ctlbd);border-radius:5px;background:var(--card);color:var(--tx2);font-size:10px;padding:0 4px}
@@ -6520,26 +7142,9 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
  #searchview .srf-close{order:3}
  #searchview .srf-sub{order:4;flex:1 1 100%}
 }
-/* 登录卡：3+2 居中；超宽桌面才五卡单行。飞猪 PC/H5 纵向堆叠，按钮等宽 */
-#loginRows .lggrid{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;align-items:stretch}
-#loginRows .lgcard{flex:0 1 calc((100% - 20px)/3);height:auto;align-self:stretch}
-#loginRows .lgslots{flex:1 1 auto;align-items:stretch}
-#loginRows .lgslot{height:100%}
-#loginRows .lgslots.one .lgslot{padding-bottom:9px}
-#loginRows .lgcard.fliggycard{grid-column:auto}
-#loginRows .fliggycard .lgslots{grid-template-columns:1fr 1fr}
-@media(max-width:460px){#loginRows .fliggycard .lgslots{grid-template-columns:1fr}}
-@media(min-width:1601px){#loginRows .lgcard{flex-basis:calc((100% - 40px)/5)}}
-@media(max-width:700px){#loginRows .lgcard{flex-basis:calc((100% - 10px)/2)}}
-@media(max-width:460px){#loginRows .lgcard{flex-basis:100%}}
-/* 登录卡回到项目五列网格；飞猪双端在卡内纵向堆叠，不再跨列 */
-#loginRows .lggrid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr))}
-#loginRows .lgcard{flex:none;min-width:0;min-height:150px}
-#loginRows .lgslots.one .lgslot{padding-bottom:0}
-#loginRows .fliggycard .lgslots{grid-template-columns:1fr}
-@media(max-width:1199px){#loginRows .lggrid{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media(max-width:700px){#loginRows .lggrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:460px){#loginRows .lggrid{grid-template-columns:1fr}}
+/* 登录行：最终形态见下方「渠道登录：5 行信息表」一段（三列 name|info|act）。
+   此处历史上的 5 卡网格 / 3+2 flex 布局已全部被那段 !important 覆盖，
+   留着只会让人改错地方，故移除。 */
 /* 最终窄档覆盖（须在全部 #montabs 规则之后）：六视图在 ≤540 以 3×2
    网格完整呈现，旧 5 列/横滚规则只适用于五视图时代。 */
 @media(max-width:540px){
@@ -6555,12 +7160,13 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
  html #montabs .mtab{height:32px!important;padding:0 2px!important}
 }
 /* ===== 2026 扁平化收口：去厚边框/重复阴影，用底色层次、留白与字重建立深度 ===== */
-:root{--r-card:14px;--r-container:12px;--r-ctl:8px;--price-lg:24px;
- --price-md:19px;--price-sm:16px;--r-signal:var(--r-red)}
+:root{--r-card:14px;--r-container:12px;--r-ctl:8px;--price-lg:22px;
+ --price-md:18px;--price-sm:16px;--r-signal:var(--r-red)}
 .ucard.mon-card,#montab-watch .ws-card,#searchview .srx-list,
 #searchview .srx-mirror,#cfgview .ucard{border-radius:var(--r-card)!important;
  box-shadow:none!important;border-color:transparent!important}
-.ws-card{border-radius:var(--r-card)!important;box-shadow:none!important}
+.ws-card{border-radius:var(--r-card)!important;box-shadow:none!important;
+ background:var(--r-surface)!important;border:0!important}   /* r383：卡片不留边框线 */
 .kpi .num{font-size:var(--price-lg)!important}
 .srx-price b{font-size:var(--price-md)!important}
 .spmon-lowday .p{font-size:var(--price-lg)!important}
@@ -6569,6 +7175,15 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 #loginRows .lgslot{background:transparent!important;border-top:0!important;
  padding-top:0!important}
 .ucard{box-shadow:none!important;border-color:transparent!important}
+/* r383 扁平收口二：卡片纵向节奏统一 10px（原 54px 空档）。 */
+.ucard,.ucard.mon-card,.ws-card,.hdiag-card,#searchview .srx-list,
+#searchview .srx-mirror,#healthcard{border-width:0!important}
+#monview .ucard+#ucard,#monview .ucard+.ucard,
+#monview .ucard+.ws-card,#monview .ws-card+.ucard,
+#monview .ws-card+.ws-card,#monview .ucard+.hdiag,
+#montab-details .ucard+.ucard,#montab-health .ucard+.ucard,
+#montab-specials .ucard+.ucard,#montab-overview .ucard+.ucard{margin-top:10px!important}
+#searchview .srx-brief+.srx-audit,#searchview .srx-brief+.srx-capbar{margin-top:8px!important}
 /* Sector Strip：签派航线轨，目标价作缺口，价格戳在右；只用于概览
    关注卡、关注台焦点轨与特价低日卡三处，不铺满全站。 */
 .sector-strip{display:flex;align-items:center;gap:10px;min-height:44px;
@@ -6579,6 +7194,11 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 .ss-notch{position:absolute;top:-3px;width:8px;height:8px;border-radius:50%;
  background:var(--r-signal);box-shadow:0 0 0 2px var(--r-surface-2)}
 .ss-price{font-size:var(--price-md);font-weight:700;white-space:nowrap}
+/* 概览卡的关注行也用 sector-strip：`.monwatch-main span{font-size:11px}`
+   会连价格戳一起吃成 11px（实测 232px 宽的卡里 ¥1381 只有 11px，同一
+   价格戳在关注焦点卡里是 18px）。价格戳不参与那小字档，只按金额令牌走；
+   同容器里的 `.ss-state` 等说明仍是 11px。 */
+.monwatch-main .ss-price{font-size:var(--price-md);font-weight:700;color:var(--r-ink)}
 .ss-state{font-size:10px;font-weight:700;white-space:nowrap;color:var(--r-ink-3);
  max-width:132px;overflow:hidden;text-overflow:ellipsis}
 .sector-strip.hit .ss-state{color:var(--r-signal)}
@@ -6587,11 +7207,11 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 .monwatch-diff.ok{color:var(--r-green)}.monwatch-diff.warn{color:var(--amber,#b26a00)}
 .spmon-day{position:relative}
 .spmon-day .lowtag{position:absolute;right:5px;top:5px;padding:0 4px;border-radius:var(--pill);
- background:var(--r-red-soft);color:var(--r-red);font-size:9px;font-weight:700;line-height:14px}
+ background:var(--r-red-soft);color:var(--r-red);font-size:10px;font-weight:700;line-height:14px}
 .spmon-day .b.down{color:var(--r-green)}
 .spmon-day .b.up{color:var(--r-red)}
 .spmon-lowdate{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
-.spmon-lowdate b{font-size:20px;line-height:1.1}
+.spmon-lowdate b{font-size:18px;line-height:1.1}
 .spmon-lowdate .lowtag{position:static;padding:0 5px}
 .spmon-lowdate .seltag{font-size:10px;font-weight:600;color:var(--r-blue);background:var(--r-blue-soft);
  border-radius:var(--pill);padding:0 5px;line-height:16px}
@@ -6608,11 +7228,11 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 .spmon-run{display:grid;grid-template-columns:104px 56px 48px minmax(0,1fr);gap:8px;
  align-items:center;padding:4px 2px;border-top:1px dashed var(--r-hair);
  font-size:10px;color:var(--r-ink-3)}
-.spmon-run.head{border-top:0;padding-bottom:2px;font-size:9px}
+.spmon-run.head{border-top:0;padding-bottom:2px;font-size:10px}
 .spmon-run.head b{font-weight:400;text-align:right}
 .spmon-run time{font-family:var(--num);color:var(--r-ink-2)}
 .spmon-run .st{display:inline-flex;align-items:center;justify-content:center;height:16px;
- border-radius:var(--pill);background:var(--r-surface-2);font-size:9px;font-weight:600}
+ border-radius:var(--pill);background:var(--r-surface-2);font-size:10px;font-weight:600}
 .spmon-run .st.ok{color:var(--r-green);background:var(--r-green-soft)}
 .spmon-run .st.cache_hit{color:var(--r-blue);background:var(--r-blue-soft)}
 .spmon-run .st.fallback,.spmon-run .st.partial{color:var(--r-amber);background:var(--r-amber-soft)}
@@ -6636,7 +7256,17 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
  .srx-hero-copy .srx-foldbtn{position:static!important;display:inline-flex!important;
   margin:6px 0 0 auto!important}
 }
-#searchview .srx-grid:has(.srx-mirror.srx-folded){grid-template-columns:1fr}
+/* r424：收起态原把网格压成 1fr —— 镜像从「右半栏 654px」变成「整行 1319px」，
+   「展开镜像」按钮随之横移 337px、纵移 713px（实测 l 1209→872 / t 367→1080），
+   用户读作「展开位置都发生了偏移」。改为保留右列宽度、只让内容不占位：
+   触发器仍落在同一列同一行，只有镜像正文消失。
+   但这条规则必须限定在「本来就是两列」的宽度：≤1100px 起网格主动收成
+   单列（两列会把价格列挤出卡外），此时再套 2fr 会把展开态整行宽的镜像卡
+   压成半宽，按钮横跳 44px（390/460 实测）甚至 272px。 */
+@media(min-width:1101px){
+ #searchview .srx-grid:has(.srx-mirror.srx-folded){grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+#searchview .srx-mirror.srx-folded{position:sticky;top:calc(var(--hdh,54px) + 8px)}
 @media(min-width:901px) and (max-width:1100px){
  #searchview .srx-brief{display:flex!important;overflow-x:auto}
  #searchview .srx-brief .srx-src{flex:0 0 220px!important}
@@ -6702,7 +7332,7 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 .chlink-note{flex:1 1 auto!important;min-width:0!important;white-space:nowrap!important;
  overflow:hidden!important;text-overflow:ellipsis!important;font-size:10px!important}
 .chlink-go{margin-left:auto!important;color:var(--r-blue)!important;font-size:10px!important}
-.chlink-auth{height:16px!important;padding:0 5px!important;font-size:9px!important;border:0!important;
+.chlink-auth{height:16px!important;padding:0 5px!important;font-size:10px!important;border:0!important;
  background:var(--r-surface-2)!important}
 .chlink-auth.req{background:var(--r-amber-soft)!important;color:var(--r-amber)!important}
 .chlink.off{background:transparent!important;color:var(--r-ink-3)!important;border:0!important}
@@ -6716,8 +7346,8 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 }
 .ws-filterbar button:focus-visible,.ws-seg button:focus-visible,
 .ws-btn:focus-visible,.srx-foldbtn:focus-visible,.srx-more-btn:focus-visible,
-.chlink:focus-visible,summary:focus-visible{outline:2px solid var(--r-blue)!important;outline-offset:1px!important}
-@media(max-width:600px){.chband{grid-template-columns:1fr!important}.chband-id{flex-direction:row!important;align-items:center!important;flex-wrap:wrap!important}.chband-links.search,.chband-links.spec{grid-template-columns:1fr!important}.chlink{min-height:34px}.chlink-note{white-space:normal!important;overflow:visible!important;text-overflow:clip!important}}
+.chlink:focus-visible,summary:focus-visible{outline:2px solid var(--blue)!important;outline-offset:1px!important}
+@media(max-width:600px){.chband{grid-template-columns:1fr!important}.chband-id{flex-direction:row!important;align-items:center!important;flex-wrap:nowrap!important;min-width:0}.chband-id>*{min-width:0}.chband-meta{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chband-note{flex:0 1 auto;min-width:0}.chband-links.search,.chband-links.spec{grid-template-columns:1fr!important}.chlink{min-height:34px}.chlink-note{white-space:normal!important;overflow:visible!important;text-overflow:clip!important}}
 @media(max-width:600px){
  #searchview .srx-probefoot{grid-template-columns:1fr;gap:4px 0}
  #searchview .srx-probefoot .srx-chlinks{grid-column:1}
@@ -6725,14 +7355,45 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 #cfgview .ucard,#cfgview .cw-item{box-shadow:none!important;border-color:var(--r-hair)!important}
 #cfgview .cw-item{border-radius:12px!important}
 /* 检索大块折叠 */
-.srx-foldbtn{margin-left:auto;height:24px;padding:0 8px;border:0;border-radius:7px;
- background:var(--r-surface-2);color:var(--r-ink-3);font-size:11px;font-weight:600;cursor:pointer}
+.srx-foldbtn{margin-left:auto;height:24px;padding:0 8px;border:0;border-radius:var(--r3);
+ background:var(--r-surface-2);color:var(--r-ink-3);font-size:11px;font-weight:600;cursor:pointer;
+ /* 行内 chip 必须整词不折：flex 行宽吃紧时曾把「收起镜像」压成 27px
+    竖排两行（用户实报「收起」孤字）。整词 + 不被压缩。 */
+ white-space:nowrap;flex:0 0 auto}
 .srx-foldbtn:hover{background:var(--r-surface-3);color:var(--r-ink)}
 .srx-hero-copy{position:relative}
 .srx-hero-copy .srx-foldbtn{position:absolute;right:0;top:0}
 .srx-hero-copy.srx-folded h1,.srx-hero-copy.srx-folded p{display:none}
 .srx-folded .srx-foldbody{display:none!important}
 .srx-mirror.srx-folded .srx-mchrome,.srx-mirror.srx-folded .srx-mbody{display:none!important}
+/* r421：收起镜像后只剩一条 1319px 满宽工具带——5 个渠道胶囊 + 列表/详情/
+   四源 仍在，但它们操作的是「已经收起来的内容」，属于折叠态遗留的常驻元素
+   （与用户反复报的「折叠后中间还有元素/自占一行」同族）。收起态只留
+   唯一出口「展开镜像」，与列表头同一行右侧，不再单独占一条带。 */
+/* r424：「展开镜像 / 收起镜像」点击后位移 1428px（实测）。展开态按钮排在
+   右组最左（渠道胶囊 → [收起镜像][列表][详情][四源]），收起态别的内容
+   display:none 后它被 margin-left:auto 顶到最右——同一颗钮两态基准不同，
+   正是用户报的「展开位置都发生了偏移」。
+   改为：收起态只隐藏「可见性」、保留占位（visibility:hidden 不接收点击），
+   左右两段仍占各自宽度，按钮回到完全相同的坐标，且视觉上只剩它一颗。 */
+.srx-mirror.srx-folded .srx-mrail>.srx-mtab,
+.srx-mirror.srx-folded .srx-mrail>.srx-mtools{visibility:hidden!important}
+/* 特异性必须压过 #searchview .srx-mrail{min-height:48px;padding:8px 10px;
+   border-bottom:...}（更高且带全宽背景），否则收起态仍是一条 48px 横带。
+   r424：几何必须两态一致——`justify-content:flex-end` 会把触发器推到轨道最右
+   （实测 1209→1195），padding/min-height 清零又让轨道 48→28px、按钮纵移 9px。
+   定案：保留与展开态相同的 padding 与 min-height，只去掉背景与下边线；
+   内容用 visibility:hidden 占位，触发器位置逐像素不变，视觉上只剩它一颗。 */
+/* 边框只透明、不删宽度：`border-bottom:0` 让轨道盒高少 1px，居中的触发器
+   实测下移 1px（t=367→368），与「两态位置逐像素一致」冲突。
+   同理 `overflow` 不能动：触发器是 `position:sticky;right:0`，轨道一旦不再是
+   滚动容器，sticky 失效退回普通流位置；换成 hidden 也不成——浏览器在按钮
+   获焦时会把它滚进视野（实测 scrollLeft 0→158），按钮横跳 272px。
+   沿用展开态自身的 overflow-x:auto，sticky 参照系不变。 */
+#searchview .srx-mirror.srx-folded .srx-mrail{border-bottom-color:transparent!important;
+ background:transparent!important}
+#searchview .srx-mirror.srx-folded{border:0!important;background:transparent!important;
+ min-height:0!important}
 /* 特价监控走势 */
 .spmon-body{display:flex;flex-direction:column;gap:14px;padding:4px 2px 10px}
 .spmon-cal{display:flex;gap:8px;overflow-x:auto;padding:2px 0 6px;scrollbar-width:thin;overscroll-behavior-x:contain;touch-action:pan-x;-webkit-overflow-scrolling:touch}
@@ -6743,37 +7404,59 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 .spmon-day.low{background:var(--r-blue-soft);color:var(--r-blue)}
 .spmon-day.sel{box-shadow:inset 0 0 0 2px var(--r-blue)}
 .spmon-day .d{font-size:10px;color:var(--r-ink-3)}
-.spmon-day .p{font-family:var(--num);font-size:16px;line-height:1.1}
+/* 必须显式 600：`<b>` 的默认 `bolder` 在父级 600 上会算成 **900**，
+   超出全站四档（400/500/600/700）。实测特价日历 7 个日期格的价格
+   全部渲染成 900（与同屏其他价格字重不一致）。 */
+.spmon-day .p{font-family:var(--num);font-size:16px;line-height:1.1;font-weight:600}
 .spmon-day .ch{display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--r-ink-3)}
 .spmon-day .ch .bic{width:14px;height:14px}
-.spmon-day .b{font-size:9px;color:var(--r-ink-3)}
+.spmon-day .b{font-size:10px;color:var(--r-ink-3)}
 .spmon-main{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(270px,1fr);gap:14px;align-items:stretch}
 .spmon-chartwrap{background:var(--r-surface-2);border-radius:12px;padding:10px 10px 6px;min-height:210px;min-width:0;overflow:hidden}
-.spmon-tip{position:fixed;z-index:40;pointer-events:none;background:var(--r-surface);
- border:1px solid var(--r-hair);border-radius:8px;padding:6px 8px;font-size:10px;line-height:1.5;
- color:var(--r-ink-2);white-space:nowrap;max-width:calc(100vw - 16px)}
-.spmon-tip b{font-family:var(--num);color:var(--r-ink)}
-#spMonChart{display:block;width:100%;max-width:100%;height:178px}
-.spmon-note{font-size:10px;color:var(--r-ink-3);margin-top:4px;line-height:1.4}
+/* absolute（不是 fixed）：PCHART.placeTip 按宿主容器算坐标，fixed 会
+   把容器内偏移当视口坐标用 → 浮窗随滚动/重排乱飘。 */
+.spmon-tip{position:absolute;z-index:40;pointer-events:none;background:rgba(44,62,80,.93);
+ border:0;border-radius:8px;padding:6px 9px;font-size:12px;line-height:1.5;
+ color:#fff;max-width:min(270px,calc(100vw - 16px))}
+/* 与关注浮窗同一套换行规则：都允许折行、都限 270px。雷达曾
+   white-space:nowrap + max-width:100vw，长注记会拉成一条横贯全屏的
+   长条，而同屏的关注浮窗是窄块——同一种读数卡两种形状。 */
+/* 有意深底白字：与航线走势 tooltip 同一惯例。浅色卡底在数据线上是一块
+   白斑，会把短点整段盖掉（用户实报「白白的折叠遮挡短点」）。 */
+.spmon-tip b{font-family:var(--num);color:#fff}
+/* 宽度由 JS 按点数设定（可滚）；max-width:100% 会把可滚宽度压回容器宽，
+   拖动指令随之失效——r373 的「滑动卡顿」根因。 */
+#spMonChart{display:block;height:clamp(240px,max(38vh,28vw),360px);cursor:crosshair;outline:none}
+.spmon-note{font-size:12px;color:var(--r-ink-3);margin-top:4px;line-height:1.5}
 .spmon-low{background:var(--r-surface-2);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:7px}
 .spmon-lowh{font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--r-ink-3)}
 .spmon-lowday{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
 .spmon-lowday b{font-size:14px}
-.spmon-lowday .p{font-family:var(--num);font-size:20px;color:var(--r-blue);font-weight:700}
+.spmon-lowday .p{font-family:var(--num);font-size:var(--price-lg);color:var(--r-blue);font-weight:700}
 .spmon-flight{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;
  align-items:center;padding:5px 0;border-top:1px solid var(--r-hair);font-size:11px}
 .spmon-flight .fid{display:inline-flex;align-items:center;gap:5px;min-width:0}
 .spmon-flight .ftime{color:var(--r-ink-3);white-space:nowrap}
 .spmon-flight .fpr{font-family:var(--num);font-weight:700;color:var(--r-ink);white-space:nowrap}
-.spmon-flight .fpr span{font-weight:400;color:var(--r-ink-3);font-size:9px}
+.spmon-flight .fpr span{font-weight:400;color:var(--r-ink-3);font-size:10px}
 .spmon-probe{align-self:flex-start;margin-top:2px}
 .spmon-src{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:10px;color:var(--r-ink-3)}
 .spmon-srclab{font-weight:700}
 .spmon-srcchip{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:var(--pill);background:var(--r-surface-2)}
 .spmon-srcchip .bic{width:14px;height:14px}
 .spmon-srcnote{margin-left:auto;color:var(--r-ink-3)}
-.spmon-empty{display:flex;flex-direction:column;gap:7px;align-items:flex-start;
- padding:16px;border-radius:var(--r10);background:var(--r-surface-2);font-size:12px;color:var(--r-ink-3)}
+/* 三图空态同构：居中、标题 13px 深色、说明 12px 弱色。雷达此前是
+   左对齐块（且无独立标题档），读作另一套空态。 */
+.spmon-empty{display:flex;flex-direction:column;gap:6px;align-items:center;
+ padding:16px;border-radius:var(--r10);background:var(--r-surface-2);
+ font-size:12px;color:var(--r-ink-3);text-align:center}
+.spmon-empty b{color:var(--r-ink);font-size:13px;font-weight:600}
+/* K 线不足 2 天时的居中空态：覆盖在画布之上而不是撑开滚动容器——
+   .spmon-chartwrap 是 overflow-x:auto，用 sticky 才能在横向滚动时仍居中。 */
+/* 覆盖在画布之上：sticky + 负 top 让它在横向滚动时仍居中于可视区，
+   高度跟随 canvas（JS 写入），不撑开滚动容器。 */
+.spmon-kempty{position:absolute;left:0;right:0;top:0;margin:0 auto;
+ max-width:100%;justify-content:center;background:transparent!important;display:none}
 .spcfg summary{cursor:pointer;list-style:none;padding:9px 2px;font-size:12px;font-weight:600;color:var(--r-ink-2)}
 .spcfg summary::-webkit-details-marker{display:none}
 .sprad-fld{display:inline-flex;align-items:center;gap:4px;font-size:11px;
@@ -6785,25 +7468,65 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 @media(max-width:900px){.spmon-main{grid-template-columns:1fr}}
 /* 采集入口可溯源徽标 */
 .srx-entry{display:inline-flex;align-items:center;height:16px;padding:0 6px;margin-left:4px;
- border-radius:var(--pill);background:var(--r-blue-soft);color:var(--r-blue);font-size:9px;font-weight:700;white-space:nowrap}
+ border-radius:var(--pill);background:var(--r-blue-soft);color:var(--r-blue);font-size:10px;font-weight:700;white-space:nowrap}
+/* 历史行（落库早于入口字段上线）：同样给一个灰徽标，不留白——
+   留白会被读成「这行没采集/没来源」。与详情页「未记录（历史轮次
+   未存入口）」同口径。 */
+.srx-entry.none{background:var(--r-surface-3);color:var(--r-ink-3);font-weight:600}
 /* 渠道诊断 */
 .hdiag{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;padding:2px 2px 10px}
+/* r412：五渠道卡在 1000–1280 档 auto-fit 只排 4 列，第 5 张独占 1/4 宽、
+   右边留 75% 空白（用户实报「渠道健康里又有不对齐的布局设计」）。
+r433：改成 6 列 + 前三张 span2 / 后两张 span3 后，两行卡宽不一致
+   （1280 实测第一行 354px、第二行 536px），列不对齐又成了新的「不对称」。
+   实测五等宽在 1024 档也有 178px/卡、无任何裁切（.hdiag-l 最宽行 154px），
+   3+2 的必要性不成立。统一五等宽：一张卡对应一个渠道，一行看完，列宽恒定。 */
+.hdiag[data-n="5"]{grid-template-columns:repeat(5,minmax(0,1fr))}
+@media(max-width:1024px){
+ .hdiag[data-n="5"]{grid-template-columns:repeat(auto-fit,minmax(178px,1fr))}
+}
+@media(max-width:700px){
+ .hdiag[data-n="5"]{grid-template-columns:1fr}
+}
 .hdiag-card{display:flex;flex-direction:column;gap:4px;padding:10px 11px;border-radius:var(--r10);
  background:var(--r-surface-2);font-size:11px;line-height:1.45}
 .hdiag-h{display:flex;align-items:center;gap:6px;font-size:12px}
 .hdiag-h .bic{width:16px;height:16px}
-.hdiag-st{margin-left:auto;padding:1px 7px;border-radius:var(--pill);background:var(--r-surface);color:var(--r-ink-3);font-size:10px;font-weight:700;white-space:nowrap}
+.hdiag-st{margin-left:auto;padding:1px 6px;border-radius:var(--pill);background:var(--r-surface);color:var(--r-ink-3);font-size:10px;font-weight:700;white-space:nowrap}
 .hdiag-card.ip .hdiag-st{background:var(--r-red-soft);color:var(--r-red)}
 .hdiag-card.captcha .hdiag-st,.hdiag-card.login .hdiag-st{background:var(--r-amber-soft);color:var(--r-amber)}
 .hdiag-card.timeout .hdiag-st,.hdiag-card.unknown .hdiag-st{background:var(--r-amber-soft);color:var(--r-amber)}
-.hdiag-card.ok .hdiag-st{background:var(--r-green-soft);color:var(--r-green)}
+/* r431：状态徽「最近一轮正常」实测 4.32:1（--r-green #0e8345 于
+   --r-green-soft #eaf5ee，10px 文字）——低于 AA 4.5。改用项目已有的
+   --ok-txt（#0b6e39 / 暗色 #43c072），与达标 pill 同一文字令牌。 */
+.hdiag-card.ok .hdiag-st{background:var(--r-green-soft);color:var(--ok-txt)}
 .hdiag-l,.hdiag-e{font-size:10px;color:var(--r-ink-3)}
 .hdiag-l{display:flex;flex-wrap:wrap;gap:2px 8px}
 .hdiag-l span{white-space:nowrap}
 .hdiag-l span:not(:last-child)::after{content:'·';margin-left:6px;color:var(--r-ink-3)}
 .hdiag-l b{font-weight:600;color:var(--r-ink-2)}
+/* r436：证据行是五张卡共有的第四行，无论有无都必须占同一行位——
+   曾是条件渲染，有证据的两张把「自检」推下 15~23px。固定两行 + 行内裁剪：
+   单行省略在 250px 卡里只露出二十几个字（证据上限 160 字），两行才读得出
+   结论；title 保留全文，卡高不随证据长短变化，动作行永远在同一条线上。 */
+.hdiag-e{min-height:2.9em;display:-webkit-box;-webkit-line-clamp:2;
+ -webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+/* 单列档卡片各自独占一行、没有跨卡对齐问题，空证据行只是多出来的空洞：
+   不放进布局（卡高与动作位置都不再被它撑开）。 */
+@media(max-width:700px){
+ .hdiag-e:empty{display:none}
+}
 .hdiag-a{color:var(--r-ink-2)}
 .hdiag-card .btn2{align-self:flex-start;margin-top:2px}
+.hdiag{align-items:stretch}
+.hdiag-card{height:auto;align-self:stretch}
+/* r433：`.hdiag-a{margin-bottom:auto}` + `.hdiag-acts{margin-top:auto}` 曾把
+   动作行顶到卡底——卡片被 grid 拉伸到同高（1280 实测 136px）而内容只有
+   86~100px 时，「自检」被推下去 36px，左侧孤零零一颗钮、上方与正文空出
+   一大段，用户读作「渠道健康里又有不对齐的布局设计，自检按钮」。
+   动作是正文的延续，不是卡底工具条：跟着证据行往下排，留白留在卡尾。 */
+.hdiag-card .hdiag-acts{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px;padding-top:0;min-height:0}
+.hdiag-card .hdiag-acts .btn2{margin-top:0;height:26px;padding:0 9px;font-size:11px}
 /* 关注航线 / 关注航班共用设计语言：同一卡片、卡头、范围控件、图表容器、
    图例与指标排版。页面差异只保留业务内容，不再出现两套皮。 */
 .mon-card{background:var(--r-surface)!important;border:0!important;border-radius:14px!important;
@@ -6812,14 +7535,20 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
  flex-wrap:wrap;padding:0 0 10px!important;border-bottom:1px solid var(--r-hair)!important}
 .mon-chartwrap{background:var(--r-surface-2)!important;border:0!important;border-radius:12px!important;
  box-shadow:none!important;padding:10px!important}
-.mon-legend{display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-top:6px!important;
- padding:8px 2px 0!important;border-top:1px solid var(--r-hair);font-size:11px;color:var(--r-ink-3)!important}
+.mon-legend{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:6px!important;
+ padding:8px 2px 0!important;border-top:1px solid var(--r-hair);font-size:12px;color:var(--r-ink-3)!important}
 .mon-legend>span>b{width:16px!important;height:3px!important;border-radius:2px}
+/* 三图同一套脚注：图例只放图例项，说明另起一行「同一位置、同一字号、
+   同一上边距」。trend 曾把说明写进 .mon-legend 内并 flex-basis:100%，
+   图例盒子从 27px 撑到 64px（390 档 134px），另两图只有 27px ——
+   同一位置的三张图，图例高度差 2.4 倍。 */
+.chart-note{margin-top:6px;font-size:12px;line-height:1.5;color:var(--r-ink-3);
+ min-width:0;overflow-wrap:anywhere}
 .mon-kpis{display:grid!important;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px!important;padding:10px 0 4px!important}
 .ws-kpi{background:var(--r-surface-2)!important;border:0!important;border-radius:var(--r10)!important;
  box-shadow:none!important;padding:10px 12px!important}
 .ws-kpi .k{font-size:10px!important;letter-spacing:.3px;color:var(--r-ink-3)!important}
-.ws-kpi .v b{font-family:var(--num);font-size:20px!important}
+.ws-kpi .v b{font-family:var(--num);font-size:18px!important}
 .ws-kpi .f{font-size:10px!important;color:var(--r-ink-3)!important}
 .mon-range button,.rngchip{height:26px!important;padding:0 10px!important;border:0!important;
  border-radius:8px!important;background:var(--r-surface-2)!important;color:var(--r-ink-3)!important;
@@ -6828,7 +7557,7 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 .ws-head.mon-cardhead{align-items:flex-start}
 .ws-title{font-size:14px!important;font-weight:700!important;margin:2px 0 0!important;letter-spacing:0!important}
 .ws-sub{font-size:11px!important;color:var(--r-ink-3)!important;margin:2px 0 0!important;line-height:1.5}
-.ws-btn{height:28px!important;padding:0 10px!important;border:0!important;border-radius:8px!important;
+.ws-btn{height:28px!important;padding:0 10px!important;border:0!important;border-radius:var(--r3)!important;
  background:var(--r-surface-2)!important;color:var(--r-ink-2)!important;font-size:12px!important;font-weight:600!important}
 .ws-btn.primary{background:var(--r-blue)!important;color:#fff!important}
 .ws-btn:hover{background:var(--r-surface-3)!important;color:var(--r-ink)!important}
@@ -6845,9 +7574,19 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
    控件保留边界，语义标签保留颜色。 */
 .hdcard{background:transparent!important;border:0!important;
  border-bottom:1px solid var(--r-hair)!important;box-shadow:none!important;border-radius:0!important}
-.ucard,.mon-card,.ws-card,.cfgfieldset,#cfgview .ucard{
- background:transparent!important;border:0!important;border-top:1px solid var(--r-hair)!important;
- border-radius:0!important;box-shadow:none!important;margin:0!important;padding:14px 0!important}
+/* r383：整排卡片顶部那条 1px 通栏线是「分割线多/不干净」的主因；
+   扁平化改为同宽表面层次（--r-surface 为主，透明底在深色下不成立），
+   靠间距与字重分块，不再画线。 */
+.ucard,.mon-card,.ws-card,#cfgview .ucard{
+ background:var(--r-surface)!important;border:0!important;
+ border-radius:var(--r-card)!important;box-shadow:none!important;
+ margin:0!important;padding:14px 16px!important}
+/* 特价监控分组不再自成立面：与同卡其它行同底色、同左缘（零横向内边距）、
+   零圆角。此前它带着 16px 横向内边距和 14px 圆角，同卡内两组字段的标签
+   列实测分别落在 349 与 365，用户读作「配置页表头和内容不对齐」。 */
+#cfgview .cfgfieldset{background:transparent!important;border:0!important;
+ border-radius:0!important;box-shadow:none!important;margin:0!important;
+ padding:0!important}
 .ucard:first-child,.mon-card:first-child,.cfgfieldset:first-child{border-top:0!important}
 .uhead{padding:0 0 10px!important;border-bottom:0!important}
 .tabs{background:transparent!important;border-radius:0!important;
@@ -6862,30 +7601,48 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 .monroute-svg{background:transparent!important;border:0!important;border-radius:0!important;box-shadow:none!important}
 .ws-routebar,.ws-routewatch,.ws-empty-hero{background:transparent!important;border:0!important;
  border-radius:0!important;box-shadow:none!important}
-.hdiag-card{background:transparent!important;border:0!important;border-top:1px solid var(--r-hair)!important;
- border-radius:0!important;padding:10px 0!important}
-.hdiag{gap:0 18px!important}
-.spmon-chartwrap,.spmon-low{background:transparent!important;border:0!important;
- border-top:1px solid var(--r-hair)!important;border-radius:0!important;box-shadow:none!important;padding:10px 0!important}
+/* r383：诊断卡与雷达面板也曾各带一条 border-top；改成同款表面块，
+   网格同时恢复 10px 行距（grep 0 18px 时上下两排是贴着的）。 */
+.hdiag-card{background:var(--r-surface-2)!important;border:0!important;
+ border-radius:var(--r-ctl)!important;padding:10px 12px!important}
+.hdiag{gap:10px!important}
+.spmon-chartwrap,.spmon-low{background:var(--r-surface-2)!important;border:0!important;
+ border-radius:var(--r-ctl)!important;box-shadow:none!important;padding:10px 12px!important}
 .spmon-day{background:transparent!important;border:0!important;border-bottom:2px solid transparent!important;
  border-radius:0!important;box-shadow:none!important}
+/* 悬停必须有可见反馈：上面那条把该格的背景与边框全清了，基础规则里
+   的 .spmon-day:hover{background:…} 被 !important 吃掉，可点格子悬停
+   时毫无变化（cursor 是唯一线索）。改用与 low/sel 同族的底边线。 */
+.spmon-day:hover{border-bottom-color:var(--r-hair-2)!important}
 .spmon-day.low{border-bottom-color:var(--r-red)!important}
 .spmon-day.sel{border-bottom-color:var(--r-blue)!important}
-.spmon-empty{background:transparent!important;border:0!important;border-top:1px solid var(--r-hair)!important;
- border-radius:0!important}
+.spmon-empty{background:var(--r-surface-2)!important;border:0!important;
+ border-radius:var(--r-ctl)!important;padding:12px 14px!important}
 .spmon-srcchip{background:transparent!important;padding:0!important;border-radius:0!important}
 #searchview .srx-hero,#searchview .srx-probe,#searchview .srx-band,
 #searchview .srx-brief,#searchview .srx-context,#searchview .srx-list,
 #searchview .srx-mirror{background:transparent!important;border:0!important;
- border-top:1px solid var(--r-hair)!important;border-radius:0!important;box-shadow:none!important}
+ border-radius:0!important;box-shadow:none!important}
+/* r418：这一组曾统一加 border-top:1px solid var(--r-hair) —— 检索页于是
+   在探针/价带/筛选/列表/镜像之间横着 5 条满宽发丝线，正是用户反复报的
+   「折叠起来了，但是有很多分割线，很不干净」。区块之间的分隔交给留白
+   （各块自带 margin），只在真正需要行分隔的数据行里留线。 */
 #searchview .srx-hero{border-top:0!important}
 #searchview .srx-sp{background:transparent!important;border:0!important;
  border-left:2px solid var(--c,var(--r-hair))!important;border-radius:0!important}
 #searchview .srx-thead,#searchview .srx-mchrome{background:transparent!important;
  border-radius:0!important;border-bottom:1px solid var(--r-hair)!important}
 #searchview .srx-kpi-empty,#searchview .srx-footnote{background:transparent!important;border:0!important;
- border-top:1px solid var(--r-hair)!important;border-radius:0!important}
-.srccap{background:transparent!important;border:0!important;border-top:1px solid var(--r-hair)!important;border-radius:0!important}
+ border-radius:0!important}
+/* r419：`.srccap` 曾全局清成透明并补一条满宽 border-top —— 来源接入并入
+   渠道诊断卡后，这条既抹掉了卡内信息带底纹（实测 background 解析成
+   rgba(0,0,0,0)，整条又变回「卡片里嵌一段裸文本」的割裂观感），又在
+   诊断卡内部横加一条发丝线。改为：卡内保持无边框。
+   r423：底纹本身也是「独立一行」的成因（满宽色块自成一段）——标题行里
+   不再有底色，改由卡头 flex 行做分组，路径与标题同基线。 */
+#healthDiag .srccap{background:transparent!important;
+ border:0!important;border-radius:0!important}
+.srccap{background:transparent!important;border:0!important;border-radius:0!important}
 #searchview .srx-src{background:transparent!important;border:0!important;
  border-top:2px solid var(--pc,var(--r-hair))!important;border-radius:0!important;
  box-shadow:none!important;padding:8px 10px 6px!important}
@@ -6904,91 +7661,147 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.18)!impo
 
 .cfgchrome{background:transparent!important;border:0!important;border-bottom:1px solid var(--r-hair)!important;border-radius:0!important}
 .btn2{background:transparent!important;border:1px solid var(--r-hair)!important;
- border-radius:6px!important;box-shadow:none!important}
+ border-radius:var(--r3)!important;box-shadow:none!important}
 .btn2.primary{background:var(--r-blue)!important;border-color:var(--r-blue)!important;color:#fff!important}
-/* 渠道登录：从 5 个卡改为 5 行信息表，操作降为文字链接 */
+/* 渠道登录：从 5 个卡改为 5 行信息表，操作降为文字链接
+   三列：渠道名 | 状态说明（含槽位） | 操作。操作列定宽 96px 且
+   justify-items:end，保证 5 行按钮右缘严格对齐——此前单渠道把按钮
+   嵌在 .lgslot 内、飞猪双端是卡片直接子级，两种 DOM 让第三列塌成
+   0px，按钮右缘差 14px、行高 52/65 参差（1440 视口实测）。 */
 #loginRows .lggrid{display:grid;grid-template-columns:1fr!important;gap:0!important}
-#loginRows .lgcard{display:grid;grid-template-columns:170px minmax(0,1fr) auto!important;
+#loginRows .lgcard{display:grid;grid-template-columns:170px minmax(0,1fr) 96px!important;
+ grid-template-areas:"name info act"!important;
  align-items:center!important;gap:6px 14px!important;background:transparent!important;border:0!important;
  border-top:1px solid var(--r-hair)!important;border-radius:0!important;box-shadow:none!important;
- padding:10px 0!important;min-height:0!important}
+ padding:10px 0!important;min-height:52px!important;box-sizing:border-box!important}
 #loginRows .lgcard:first-child{border-top:0!important}
-#loginRows .lgcard>.lgname{grid-column:1;grid-row:1}
-#loginRows .lgcard>.lgsection{grid-column:2;grid-row:1;color:var(--r-ink-3)!important;font-size:11px!important}
-#loginRows .lgcard>.lgname+.lgsection{grid-row:1}
-#loginRows .lgcard>.lgname+.lgsection+.lgsection{grid-row:2}
-#loginRows .lgcard>.lgsection+.lgslots{grid-column:2;grid-row:2}
-#loginRows .lgcard>.lgslots{grid-column:2;grid-row:1;min-width:0}
-#loginRows .lgcard>.lgsection+.lgslots{grid-column:2;grid-row:2}
-#loginRows .lgcard>.btn2{grid-column:3;grid-row:1/span 2;justify-self:end;align-self:center}
+#loginRows .lgcard>.lgname{grid-area:name}
+#loginRows .lgcard>.lgsection{grid-area:info;color:var(--r-ink-3)!important;font-size:11px!important}
+#loginRows .lgcard>.lgname+.lgsection+.lgsection{grid-area:info}
+#loginRows .lgcard>.lgslots{grid-area:info;min-width:0}
+#loginRows .lgcard>.lgsection+.lgslots{grid-area:info}
+/* 操作列：直接子级的 .btn2 与 .lgact 都落在同一格，右缘严格对齐 */
+#loginRows .lgcard>.btn2,#loginRows .lgcard>.lgact{grid-area:act;justify-self:end;align-self:center}
+#loginRows .lgact{display:flex;justify-content:flex-end;width:100%}
 #loginRows .lgslots{display:grid;grid-template-columns:minmax(0,1fr)!important;gap:0!important}
+/* 飞猪双端：PC / H5 两槽并排，保持与单槽行同高。
+   窄档（≤700）行内已是两行网格（名字/操作 + 说明整行），并排会把说明
+   撑成 34px、行高比别家多 16px——窄档改回堆叠，用 · 分隔同一行。 */
+/* 双槽按内容宽度排列（auto auto），把 1fr 留给右侧空白——
+   两槽各占一半会把 PC / H5 拉开到屏幕两端，读起来像两件无关的事。 */
+#loginRows .lgslots:has(.lgslot+.lgslot){grid-template-columns:auto auto!important;
+ justify-content:start!important;gap:0 22px!important}
+@media(max-width:700px){
+ /* 窄档：每个槽位压成一行（标签 + 状态），否则 h/sub 两行 × 双槽 = 4 行，
+    行高会到 123px。特异性须高于前面 `#loginRows .lgslot{...}` 那条
+    （同为 !important 时后者胜），故用 `#loginRows .lgslots .lgslot`。 */
+ /* 窄档双槽并成一行（PC 明细可用 · H5 待验证），与单槽行等高 */
+ #loginRows .lgslots:has(.lgslot+.lgslot){grid-template-columns:auto minmax(0,1fr)!important;gap:0 10px!important}
+ #loginRows .lgslots .lgslot{grid-template-areas:"h sub"!important;
+  grid-template-columns:auto minmax(0,1fr)!important;gap:0 6px!important;align-items:baseline!important}
+ #loginRows .lgslots .lgslot-h{white-space:nowrap}
+ #loginRows .lgslots .lgslot .lgsub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+}
 #loginRows .lgslot{display:grid;grid-template-columns:minmax(0,1fr) auto!important;
  grid-template-areas:"h a" "sub a"!important;align-items:center!important;gap:1px 12px!important;
  padding:0!important;border:0!important;background:transparent!important}
 #loginRows .lgslot-h{grid-area:h}
 #loginRows .lgslot .lgsub{grid-area:sub}
-#loginRows .lgslot .btn2{grid-area:a;margin:0!important}
 #loginRows .lgcard .btn2{background:transparent!important;border:0!important;color:var(--r-blue)!important;
- padding:0 4px!important;min-height:28px!important;font-size:11px!important}
+ padding:0 4px!important;min-height:28px!important;font-size:11px!important;white-space:nowrap}
+/* 登录行按钮是「文字链接」形态（无边框无底色），全局 focus-visible 的
+   box-shadow 环在透明底上几乎不可见。此处改为下划线 + 变色双信号，
+   Tab 巡航时能明确看到当前停在哪一行。 */
+#loginRows .lgcard .btn2:focus-visible{
+ outline:none!important;text-decoration:underline!important;
+ text-underline-offset:3px!important;color:var(--r-blue-strong,var(--r-blue))!important;
+ box-shadow:0 0 0 2px var(--r-blue-soft)!important;border-radius:4px!important}
+/* 文字链接形态必须有 hover 下划线：全透明底色下唯一可用的悬停信号。
+   实测该按钮 hover 前后 8 个属性零变化（bg/border/color/shadow/transform/
+   filter/opacity/decoration），读作「点不动」。与 .uact2 a 等链接族同律。 */
+#loginRows .lgcard .btn2:hover{
+ text-decoration:underline!important;text-underline-offset:3px!important;
+ color:var(--r-blue-strong,var(--r-blue))!important}
 #loginRows .lgnote{border-top:1px solid var(--r-hair)!important;margin-top:8px!important;padding-top:8px!important}
 /* 渠道入口：行对齐，特价两条并排，不再跨半宽空腔 */
 .chband-links.spec{display:flex!important;flex-wrap:wrap!important;
  grid-template-columns:none!important;gap:4px 22px!important}
 #tabs{background:transparent!important;border-radius:0!important;border:0!important;
  border-bottom:1px solid var(--r-hair)!important;padding:0!important}
-#healthcard{background:transparent!important;border:0!important;border-top:1px solid var(--r-hair)!important;
- border-radius:0!important;box-shadow:none!important;padding:14px 0!important}
-#montab-watch .ws-card{background:transparent!important;border:0!important;
- border-top:1px solid var(--r-hair)!important;border-radius:0!important;box-shadow:none!important;padding:14px 0!important}
+/* r383 扁平收口：这一段曾给健康卡/关注卡/航线片/曲线区/航班行各自
+   加一条 border-top，整页就是一层层横线（用户实报「分割线多、不干净」）。
+   去掉横线，改回同宽表面块 + 统一间距来分块。 */
+#healthcard{background:var(--r-surface)!important;border:0!important;
+ border-radius:var(--r-card)!important;box-shadow:none!important;padding:14px 16px!important}
+#montab-watch .ws-card{background:var(--r-surface)!important;border:0!important;
+ border-radius:var(--r-card)!important;box-shadow:none!important;padding:14px 16px!important}
 .ws-head{background:transparent!important;box-shadow:none!important}
-.ws-route{background:transparent!important;border:0!important;border-top:1px solid var(--r-hair)!important;
- border-radius:0!important;box-shadow:none!important}
-.ws-route.on{background:var(--r-blue-soft)!important;border-top-color:var(--r-blue)!important}
+.ws-route{background:transparent!important;border:0!important;
+ border-radius:var(--r-ctl)!important;box-shadow:none!important}
+.ws-route.on{background:var(--r-blue-soft)!important}
 .ws-chartwrap,.ws-focus,.ws-focus-main,.sector-strip{background:transparent!important;border:0!important;
- border-top:1px solid var(--r-hair)!important;border-radius:0!important;box-shadow:none!important}
-.monwatch{background:transparent!important;border:0!important;border-top:1px solid var(--r-hair)!important;
- border-radius:0!important;padding:10px 0!important}
+ border-radius:0!important;box-shadow:none!important}
+.monwatch{background:var(--r-surface-2)!important;border:0!important;
+ border-radius:var(--r-ctl)!important;padding:10px 12px!important}
 .monwatch-svg{background:transparent!important;border:0!important;border-radius:0!important}
 .statline{background:transparent!important;border:0!important;border-radius:0!important}
 #searchview .srx-mrow{background:transparent!important;border:0!important;
  border-bottom:1px solid var(--r-hair)!important;border-radius:0!important;box-shadow:none!important}
 #searchview .srx-mrow.sel{background:var(--r-blue-soft)!important}
-#searchview .srx-more-rows{background:transparent!important;box-shadow:none!important;border-radius:0!important}
+#searchview .srx-more-rows{box-shadow:none!important}
 .demoBar{border-radius:0!important}
 .chlink{justify-content:flex-start!important;text-align:left!important}
 a.chlink .chlink-go{font-size:0!important}
 a.chlink .chlink-go::after{content:'↗';font-size:10px!important}
-.chlink-go{font-size:9px!important;color:var(--r-ink-3)!important}
+.chlink-go{font-size:10px!important;color:var(--r-ink-3)!important}
 @media(max-width:700px){
- #loginRows .lgcard{grid-template-columns:1fr auto!important;gap:4px 10px!important}
- #loginRows .lgcard>.lgname{grid-column:1;grid-row:1}
- #loginRows .lgcard>.btn2{grid-column:2;grid-row:1}
- #loginRows .lgcard>.lgsection,#loginRows .lgcard>.lgslots{grid-column:1/-1;grid-row:2}
- #loginRows .lgcard>.lgname+.lgsection{grid-column:1/-1;grid-row:2}
- #loginRows .lgcard>.lgname+.lgsection+.lgsection{grid-column:1/-1;grid-row:3}
- #loginRows .lgcard>.lgsection+.lgslots{grid-column:1/-1;grid-row:3}
- #loginRows .lgcard>.lgname+.lgsection+.lgsection{grid-row:3}
- #loginRows .lgcard>.lgsection+.lgslots{grid-column:1/-1;grid-row:3}
+ /* 窄档：名称与操作同一行，说明整行铺开。禁用固定行号——此前按 1/2/3
+    行硬排，遇飞猪这种多一段说明的渠道会多占一行，行高 88 vs 109 参差。 */
+ #loginRows .lgcard{grid-template-columns:minmax(0,1fr) auto!important;
+  grid-template-areas:"name act" "info info"!important;gap:4px 10px!important}
+ #loginRows .lgcard>.lgname{grid-area:name}
+ #loginRows .lgcard>.lgact,#loginRows .lgcard>.btn2{grid-area:act}
+ #loginRows .lgcard>.lgsection,
+ #loginRows .lgcard>.lgslots,
+ #loginRows .lgcard>.lgname+.lgsection,
+ #loginRows .lgcard>.lgname+.lgsection+.lgsection,
+ #loginRows .lgcard>.lgsection+.lgslots{grid-area:info}
  .chband-links.spec{display:flex!important;gap:4px 16px!important}
 }
 
 /* ===== 检索页信息密度收口：标题/探针/价带/五源/筛选全压成紧凑行 ===== */
-#searchview .srx-ovbar{display:flex;align-items:center;gap:12px;padding:4px 0;margin:2px 0 4px;
- border-top:1px solid var(--r-hair);border-bottom:1px solid var(--r-hair);font-size:11px;min-width:0}
-#searchview .srx-ovsum{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--r-ink-2)}
+/* 概览＝一个自包含区块：标题行（只读摘要 + 唯一开合钮）+ 正文。
+   展开内容紧随触发器，中间不夹探针卡；收起时正文整体消失，不留空壳。 */
+#searchview .srx-overview{margin:2px 0 8px;min-width:0}
+#searchview .srx-ovbody{display:flex;flex-direction:column;min-width:0}
+/* 概览开合不再单独占一行：触发器就是价带头右侧那颗钮，价带头本身是
+   常驻标题行（14 日出发价带 + 摘要 + 翻页/轴/渠道登录）。
+   收起＝只收价带的天数条与其后所有正文；标题行高度、按钮位置两态一致，
+   所以既不会有「展开独立占一行」，也不会有「触发器跳位」。 */
+#searchview.srx-ov-collapsed #srxBandBody,
+#searchview.srx-ov-collapsed #srxBrief,
+#searchview.srx-ov-collapsed #srxCapbar,
+#searchview.srx-ov-collapsed #srxKpis{display:none!important}
+#searchview.srx-ov-collapsed #srxBand .srx-band-h{margin-bottom:0!important}
+#searchview #srxBand .srx-band-h{min-height:28px;align-items:center}
+#searchview #srxOvSum{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
+ white-space:nowrap;font-size:11px;color:var(--r-ink-3);margin-left:2px}
+#searchview .srx-ovtoggle{flex:0 0 auto;margin-left:6px}
 #searchview .srx-capbar .capstate{margin-left:auto;font-size:11px;color:var(--r-ink-2);white-space:nowrap}
 #searchview .srx-capbar .capact{flex:0 0 auto;border:0;background:transparent;color:var(--r-blue);font-size:11px;height:24px;padding:0 4px;cursor:pointer;white-space:nowrap}
 #searchview .srx-ovbtn{flex:0 0 auto;background:transparent!important;border:0!important;color:var(--r-blue)!important;
  padding:0 2px!important;height:24px!important;font-size:11px!important;box-shadow:none!important;cursor:pointer}
-#searchview.srx-ov-collapsed .srx-brief,#searchview.srx-ov-collapsed .srx-capbar,
-#searchview.srx-ov-collapsed .srx-audit{display:none!important}
 #searchview .srx-hero{padding:5px 0 7px!important;margin-bottom:2px!important;min-height:0!important}
 #searchview .srx-hero h1{font-size:18px!important;margin:1px 0 0!important;line-height:1.3!important}
 #searchview .srx-hero-copy.srx-folded h1{display:block!important}
 #searchview .srx-hero-copy.srx-folded p{display:none!important}
 #searchview .srx-hero p{font-size:11px!important;margin:2px 0 0!important}
 #searchview .srx-eyebrow{font-size:11px!important;gap:6px!important}
-#searchview .srx-foldbtn{height:22px!important;padding:0 6px!important;font-size:11px!important}
+/* r388 折叠钮统一档：同屏曾并存 22/26/30/32px 四种高、6/7/9px 三种
+   圆角——同一个动作长得像四个产品。全检索页折叠族收敛为
+   26px 高 / 7px 圆角 / 11px 字。 */
+#searchview .srx-foldbtn{height:26px!important;padding:0 9px!important;font-size:11px!important;
+ border-radius:var(--r3)!important}
 #searchview .srx-probe:not(.open){display:block!important;padding:0!important}
 #searchview .srx-probe .srx-probehead{padding:2px 0!important;min-height:30px!important}
 #searchview .srx-band{padding:3px 10px!important;margin:2px 0!important}
@@ -7001,15 +7814,42 @@ a.chlink .chlink-go::after{content:'↗';font-size:10px!important}
  gap:0!important;margin:2px 0 5px!important}
 #searchview .srx-src{padding:4px 8px 4px!important;min-height:0!important}
 #searchview .srx-src .srx-srcname,.searchview .srx-src-name{font-size:11px!important}
+/* r425：`display:flex!important` 会压过 `[hidden]{display:none}`——空态
+   capbar（innerHTML=0、hidden=true）仍被强制渲染成 6px 高、上下各一条
+   发丝线的空条，展开概览时它正好夹在价带与五源之间，用户读作「展开后
+   中间还有元素常驻」+「分割线很多」。补一条同等特异性的 [hidden] 规则，
+   并去掉这两条无信息的通栏线。 */
 #searchview .srx-capbar{display:flex!important;background:transparent!important;border:0!important;
- border-top:1px solid var(--r-hair)!important;border-bottom:1px solid var(--r-hair)!important;
  border-radius:0!important;padding:3px 0!important;margin:1px 0 4px!important}
+#searchview .srx-capbar[hidden]{display:none!important;margin:0!important;padding:0!important}
 #searchview .srx-probefoot{margin:0!important;padding:2px 0!important}
 #searchview .srx-probe:not(.open) .srx-probeacts>*:not(.srx-probe-toggle){display:none!important}
 #searchview .srx-probe:not(.open) .srx-probe-mini{display:none!important}
 #searchview .srx-probe:not(.open) .srx-probehead{min-height:30px!important;height:30px!important;overflow:hidden!important}
+/* r425：≤760 档把切换钮排进 acts 后，acts 实测 40px 高于这条锁死的 30px，
+   按钮被裁到头部盒外（其上 20px 落进 .srx-mobilebar 的矩形），
+   elementFromPoint 命中移动栏 → 「展开探针」点不动（390/460/760 实测
+   aria 恒为 false、探针永不打开）。窄档放开高度与裁切，让按钮回到可点区域。 */
+@media(max-width:760px){
+ #searchview .srx-probe:not(.open) .srx-probehead{min-height:40px!important;
+  height:auto!important;overflow:visible!important}
+ /* 展开态也要 40px：收起 40 / 展开 30 会让居中的切换钮纵移 2px
+    ——正是用户反复念的「展开位置都发生了偏移」。两态同高。 */
+ #searchview .srx-probe.open .srx-probehead{min-height:40px!important}
+ /* 头部两态内容行数会变（小标显隐），`align-items` 居中会让按钮跟着移动。
+    窄档一律顶对齐，按钮的纵向基准就只由头顶边决定。 */
+ #searchview .srx-probe .srx-probehead{align-items:flex-start!important;
+  overflow:visible!important;align-content:flex-start!important}
+}
+/* r388 令牌收口：快筛 chip 同一族控件曾在 1440/1100/900/540 四个断点
+   各写 min-height 24/25/26/27/28——同一颗胶囊换个窗口就变高，读作
+   廉价。全局只留 25px 一档（密度层此前已 !important 定死 25，其余
+   四条是永不生效的暗雷）。 */
 #searchview .srx-chips{gap:2px!important}
 #searchview .srx-chip{min-height:25px!important;padding:0 8px!important;font-size:11px!important}
+/* 「更多条件」在同一行里必须与快筛 chip 同密度：它曾是虚线框 10px
+   的异物（同行动作长得像另一个产品）。这里跟密度层同档，形状仍是胶囊。 */
+#searchview .srx-more{min-height:25px!important;padding:0 8px!important;font-size:11px!important}
 #searchview .srx-kpi.on{background:var(--r-blue-soft)!important;box-shadow:inset 0 -2px 0 var(--r-blue)!important}
 #searchview .srx-audit{display:flex!important;flex-wrap:wrap;align-items:center;gap:4px 18px!important;
  margin:2px 0 5px!important;padding:4px 0!important;border-top:1px solid var(--r-hair)!important;
@@ -7077,19 +7917,23 @@ button:focus-visible,.chip:focus-visible,nav span:focus-visible,.tabs span:focus
 .cnav:focus-visible,.rngchip:focus-visible,.hbtn:focus-visible,[role="button"]:focus-visible,
 a.vw:focus-visible,a.numlink:focus-visible,.kpisum a:focus-visible,#foot a:focus-visible,
 .demoBar a:focus-visible,.verbar a:focus-visible,.pvbody a:focus-visible,
-#chart:focus-visible,.kpi.clk:focus-visible{
+.kpi.clk:focus-visible{
  box-shadow:0 0 0 2px var(--blue)!important;outline:none!important;transition:box-shadow 0s!important}
+/* 三张走势图画布的焦点环统一 inset：外扩环在贴边画布上会被相邻卡裁掉，
+   而全站按钮环是外扩的——画布因此单独成组，不与按钮共用一条。 */
+#chart:focus-visible,#wsChart:focus-visible,#spMonChart:focus-visible{
+ box-shadow:inset 0 0 0 2px var(--blue)!important;outline:none!important;transition:box-shadow 0s!important}
 #opscard .opsbtns>button:focus-visible,#opscard .opsbtns>button:first-child:focus-visible,
 #montab-watch .ws-route:focus-visible,#montab-watch .ws-ranges button:focus-visible,
 #montabs .mtab:focus-visible,#mainnav span:focus-visible,#tabs span:focus-visible,
 #cfgnav .cnav:focus-visible,.ws-btn:focus-visible,.btn2:focus-visible{
  box-shadow:0 0 0 2px var(--blue)!important;outline:none!important;transition:box-shadow 0s!important}
 button.warn{background:transparent!important;color:var(--r-ink-2)!important;
- border:1px solid var(--r-hair)!important;border-radius:6px!important;box-shadow:none!important}
+ border:1px solid var(--r-hair)!important;border-radius:var(--r3)!important;box-shadow:none!important}
 button.warn:hover{background:var(--r-blue-soft)!important;border-color:var(--r-blue)!important;
  color:var(--r-blue)!important;filter:none!important}
 #opscard .opsbtns>button{height:32px!important;background:transparent!important;
- border:1px solid var(--r-hair)!important;border-radius:6px!important;box-shadow:none!important;
+ border:1px solid var(--r-hair)!important;border-radius:var(--r3)!important;box-shadow:none!important;
  color:var(--r-ink-2)!important;font-weight:600!important;padding:0 13px!important}
 #opscard .opsbtns>button:hover{background:var(--r-blue-soft)!important;
  border-color:var(--r-blue)!important;color:var(--r-blue)!important}
@@ -7098,13 +7942,13 @@ button.warn:hover{background:var(--r-blue-soft)!important;border-color:var(--r-b
 #opscard .opsbtns>button:first-child:hover{background:var(--r-blue-hover)!important;
  color:#fff!important}
 .btn2{background:transparent!important;color:var(--r-ink-2)!important;
- border:1px solid var(--r-hair)!important;border-radius:6px!important;box-shadow:none!important}
+ border:1px solid var(--r-hair)!important;border-radius:var(--r3)!important;box-shadow:none!important}
 .btn2:hover{background:var(--r-blue-soft)!important;border-color:var(--r-blue)!important;
  color:var(--r-blue)!important;box-shadow:none!important}
 .btn2.primary{background:var(--r-blue)!important;border-color:var(--r-blue)!important;color:#fff!important}
 .btn2.primary:hover{background:var(--r-blue-hover)!important;filter:none!important}
 .ws-btn{background:transparent!important;border:1px solid var(--r-hair)!important;
- border-radius:6px!important;box-shadow:none!important}
+ border-radius:var(--r3)!important;box-shadow:none!important}
 .ws-btn:hover{background:var(--r-blue-soft)!important;border-color:var(--r-blue)!important;
  color:var(--r-blue)!important}
 .ws-btn.primary{background:var(--r-blue)!important;border-color:var(--r-blue)!important;color:#fff!important}
@@ -7131,6 +7975,19 @@ a.chlink:hover{background:transparent!important;border:0!important;color:var(--r
 #tablecard .tw{background:transparent!important;border:0!important;border-top:1px solid var(--r-hair)!important;
  border-radius:0!important;box-shadow:none!important}
 #ftable{background:transparent!important}
+/* r448：明细表吸顶表头在容器内滚动时**根本没吸住**——实测 .tw scrollTop
+   1741/5223/9285 三处，thead 相对容器顶恒为「-scrollTop」（随内容滚走），
+   用户报的「表头滑下来时透明遮挡数据」其实是表头压根没停在顶部。
+   根因：`th{position:sticky;top:0}` 的包含块是**表格自身**（表格高度等于
+   全部内容高度），所以永远没有可吸附的行程。sticky 必须挂在 thead 上。
+   （先试过 border-collapse:separate，无效——collapsed 不是真因。）
+   修后实测：rel 恒为 1px（吸住），表头底为实色 rgb(245,246,248)，
+   9 点取样透出 0。 */
+#ftable{border-collapse:separate;border-spacing:0}
+#ftable thead{position:sticky;top:0;z-index:7}
+/* 纵向吸附交给 thead（th 的包含块是表格自身，永不吸附）；
+   th 自己仍是 sticky 以满足首列横向吸附（left:0），只把纵轴让出去。 */
+#ftable thead th{top:auto}
 /* 关注航线的可选航线：退成可点行，选中用下划线+淡蓝底，不再套圆角卡 */
 #montab-watch .ws-route{background:transparent!important;border:0!important;
  border-top:1px solid var(--r-hair)!important;border-radius:0!important;box-shadow:none!important}
@@ -7151,10 +8008,10 @@ a.chlink:hover{background:transparent!important;border:0!important;color:var(--r
 #montab-watch .ws-routebar{padding:4px 0 2px!important}
 #montab-watch .ws-route{min-height:44px!important;padding:5px 8px!important}
 #montab-watch .ws-chart-h{min-height:36px!important;padding:3px 0!important}
-#montab-watch .ws-chartwrap{height:200px!important;min-height:160px!important}
+#montab-watch .ws-chartwrap{height:clamp(240px,max(38vh,28vw),360px)!important;min-height:160px!important}
 /* 无采集点时不摆 200px 空框：空态自己撑高，有数据再恢复画布高度 */
 #montab-watch .ws-chartwrap.is-empty{height:auto!important;min-height:0!important}
-#montab-watch #wsChart{height:200px!important}
+#montab-watch #wsChart{height:clamp(240px,max(38vh,28vw),360px)!important}
 #montab-watch .ws-empty{padding:18px 12px!important;min-height:0!important}
 @media(max-width:760px){
  #searchview .srx-brief{display:grid!important;grid-auto-flow:column!important;
@@ -7164,19 +8021,25 @@ a.chlink:hover{background:transparent!important;border:0!important;color:var(--r
  #searchview .srx-src-sub{display:none!important}
  #searchview .srx-src-bar{display:none!important}
  #searchview .srx-brieffold{display:none!important}
- #searchview .srx-hero-act{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;
-  gap:4px!important}
+ /* r435：760 这一档原本又被一条 2 列网格规则接管（`!important`、源码在全表
+    最后），使 601–760 的开合位移依旧存在（实测 760 档横移 364px、纵移
+    102px）。全站窄档统一为「单行横滚 + 触发器 sticky 右端」，不再有第二
+    套网格形态。 */
+ #searchview .srx-hero-act{display:flex!important;flex-wrap:nowrap!important;grid-template-columns:none!important;
+  gap:4px!important;overflow-x:auto!important;overflow-y:visible!important;scrollbar-width:thin}
+ #searchview .srx-hero-act .srx-btn{flex:0 0 auto!important;width:auto!important}
+ #searchview .srx-hero-act>.srx-more-btn{position:sticky!important;right:0!important;z-index:2;margin:0 0 0 auto!important;
+  box-shadow:-8px 0 8px -8px rgba(16,24,40,.2)}
 }
 #montab-watch .ws-kpi .f{display:none!important}
 #montab-watch .ws-kpi{padding:4px 10px!important}
 #montab-watch .ws-routewatch{display:none!important}
 #searchview .srx-band-note{display:none!important}
+/* 时间范围/模式：与航线 .rngchip、雷达 .spmon-range 同一条选中语言——
+   软蓝胶囊。这条规则曾把关注区间改成「文字+下划线」，三图因此三套形制；
+   现统一继承 .mon-range 单源，不再在此另写一套 !important。 */
 #montab-watch .ws-ranges{background:transparent!important;border:0!important;border-radius:0!important;
  padding:0!important;gap:2px!important}
-#montab-watch .ws-ranges button{border:0!important;border-radius:0!important;background:transparent!important;
- box-shadow:none!important;color:var(--r-ink-3)!important}
-#montab-watch .ws-ranges button.on{background:transparent!important;color:var(--r-blue)!important;
- box-shadow:inset 0 -2px 0 var(--r-blue)!important}
 #montab-watch .ws-lg{border:0!important;border-radius:0!important;background:transparent!important;
  box-shadow:none!important;padding:4px 0!important}
 #montab-watch .ws-lg.on{background:transparent!important;color:var(--r-blue)!important;
@@ -7196,18 +8059,35 @@ a.chlink:hover{background:transparent!important;border:0!important;color:var(--r
 #cfgnav .cnav.on{background:transparent!important;color:var(--r-blue)!important;
  border-left-color:var(--r-blue)!important;box-shadow:none!important}
 #cfgnav .cnav:hover{background:transparent!important;color:var(--r-blue)!important}
-#cfgnav .cfgsearch{background:transparent!important;border:1px solid var(--r-hair)!important;border-radius:6px!important}
+#cfgnav .cfgsearch{background:transparent!important;border:1px solid var(--r-hair)!important;border-radius:var(--r3)!important}
 /* 配置用户区：统计台/用户头/分组头/关注面板/工具条全部回到页面平面 */
 #cfgview .cfgdeck{background:transparent!important;border:0!important;border-bottom:1px solid var(--r-hair)!important;
  border-radius:0!important;box-shadow:none!important}
 #cfgview .uhead2{background:transparent!important;border:0!important;
  border-top:1px solid var(--r-hair)!important;border-bottom:1px solid var(--r-hair)!important;
  border-radius:0!important;box-shadow:none!important}
+/* 配置面板缩进单源：卡头文字、分组标题、设置行文字都落在同一条竖线。
+   卡头＝22px 图标 + 9px 间距 → 文字在 31px；分组标题是纯文本标签（序号
+   徽标在文字左侧，不再额外占缩进），故两侧 padding 交给同一变量。 */
+#cfgview{--cfg-ind:16px}
+/* 配置页竖向对齐单源：卡头、分组标题、设置行都从同一左缘起算，
+   水平缩进统一由 --cfg-ind 表达（16px＝展开体容器的既有内边距）。
+   三者各写一个 padding 必然漂出 16/31/41px 三条竖线。 */
 #cfgview .grouplab{background:transparent!important;border:0!important;
- border-top:1px solid var(--r-hair)!important;border-radius:0!important;box-shadow:none!important}
+ border-top:1px solid var(--r-hair)!important;border-radius:0!important;box-shadow:none!important;
+ padding-left:0!important;
+ margin:8px 0 6px!important}
+#cfgview #cfgform .rline .srow,#cfgview #cfgform .srow{padding-left:2px!important}
+/* r424：用户实报「折叠起来了，但是有很多分割线，很不干净」「整个项目要扁平
+   干净」。配置页「用户与航线」实测有 20 条满宽发丝线（8×.srow + addrbtn 等），
+   全是 .srow 的 border-bottom 叠出来的。与检索页 r418「撤区块间满宽分隔线」
+   同一条设计语言：行与行靠间距分组，不靠画线。 */
+#cfgview .srow{border-bottom:0!important}
+#cfgview .rline .srow,#cfgview #cfgform .srow{padding-top:10px!important;
+ padding-bottom:10px!important}
 #cfgview .rline{box-shadow:none!important;border-radius:0!important}
 #cfgview #cfgWatch{background:transparent!important;border:0!important;
- border-top:1px solid var(--r-hair)!important;border-radius:0!important;box-shadow:none!important}
+ border-radius:0!important;box-shadow:none!important}
 #cfgview .cfgwatch-toolbar{background:transparent!important;border:0!important;
  border-top:1px solid var(--r-hair)!important;border-bottom:1px solid var(--r-hair)!important;
  border-radius:0!important;box-shadow:none!important}
@@ -7223,7 +8103,7 @@ a.chlink:hover{background:transparent!important;border:0!important;color:var(--r
 #cfgview .cfgseg .chip.on{background:transparent!important;color:var(--r-blue)!important;
  box-shadow:inset 0 -2px 0 var(--r-blue)!important}
 #cfgview .fld{background:var(--r-surface-2)!important;border:1px solid var(--r-hair)!important;
- border-radius:6px!important;box-shadow:none!important}
+ border-radius:var(--r3)!important;box-shadow:none!important}
 #cfgview .chcard{background:transparent!important;border:0!important;
  border-top:1px solid var(--r-hair)!important;border-radius:0!important;box-shadow:none!important}
 #cfgview .glcell{background:transparent!important;border:0!important;
@@ -7252,22 +8132,34 @@ a.chlink:hover{background:transparent!important;border:0!important;color:var(--r
  border-top:1px solid var(--r-hair);border-bottom:1px solid var(--r-hair);
  font-size:12px;color:var(--r-ink-3);min-height:0}
 .spmon-sum:empty{display:none}
-.spmon-sum b{font-family:var(--num);font-size:18px;color:var(--r-ink);font-weight:800}
-.spmon-sum .k{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--r-ink-3)}
+/* 汇总数字/标签：与关注 KPI（.ws-kpi .v b 22px/650、标签 12px）同一档。
+   旧档是 18px/800 + 10px 全大写 + .08em 字距——中文大写与字距本就是噪声。 */
+.spmon-sum b{font-family:var(--num);font-size:22px;line-height:1;font-weight:600;
+ letter-spacing:-.5px;color:var(--r-ink)}
+.spmon-sum .k{font-size:12px;letter-spacing:0;text-transform:none;color:var(--r-ink-3)}
 .spmon-sum .sep{color:var(--r-hair-2)}
 .spmon-tools{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:2px 0 6px}
 .spmon-range,.spmon-mode{display:inline-flex;align-items:center;gap:2px}
-.spmon-tools button{background:transparent;border:0;border-radius:0;padding:2px 6px;
- font-size:11px;font-weight:600;color:var(--r-ink-3);box-shadow:none;cursor:pointer}
-.spmon-tools button.on{color:var(--r-blue);box-shadow:inset 0 -2px 0 var(--r-blue)}
+.spmon-tools button{background:transparent;border:0;border-radius:8px;padding:0 10px;
+ height:26px;font-size:12px;font-weight:600;color:var(--r-ink-2);box-shadow:none;cursor:pointer}
+.spmon-tools button:hover{background:var(--r-surface-3);color:var(--r-ink)}
+/* 选中语言与航线 .rngchip.on / 关注 .ws-ranges button.on 同一条：软蓝底 */
+.spmon-tools button.on{background:var(--r-blue-soft);color:var(--r-blue);box-shadow:none}
 .spmon-chartwrap{overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;overscroll-behavior-x:contain;touch-action:pan-x;-webkit-overflow-scrolling:touch}
 .spmon-chartwrap.pan-x{cursor:grab}.spmon-chartwrap.pan-x.dragging{cursor:grabbing}
 .spmon-chartwrap{position:relative}
-.spmon-cross{position:absolute;width:1px;background:var(--r-blue);opacity:.35;pointer-events:none;display:none;z-index:1}
+.spmon-cross{position:absolute;width:1px;pointer-events:none;display:none;z-index:1;
+ /* 与航线/关注同一条十字线语言：中性墨虚线（旧为淡蓝实线，
+    三图光标同形不同色，读作两套系统） */
+ /* 色与节距都与另两图一致：--mut + 3px 划线/3px 间隔（旧用 --r-ink-3
+    与 4/8 节距，浅色下 5a6c7d vs 647080、深色下 7f92a6 vs 8b99a9，
+    同屏两条十字线深浅不同）。 */
+ background-image:repeating-linear-gradient(to bottom,var(--mut) 0 3px,transparent 3px 6px);
+ opacity:.5}
 #spMonChart{max-width:none}
 /* 雷达条件表单的原生控件并轨到细边框控件语言 */
 #spRadarForm input:not([type=checkbox]),#spRadarForm input[type=date]{height:30px!important;
- background:var(--r-surface-2)!important;border:1px solid var(--r-hair)!important;border-radius:6px!important;
+ background:var(--r-surface-2)!important;border:1px solid var(--r-hair)!important;border-radius:var(--r3)!important;
  box-shadow:none!important;color:var(--r-ink)!important;padding:0 8px!important;font-size:12px!important}
 #spRadarForm input:not([type=checkbox]):focus{border-color:var(--r-blue)!important;
  box-shadow:0 0 0 2px var(--r-blue-ring)!important;background:var(--r-canvas)!important}
@@ -7323,15 +8215,6 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
 }
 /* 检索首屏收口（必须置末，覆盖 640/760 断点的两列网格回退）：
    窄屏概览交给移动栏「概览」控制；工具条单行横滚，标题与来源一行。 */
-@media(max-width:1100px){
- #searchview .srx-ovbar{display:none!important}
- #searchview:not(.show-overview) .srx-brief,
- #searchview:not(.show-overview) .srx-audit,
- #searchview:not(.show-overview) .srx-capbar{display:none!important}
- #searchview.show-overview .srx-brief{display:grid!important}
- #searchview.show-overview .srx-audit{display:flex!important}
- #searchview.show-overview .srx-capbar{display:flex!important}
-}
 @media(max-width:560px){
  #searchview .srx-hero{padding:2px 2px 4px!important;margin-bottom:4px!important;align-items:center!important;flex-wrap:wrap!important;gap:4px!important}
  #searchview .srx-hero-copy{flex:1 1 100%!important;display:block!important;min-width:0!important;overflow:hidden}
@@ -7351,22 +8234,31 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
  #searchview .srx-hero-act.open .srx-btn[data-sec],
  #searchview .srx-hero-act.open .srx-btn.srx-keep[data-sec]{display:inline-flex!important}
  #searchview .srx-hero-act .srx-more-btn{display:inline-flex!important;background:var(--r-surface-2)!important}
+ /* r435：这一档是 `nowrap + overflow-x:auto`（!important 压过 600 档的 grid），
+    展开后内容 770 > 容器 522——触发器被顶到 x=700，直接出了视口点不到
+    （实测 560/500 档）。sticky 固定在容器右缘，两态都不随横滚跑掉。 */
+ #searchview .srx-hero-act>.srx-more-btn{position:sticky!important;right:0!important;z-index:2;
+  margin:0 0 0 auto!important;box-shadow:-8px 0 8px -8px rgba(16,24,40,.2)}
 }
 @media(max-width:360px){
  #searchview .srx-hero-act{gap:3px!important}
  #searchview .srx-hero-act select{max-width:86px}
  #searchview .srx-hero-act .srx-btn{padding:0 7px!important}
- /* 320 四格 KPI：渠道覆盖 3.5/5 不得折成两行 */
+ /* 320 四格 KPI：渠道覆盖 3.5/5 不得折成两行。
+    只在 `.v` 上写 nowrap 不够——单位是 flex 子项 `<span>`，会被压到
+    14px 后在内部折行（实测 320 档「3.5 /」+「5」两行、单元格 18→30px）。
+    单位本身不参与收缩，配合容器 nowrap 才是单行。 */
  #montab-watch .ws-kpi{padding:5px 6px!important}
  #montab-watch .ws-kpi .k{font-size:10px!important}
- #montab-watch .ws-kpi .v{font-size:15px!important;white-space:nowrap!important}
+ #montab-watch .ws-kpi .v{font-size:16px!important;white-space:nowrap!important}
+ #montab-watch .ws-kpi .v span{flex:none!important}
 }
 /* 关注走势窄屏同律：说明文字让位给图表，标题/状态与动作保持一行。 */
 @media(max-width:560px){
  #montab-watch .ws-sub{display:none!important}
  #montab-watch .ws-head{padding:2px 0 4px!important;min-height:0!important;gap:4px!important}
  #montab-watch .ws-head-act{width:100%!important;justify-content:flex-end!important;gap:5px!important}
- #montab-watch .ws-head-act .ws-btn{height:28px!important;font-size:11px!important}
+ #montab-watch .ws-head-act {height:28px!important;font-size:11px!important}
  /* 首屏让图：航线副标题与图表脚注均已在 KPI/标题中重复，窄屏收起 */
  #montab-watch .ws-routebar-h{display:none!important}
  #montab-watch .ws-chart-title span{display:none!important}
@@ -7376,7 +8268,6 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
 
 /* v304 人读顺序：先局势与动作，再数据，证据后置；同类信息只出现一次。 */
 #srxRestoreLink[hidden],#searchview .srx-audit[hidden]{display:none!important}
-#searchview:not(.srx-ov-collapsed) .srx-ovbar{display:none!important}
 @media(min-width:761px){
  #montab-watch .ws-kpis{display:flex!important;flex-wrap:nowrap!important;gap:16px!important;border:0!important;margin:1px 0 0!important;padding:0!important;min-height:20px!important}
  #montab-watch .ws-kpi{flex:0 0 auto!important;display:inline-flex!important;align-items:baseline!important;gap:4px!important;padding:0!important;border:0!important;min-width:0!important}
@@ -7398,7 +8289,7 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
 
 /* v304c 微信式干净：区块靠留白与浅底分组，不靠装饰性横线/竖线。
    仅保留控件边界、表格行与激活下划线。 */
-#searchview :is(.srx-hero,.srx-ovbar,.srx-band,.srx-band-h,.srx-brief,.srx-context,.srx-listhead,.srx-audit,.srx-capbar,.srx-list,.srx-mirror,.srx-mchrome,.srx-dtabs,.srx-galhead),
+#searchview :is(.srx-hero,.srx-band,.srx-band-h,.srx-brief,.srx-context,.srx-listhead,.srx-audit,.srx-capbar,.srx-list,.srx-mirror,.srx-mchrome,.srx-dtabs,.srx-galhead),
 #montab-watch :is(.ws-head,.ws-live,.ws-kpis,.ws-kpi,.ws-routebar,.ws-route,.ws-chart-h,.ws-chartwrap,.ws-focus,.ws-fcell,.ws-chanstrip,.ws-filterbar,.ws-detail,.ws-legend,.ws-note,.ws-roster,.ws-list,.ws-roster-h),
 #spRadarMonitor :is(.uhead,.spmon-sum,.spmon-tools,.spmon-chartwrap,.spmon-src,.spmon-hist,.spmon-low),
 #spRadarCard :is(.uhead),
@@ -7414,13 +8305,11 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
 #searchview .srx-band{margin:2px 0 6px!important}
 #searchview .srx-band-h{padding:4px 0 6px!important}
 #searchview .srx-context{padding:4px 0!important;background:transparent!important}
-#searchview .srx-ovbar{background:var(--r-surface-2)!important;border-radius:8px!important;padding:6px 10px!important;margin:4px 0!important;cursor:pointer}
-#searchview .srx-ovbar:hover{background:var(--r-surface-3)!important}
-#searchview .srx-ovbar::after{content:'⌄';margin-left:auto;color:var(--r-ink-3);font-size:12px}
-#searchview .srx-ovbar:focus-visible{outline:2px solid var(--r-blue);outline-offset:2px}
 #searchview .srx-listhead{padding:8px 0 6px!important}
-#searchview .srx-row{border-bottom-color:color-mix(in srgb,var(--r-hair) 45%,transparent)!important}
-#searchview .srx-thead{border-bottom-color:color-mix(in srgb,var(--r-hair) 45%,transparent)!important}
+/* r433：上一条把行线压到 45% 透明的规则已随「去行线」作废——
+   线本身没了，再调它颜色只会误导后来的人以为还有线。表头下方那条
+   分组线保留原色（它是标题/数据的语义边界）。 */
+#searchview .srx-thead{border-bottom-color:var(--r-hair)!important}
 /* 关注台卡头：曾用负 margin 做通栏出血，但后续规则把水平 padding
    清成 0，内容随之外顶 18px——右侧「添加关注航班」按钮被卡片
    overflow:hidden 裁掉半截（1512 实测 head.right=1429 > card.right=1411）。
@@ -7465,48 +8354,113 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
 #cfgview .cfgwatch-toolbar,#cfgview .cfgchrome{border-top:0!important;border-bottom:0!important}
 #cfgview .uhead{padding-bottom:6px!important;margin-bottom:8px!important}
 #cfgview .rline{padding:8px 0!important}
-#ftable th,#ftable td,#searchview .srx-row,#searchview .srx-mrow{border-bottom-color:color-mix(in srgb,var(--r-hair) 45%,transparent)!important}
-#ftable th{background:transparent!important}
+/* r433：`.srx-row/.srx-mrow` 的行线已整条去掉（见 6207/6241 注释），
+   本条只保留表格（#ftable）的淡化——表格行线是表格语义，不能用留白替代。 */
+#ftable th,#ftable td{border-bottom-color:color-mix(in srgb,var(--r-hair) 45%,transparent)!important}
+/* 这里曾有一条把表头底色清成 transparent 的 !important 规则，与吸顶表头
+   「must be opaque」的规则直接对撞——谁赢取决于源码顺序，任何时候挪动
+   这一段都可能让滚动中的数据从表头下透出来（用户实报「表头透明遮挡了
+   表格数据」）。表头底色由 #montab-details 那条实底规则单独负责。 */
 
-/* v304e 渠道入口：矩阵对齐，列头只出现一次；格子=标题+动作+登录要求。 */
-.chboard-head{display:grid;grid-template-columns:160px repeat(4,minmax(0,1fr));gap:0 8px;padding:0 0 6px;font-size:10px;color:var(--r-ink-3);letter-spacing:.04em;border:0!important}
+/* v304e 渠道入口：渠道 × 4 入口矩阵；特价是同一渠道的次行文本入口，不再另起半排空格子。 */
+.chboard-head{display:grid;grid-template-columns:160px repeat(4,minmax(0,1fr));gap:0 6px;padding:0 0 5px;font-size:10px;color:var(--r-ink-3);letter-spacing:.04em;border:0!important}
+.chboard-head span{padding-left:10px}
 .chboard-head span:first-child{padding-left:2px}
-.chboard-head span:not(:first-child){padding-left:10px}
-.chband{display:grid!important;grid-template-columns:160px minmax(0,1fr)!important;gap:8px!important;padding:8px 0!important;border:0!important;border-radius:0!important;background:transparent!important}
+.chband{display:grid!important;grid-template-columns:160px minmax(0,1fr)!important;gap:6px!important;padding:7px 0 6px!important;border:0!important;border-radius:0!important;background:transparent!important}
 .chband-id{display:flex!important;flex-direction:column!important;justify-content:flex-start!important;gap:4px!important;min-width:0!important}
-.chband-name{display:flex!important;align-items:center!important;gap:7px!important}
-.chband-name b{font-size:13px!important;font-weight:650!important;color:var(--r-ink)!important}
-.chband-meta .chsess{display:inline-flex!important;align-items:center!important;height:17px!important;padding:0 6px!important;border-radius:var(--pill)!important;background:var(--r-surface-2)!important;color:var(--r-ink-3)!important;font-size:9px!important;font-weight:600!important}
-.chband-body{display:flex!important;flex-direction:column!important;gap:6px!important;min-width:0!important}
-.chband-grid{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:8px!important;min-width:0!important}
-.chlink{display:flex!important;flex-direction:column!important;align-items:stretch!important;gap:4px!important;min-height:52px!important;padding:8px 10px!important;border:0!important;border-radius:8px!important;background:var(--r-surface-2)!important;white-space:normal!important;text-decoration:none!important;overflow:hidden!important}
+/* r435：渠道名在窄档被登录标签挤成「同…」（标签要 154px，名字只剩
+   一个字的宽度）。渠道名是识别锚点不能缩，让 meta 标签去收缩。 */
+.chband-name{display:flex!important;align-items:center!important;gap:7px!important;flex:0 0 auto!important}
+.chband-name b{font-size:13px!important;font-weight:600!important;color:var(--r-ink)!important;overflow:visible!important;text-overflow:clip!important;white-space:nowrap!important;flex:0 0 auto!important}
+.chband-meta .chsess{display:inline-flex!important;align-items:center!important;height:17px!important;padding:0 6px!important;border-radius:var(--pill)!important;background:var(--r-surface-2)!important;color:var(--r-ink-3)!important;font-size:10px!important;font-weight:600!important}
+.chband-body{display:flex!important;flex-direction:column!important;gap:4px!important;min-width:0!important}
+.chband-grid{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:6px!important;min-width:0!important}
+.chlink{display:flex!important;flex-direction:row!important;align-items:center!important;gap:7px!important;min-height:44px!important;padding:0 10px!important;border:0!important;border-radius:8px!important;background:var(--r-surface-2)!important;white-space:normal!important;text-decoration:none!important;overflow:hidden!important}
 .chlink:hover{background:var(--r-surface-3)!important;color:var(--r-ink)!important}
-.chlink-surface{display:none!important;font-size:9px!important;color:var(--r-ink-3)!important;letter-spacing:.03em}
-.chlink-top{display:flex!important;align-items:baseline!important;gap:6px!important;min-width:0!important}
-.chlink-top b{font-size:12px!important;font-weight:600!important;color:var(--r-ink)!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
-.chlink-go{margin-left:auto!important;color:var(--r-blue)!important;font-size:10px!important;white-space:nowrap!important}
-.chlink-auth{display:inline-flex!important;align-self:flex-start!important;height:16px!important;padding:0 6px!important;border:0!important;border-radius:var(--pill)!important;background:var(--r-amber-soft)!important;color:var(--r-amber)!important;font-size:9px!important;font-weight:600!important}
+.chlink-surface{display:none!important;font-size:10px!important;color:var(--r-ink-3)!important;letter-spacing:.03em}
+.chlink-top{display:flex!important;align-items:baseline!important;gap:5px!important;min-width:0!important;flex:1 1 auto!important;overflow:hidden!important}
+/* r433：渠道入口主标题曾 `nowrap + ellipsis`——225px 卡宽、12px 字号下
+   「机票搜索（与国内同页，页内切国际）」被截成「机票搜索（与国内同页…」。
+   被截掉的括号正半句是**区分同一行两个入口的唯一信息**（主名称都叫
+   「机票搜索」），触屏也没有 hover 读 title，等于让人分不清该点哪个。
+   改为换行：卡片由 grid 行等高，同一 band 内其它入口自动对齐。 */
+.chlink-top b{font-size:12px!important;font-weight:600!important;color:var(--r-ink)!important;white-space:normal!important;overflow:visible!important;text-overflow:clip!important;overflow-wrap:anywhere!important;line-height:1.3!important}
+.chlink-go{margin-left:0!important;color:var(--r-blue)!important;font-size:10px!important;white-space:nowrap!important;flex:0 0 auto!important}
+.chlink-auth{display:inline-flex!important;align-items:center!important;align-self:center!important;height:16px!important;padding:0 6px!important;border:0!important;border-radius:var(--pill)!important;background:var(--r-amber-soft)!important;color:var(--r-amber)!important;font-size:10px!important;font-weight:600!important;flex:0 0 auto!important;white-space:nowrap!important}
 .chlink-auth.opt{background:var(--r-surface-3)!important;color:var(--r-ink-3)!important}
 .chlink.off{background:transparent!important;color:var(--r-ink-3)!important}
-.chlink-note{font-size:10px!important;line-height:1.25!important;color:var(--r-ink-3)!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
-.chband-specs{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:8px!important;align-items:center!important;padding:0!important;border:0!important}
-.chband-specs .chlink{min-height:30px!important;padding:4px 10px!important;background:transparent!important;flex-direction:row!important;align-items:center!important;gap:6px!important}
-.chband-specs .chlink .chlink-top b{font-size:11px!important}
-.chband-specs .chlink-auth{display:none!important}
-.chband-login-note{border:0!important;padding:0!important;margin:0!important;font-size:10px!important}
+.chlink-note{font-size:10px!important;line-height:1.25!important;color:var(--r-ink-3)!important;white-space:normal!important;overflow:hidden!important;text-overflow:clip!important;overflow-wrap:anywhere!important;min-width:0!important;flex:0 1 auto!important}
+/* r433：渠道入口的补充说明曾 `nowrap + ellipsis`——225px 卡宽、12px 字号下
+   「机票搜索（与国内同页，页内切国际）」被截成「机票搜索（与国内同页…）」，
+   而括号里那半句正是区分这两个入口的唯一信息（主名称都叫「机票搜索」），
+   截断等于让人分不清该点哪个。触屏没有 hover，title 也读不到。
+   改为换行显示：卡片高度随说明行数自适应（grid 行等高，同一 band 内对齐）。 */
+/* r433：换行后要保证同档 band 等高——实测飞猪/同程有长标题占两行
+   （band 63px）、途牛全短标题只一行（54px），五条带子高矮不一，
+   又成了用户说的「对齐对称」问题。给入口卡一个两行高的下限，
+   让「长标题换行」不再改变 band 高度：实测 5/5 条带回到同高。 */
+.chlink{min-height:38px!important}
+/* r435：`min-height:0` 让缺 go 箭头那颗（途牛特价行）只占 29.29px，
+   同排其余 30px → 五条带差 1px，读作「没对齐」。给该行一个与格子
+   一致的下限，四舍五入后五条带等高。 */
+.chband-specs{display:flex!important;flex-wrap:wrap!important;align-items:center!important;gap:0 10px!important;padding:0 0 0 1px!important;border:0!important;min-height:30px!important}
+/* r425：「特价」标签原在行首，把两条特价入口整体右推 33px——次行入口与
+   上面主入口（PC/H5 国内/国际）左缘差一截，读作「缩进没对齐」。标签沉到
+   行尾当注释，值回到行首：实测 1512 510→478、390 59→29，与主入口 477/28
+   对齐（差 1px 为容器内边距），行高不变。 */
+.chspec-k{font-size:10px!important;color:var(--r-ink-4)!important;letter-spacing:.08em!important;flex:0 0 auto!important;order:0!important;margin-left:0!important;margin-right:2px!important}
+.chband-specs .chlink{display:inline-flex!important;flex-direction:row!important;align-items:center!important;gap:3px!important;min-height:0!important;padding:0!important;background:transparent!important;border-radius:0!important;color:var(--r-ink-3)!important;overflow:visible!important}
+.chband-specs .chlink:hover{background:transparent!important;color:var(--r-blue)!important}
+/* 行内文字链的热区补齐到 36px（触屏地板）：这一段把 .chlink 降级成行内文字，
+   盒高只剩 15px、实测可点范围上下各仅 8px/7px，配置页里「PC 特价 ↗」这类
+   入口很难点中。用伪元素向上伸展、不占版面、不改观感（与 .pace-row .ac
+   button::before 同一手法）；伪元素零宽会分走点击，所以贴合同一链接。 */
+.chband-specs .chlink{position:relative}
+.chband-specs .chlink::before{content:"";position:absolute;left:0;right:0;
+ top:50%;height:36px;transform:translateY(-50%)}
+.chband-specs .chlink .chlink-top{flex:0 1 auto!important;gap:4px!important}
+.chband-specs .chlink .chlink-top b{font-size:11px!important;font-weight:500!important;color:inherit!important}
+.chband-specs .chlink-go{font-size:10px!important;color:inherit!important;margin:0!important;opacity:.65}
+.chband-specs .chlink-auth,.chband-specs .chlink-note{display:none!important}
+.chband-specs .chlink.off{color:var(--r-ink-4)!important}
+.chband-login-note{border:0!important;padding:0!important;margin:0!important;font-size:10px!important;line-height:1.3!important;color:var(--r-ink-3)!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
 @media(max-width:1100px){
  .chboard-head{display:none!important}
- .chband{grid-template-columns:1fr!important;gap:4px!important}
- .chband-id{flex-direction:row!important;align-items:center!important;flex-wrap:wrap!important;gap:8px!important}
- .chband-grid{grid-template-columns:1fr 1fr!important}
- .chband-specs{grid-template-columns:1fr 1fr!important}
- .chlink-surface{display:block!important}
+ .chband{grid-template-columns:1fr!important;gap:3px!important;padding:6px 0!important}
+ /* r435：`flex-wrap:wrap!important` 会让「同程」那条（meta 154px）在 390 档
+    折到第二行，id 区 20→43px、整带 65→88px——五条带高矮不一，正是用户
+    要的「对齐对称」被破坏。改成不换行 + 子项可收缩，长 meta 走省略号。 */
+ .chband-id{flex-direction:row!important;align-items:center!important;flex-wrap:nowrap!important;gap:8px!important;min-width:0!important;height:20px!important;overflow:hidden!important}
+ .chband-id>*{min-width:0}
+ .chband-meta{flex:0 1 auto!important;min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
+ .chband-note{flex:0 1 auto!important;min-width:0!important}
+ .chband-grid{grid-template-columns:1fr 1fr!important;grid-auto-rows:66px!important}
+ /* 列头在窄屏隐藏，改由格子自带面位；固定行高保证同排同高、跨渠道同节奏 */
+ /* r435：`min-height:0!important` 让缺面位小标的那条（途牛）只占 29px，
+    其余 30px——五条带差 1px 是「没对齐」的典型。统一给 30px 下限。 */
+ .chlink{flex-wrap:wrap!important;align-content:center!important;row-gap:1px!important;min-height:30px!important;height:100%!important;padding:6px 9px!important}
+ .chlink-surface{display:block!important;flex:1 1 100%!important;order:-1!important;line-height:1.2!important}
+ .chlink-top{flex:1 1 100%!important;overflow:hidden!important}
+ .chlink-note{flex:1 1 100%!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
+ .chlink-go{margin-left:auto!important}
+ .chlink-auth{align-self:flex-start!important}
+ /* r435：特价行（.chband-specs）是「PC/H5 特价 ↗」的一行式文本入口，不能
+    套用网格格子的「面位独占整行」——否则 390 档碎成「PC 特价」+「PC ↗」
+    两行，读作两行残片。这里还原成单行、面位前置。 */
+ .chband-specs .chlink{flex-wrap:nowrap!important;height:auto!important;min-height:0!important;padding:0!important;gap:4px!important}
+ .chband-specs .chlink-surface{display:inline!important;flex:0 0 auto!important;order:0!important}
+ .chband-specs .chlink-top{flex:0 1 auto!important;overflow:visible!important}
+ .chband-specs .chlink-go{margin-left:0!important}
 }
 @media(max-width:600px){
- .chband-grid,.chband-specs{grid-template-columns:1fr 1fr!important}
+ .chlink{min-height:42px!important}
+ .chlink-top b{font-size:11px!important}
+ .chband-specs{gap:0 8px!important}
 }
 @media(max-width:360px){
- .chband-grid,.chband-specs{grid-template-columns:1fr!important}
+ .chband-grid{gap:5px!important}
+ .chlink{padding:5px 7px!important;gap:5px!important}
+ .chlink-auth{height:15px!important;padding:0 4px!important;font-size:8px!important}
 }
 
 /* v304f 紧凑质感：组件衔接用一致的 4/6/8 节奏，去掉无意义空高。 */
@@ -7518,20 +8472,403 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
 #searchview .srx-grid{margin-top:0!important}
 #montab-watch .ws-routes{gap:6px!important}
 #montab-watch .ws-route{padding:7px 10px!important;min-height:44px!important}
-.chboard-head{padding-bottom:4px!important}
-.chband{padding:6px 0!important;gap:6px!important}
-.chband-grid{gap:6px!important}
-.chlink{display:flex!important;flex-direction:row!important;flex-wrap:wrap!important;align-items:center!important;gap:6px 8px!important;min-height:40px!important;padding:6px 10px!important}
-.chlink-top{flex:1 1 auto!important;min-width:0!important}
-.chlink-go{margin-left:0!important}
-.chlink-auth{flex:0 0 auto!important}
-.chband-specs{gap:6px!important}
-.chband-specs .chlink{min-height:28px!important;padding:2px 10px!important}
-@media(max-width:1100px){
- .chlink-surface{flex:1 1 100%!important;order:-1!important;display:block!important}
-}
+/* r382 探针开合不位移：收起态曾给 .srx-probe 加 12–14px 横向内边距，
+   展开态却回到 8px/0，面板一开整块向右缩、头部跟着跳。开合只改纵向，
+   横向内边距两态一致，头部左缘与正文永远对齐。 */
+#searchview .srx-probe{padding-left:0!important;padding-right:0!important}
+/* r424：纵向内边距也两态同值（都是 0）。此前收起 0/0、展开 6/8，开合等于
+   把卡头整体上下挪 14px——实测 390 档「展开探针」位移 8~12px，正是用户报
+   的「展开位置发生了偏移」。呼吸空间改由表单自身的上外边距提供，收起态
+   仍然保持 r358 的零内边距紧凑形态。 */
+#searchview .srx-probe:not(.open){padding-top:0!important;padding-bottom:0!important}
+#searchview .srx-probe.open{padding-top:0!important;padding-bottom:8px!important}
+#searchview .srx-probeform{margin-top:6px}
 
+/* r384 价带头窄屏收口：标题行曾是「标题/摘要/翻页/轴/说明/渠道登录/开合钮」
+   各占一行，390 档堆到 7 行、117px 高，读作廉价挤占。窄屏只保留两块：
+   第一行＝标题 + 摘要 + 开合钮；第二行＝翻页 + 轴 + 渠道登录。
+   重复说明（按出发日·真实落库最低价）在窄屏隐藏，信息已在摘要里。 */
+@media(max-width:900px){
+ #searchview #srxBand .srx-band-h{display:flex!important;flex-wrap:wrap!important;
+  gap:6px 8px!important;align-items:center!important}
+ #searchview #srxBand .srx-band-h>b{flex:0 0 auto}
+ #searchview #srxOvSum{flex:1 1 120px;min-width:0;order:1}
+ /* r426 折叠钮必须是本行视觉末位：曾是 order:2（第一行），而翻页/轴/
+    渠道登录 order:3/4/5 落在它下面一行——390 档展开概览后，按钮与面板
+    之间隔着 38px 的常驻控件，读作「展开中间还有元素」。窄屏换行时
+    只有把钮排到最后，「展开」才真的紧贴内容。 */
+ #searchview #srxBand .srx-band-h>.srx-ovtoggle{order:9;margin-left:auto!important}
+ #searchview #srxBandMeta{display:none!important}
+ #searchview #srxBand .srx-bandnav{margin-left:0;order:3}
+ #searchview #srxBand .srx-axis{order:4}
+ #searchview #srxBand .srx-bandlogin{order:5}
+ #searchview #srxBand .srx-bandreset{order:6}
+}
+@media(max-width:600px){
+ #searchview #srxBand .srx-band-h{gap:5px 6px!important}
+ #searchview #srxOvSum{flex:1 1 96px;font-size:10px!important}
+ /* r388：折叠钮是同一族控件，窄屏不再单独降字号/降高——同屏
+   出现 22/24/26/30/32 五种高度是「廉价」的直接来源。 */
+ #searchview #srxBand .srx-band-h>.srx-ovtoggle{font-size:11px!important;height:26px!important}
+}
 @media(max-width:1100px){.srx-ovhbtn{display:none!important}}
+
+/* ===== r374 按钮族收口：全站一个"控件"语法 =====
+   曾有 5 套并行定义：.btn2（圆角 9、12px、带投影+渐变）、.srx-btn（圆角 8、
+   12px）、.ws-btn（圆角 7、11px+渐变）、.sclink（圆角 6、11px 纯文本）、
+   .srx-mbtn（圆角 5、10px）。同一动作在不同页看起来是不同产品。
+   收口为：圆角 --r3(9) 单一档、无投影、主按钮纯色填充、字号 12（紧凑档
+   11 由各页尺寸规则决定）。放在样式表末尾覆盖，不改动各页布局。 */
+:is(.btn2){border-radius:var(--r3)!important;box-shadow:none!important}
+:is(.btn2,.ws-btn){height:32px;box-sizing:border-box}
+/* 字号/字重同档：12px/600。各页紧凑档（10-11px）由页面自身的尺寸规则
+   覆盖，这里只统一「默认档」——曾出现同屏 10/11/12/13 四种按钮字号。 */
+:is(.btn2){font-size:12px;font-weight:600}
+:is(.btn2){background:var(--fill)!important;
+ border-color:transparent!important;color:#fff!important;box-shadow:none!important;
+ background-image:none!important}
+:is(.btn2){filter:brightness(1.06)!important;
+ box-shadow:none!important;background-image:none!important}
+.btn2:hover{box-shadow:none!important}
+/* 文本级动作（说明/收起之类）与其它按钮同为 9px 圆角、无投影 */
+.sclink{border-radius:var(--r3)!important}
+
+/* ===== r420 节流与干预：健康卡的续写，不是另一块面板 =====
+   r374 版仍是 12px 同色灰文堆叠：标题与卡头重复、渠道行没有品牌位、
+   预算/实发/排期挤成同灰正文，扫读只能逐字读。本版按「台账」重排：
+     台账头：静默窗 · 限速 · 熔断（左侧三格读数）+ 本轮实发（右侧大数）
+     逐渠道：品牌图标与名称 | 状态胶囊 | 分域/分通路速览 | 近 24h 查询率
+     本轮节流：4 格量尺 + 一行因果链（计划 ＝ 快 ＋ 慢 ＋ TTL 内）
+     反复出现：可跟踪的问题，逐条给通路/航线/次数/自愈结论
+     干预：预热与自检是真按钮（28px、--r3 圆角、无投影），不是链接串
+   品牌列 64px + 10px 间距 = 74px，与上方健康行（64px 名 | 格带）同一条
+   竖线；块标题沿用健康卡「推送通道 · 近 24h」的字级。零外框零投影。 */
+.pace{display:flex;flex-direction:column;--pcol:64px;font-size:12px;
+ color:var(--r-ink-2);line-height:1.5;padding:12px 14px;
+ /* 面板自成一层软面：内部全是透明块时整段读作一段长文（用户原话
+    「节流面板一点质感都没有」）。底色只比主卡深一档，不画边框投影。 */
+ background:var(--r-surface-2);border-radius:var(--r2)}
+.pace>*{min-width:0}
+/* 台账头。左侧三格是「系统现在怎么节流」，右侧是「这一轮实际发了多少」；
+   两者字级不同（11px 标签 + 16px 等宽数字），一眼分主次。 */
+.pace-led{display:flex;align-items:flex-start;justify-content:space-between;
+ gap:8px 24px;flex-wrap:wrap;padding:0 0 12px}
+.pace-facts{display:flex;flex-wrap:wrap;gap:4px 16px;min-width:0;padding-top:4px}
+.pace-fact{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;
+ font-size:12px;color:var(--r-ink-2)}
+.pace-fact .k{font-size:11px;color:var(--r-ink-3)}
+.pace-fact .v{font-variant-numeric:tabular-nums}
+/* 台账头右侧「实发/计划」：数字与标签同一行。
+   纵排（column）时窄档左侧四个 fact 挤到 267px，右侧只剩 54px，
+   「0/0」与「实发 / 计划」各占一行、还被压到极小宽度——本块是台账头
+   最重要的读数，不该是最后才看得清的那个。 */
+.pace-now{display:flex;align-items:baseline;gap:6px;
+ margin-left:auto;flex:0 0 auto;white-space:nowrap}
+.pace-now b{font-family:var(--num);font-size:16px;font-weight:600;line-height:1.2;
+ color:var(--r-ink);font-variant-numeric:tabular-nums}
+.pace-now b i{font-style:normal;font-size:11px;font-weight:400;color:var(--r-ink-3);margin-left:2px}
+.pace-now span{font-size:11px;color:var(--r-ink-3);white-space:nowrap}
+/* 小节标题：与健康卡「推送通道 · 近 24h」同一字级与字距 */
+.pace-sec{display:flex;align-items:center;gap:8px;margin:12px 0 4px;
+ font-size:11px;font-weight:600;letter-spacing:var(--ls05);color:var(--r-ink-2)}
+/* 小节名不许被副标题挤成竖排：390 实测裸文本节点只剩两字宽，「逐渠道」断成
+   「逐渠/道」。名字固定单行，副标题让位换行（min-width:0 才允许它自己收缩）。
+   font-weight 必须显式写 600：`<b>` 的默认 `bolder` 会在父级 600 上算成 900，
+   超出全站四档（400/500/600/700）。 */
+.pace-sec>b{flex:none;white-space:nowrap;font-weight:600}
+.pace-sec .pace-sub{font-weight:400;color:var(--r-ink-3);letter-spacing:0;
+ min-width:0;flex:1 1 auto;
+ /* 单行截断 + 全文进 title（与 .pace-rec 备注同一惯例：截断不等于丢信息）。
+    390 实测「逐渠道」这行的副标题被右侧「刷新 · 时间」挤到 152px 宽、
+    折成两行 33px，而同组另三处副标题都是单行 17px —— 同一小节的
+    四行标题里只有一行高出一倍，读作排版坏了。 */
+ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 干预小节多出两段读数（r506）：成功率与待判各自成句。只在有读数的那一行
+   允许换行——不换行时三段会被挤成省略号，两段读数都读不全；没读数的小节
+   保持单行，避免无谓多占高度（与 r473b 的图例/说明收口同一取舍）。 */
+.pace-sec:has(.pace-ivr),.pace-sec:has(.pace-ivp){flex-wrap:wrap;row-gap:2px}
+.pace-sec .pace-ivr,.pace-sec .pace-ivp{flex:0 1 auto;min-width:0;
+ white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--r-ink-2)}
+.pace-sec .pace-ivp{color:var(--r-ink-3)}
+.pace-sec .sp{flex:1 1 auto}
+/* 面板内文字按钮统一 600：字重 400 时与行内「展开溯源」（.pace-row .ac > 600）
+   同屏出现两种粗细，两个按钮字号相同却读作两个层级。600 也是全站按钮档。
+   1440/900/390/320 实测：按钮宽 +3px，小节高度、副标题行数、裁切状态均不变。 */
+.pace-sec :is(a,button){border:0;background:transparent;font-family:inherit;
+ color:var(--r-blue);font-size:12px;font-weight:600;letter-spacing:0;cursor:pointer;
+ display:inline-flex;align-items:center;height:22px;padding:0 6px;
+ border-radius:var(--r3);text-decoration:none;white-space:nowrap}
+.pace-sec :is(a,button):hover{background:var(--r-surface-2)}
+.pace-sec :is(a,button):focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+/* 状态色点：色相之外还有文字胶囊，灰度/色盲下仍可分 */
+.pace .dot{width:6px;height:6px;border-radius:50%;flex:none;background:var(--r-ink-3)}
+.pace .dot.ok{background:var(--r-green)}
+.pace .dot.warn{background:var(--r-amber)}
+.pace .dot.bad{background:var(--r-red)}
+/* 章节级提示。act 行用琥珀点 + 正常文字色（不让颜色单独承担「要不要动手」） */
+.pace-note{display:flex;align-items:flex-start;gap:8px;padding:4px 0 0;
+ font-size:12px;color:var(--r-ink-2)}
+.pace-note>.dot{margin-top:6px}
+.pace-note.ok{color:var(--r-ink-3)}
+.pace-note .pace-sub2{color:var(--r-ink-3)}
+.pace-ch{display:flex;flex-direction:column;margin-top:4px}
+/* 渠道行：名 | 状态 | 速览 | 动作。44px 行高（触屏 36 地板之上），
+   与健康行 46px 同拍；hover 只染底色，不位移不投影。 */
+.pace-row{display:grid;align-items:center;padding:6px 0;min-height:44px;
+ grid-template-columns:var(--pcol) 112px minmax(0,1fr) auto;
+ grid-template-areas:"nm st ev ac";column-gap:10px;
+ border-bottom:1px solid var(--r-hair);transition:background-color .12s ease}
+.pace-row:last-of-type{border-bottom:0}
+.pace-row:hover{background:color-mix(in srgb,var(--r-surface-2) 60%,transparent)}
+.pace-row .nm{grid-area:nm;display:inline-flex;align-items:center;gap:6px;
+ min-width:0;font-size:12px;font-weight:600;color:var(--r-ink-2);white-space:nowrap}
+.pace-row .nm .bic{--bic:16px}
+.pace-row .st{grid-area:st;display:inline-flex;align-items:center;gap:6px;min-width:0}
+.pace-row .glip{max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.pace-row .glip{display:inline-flex;align-items:center;height:20px;padding:0 6px;
+ border-radius:var(--pill);background:var(--r-surface-2);font-size:11px;
+ font-weight:600;color:var(--r-ink-2);white-space:nowrap;
+ font-variant-numeric:tabular-nums}
+.pace-row .glip.ok{background:var(--r-green-soft);color:var(--ok-txt)}
+.pace-row .glip.warn{background:var(--r-amber-soft);color:var(--warn-deep)}
+.pace-row .glip.bad{background:var(--r-red-soft);color:var(--r-red)}
+/* 速览：左半是分域/分通路（成因），右半是近 24h 查询率（结果），
+   同一行给两种口径，不再让一个「100%」掩盖另一维。 */
+.pace-row .ev{grid-area:ev;display:flex;align-items:baseline;gap:8px;min-width:0;
+ font-size:12px;color:var(--r-ink-3)}
+.pace-row .ev .e1{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pace-row .ev .e2{flex:none;font-size:11px;color:var(--r-ink-3);white-space:nowrap;
+ font-variant-numeric:tabular-nums}
+.pace-row .ev .e2 b{font-family:var(--num);font-size:12px;font-weight:600;color:var(--r-ink-2)}
+.pace-row .ac{grid-area:ac;display:inline-flex;align-items:center;justify-content:flex-end;
+ gap:12px;flex:none;white-space:nowrap}
+.pace-row .ac button{position:relative;border:0;background:transparent;cursor:pointer;
+ padding:0;color:var(--r-blue);font-family:inherit;font-size:12px;font-weight:600;
+ line-height:1.5;display:inline-flex;align-items:center;gap:3px}
+.pace-row .ac button:hover{text-decoration:underline}
+.pace-row .ac button:focus-visible{outline:2px solid var(--blue);outline-offset:3px;
+ border-radius:4px}
+/* 行尾按钮的点击热区向上下各扩 12px（行内是唯一开合入口）。
+   左右不外扩：三个动作并排时最右钮的 8px 外扩会把整块面板撑出
+   8px 横向滚动（实测 1440/1024/420 三档 scrollX 均为 8）。 */
+.pace-row .ac button::before{content:"";position:absolute;top:-12px;bottom:-12px;
+ left:0;right:0}
+.pace-row .ac .ic{width:12px;height:12px;transition:transform .16s ease}
+.pace-row .ac button[aria-expanded="true"]{color:var(--r-ink-3)}
+.pace-row .ac button[aria-expanded="true"] .ic{transform:rotate(90deg)}
+.pace-row[data-on="1"]{background:var(--r-surface-2)}
+.pace-row[data-on="1"] .nm{color:var(--r-ink)}
+/* 量尺：4 格，1px 发丝分隔靠底色缝隙实现（不写四道 border） */
+/* 量尺：4 格等分铺满 1200px 会让 3 字内容漂在 300px 空格里（实测
+   每格 305px），改为主轴可读的紧凑条——格宽随内容，余下空间留给
+   配额轨。发丝缝由格子自己的 1px 描边相接而成：曾用容器底色透缝，
+   窄屏换行后首行右侧的空白区被底色填成一块灰砖（实测 420 档）。 */
+.pace-stats{display:flex;flex-wrap:wrap;background:transparent;
+ margin:4px 0 0;width:fit-content;max-width:100%}
+/* 指标格：发丝竖线分列，不另立一层白色卡片。
+   原实现是「白底 + 1px 描边」，而面板本身是 --r-surface-2 浅灰——
+   等于在浅灰面板里又嵌了一张带边的白卡（卡中卡 + 装饰描边，两条都
+   违反扁平语言）。规范与门禁注释写的本来就是「发丝竖线分隔」。 */
+.pace-stat{padding:8px 12px;display:flex;
+ flex-direction:column;gap:1px;min-width:104px;max-width:176px;flex:0 1 auto;
+ border-left:1px solid var(--r-hair)}
+.pace-stat:first-child{border-left:0}
+.pace-stat b{font-family:var(--num);font-size:16px;font-weight:600;line-height:1.2;
+ color:var(--r-ink);white-space:nowrap;font-variant-numeric:tabular-nums}
+.pace-stat b i{font-style:normal;font-size:11px;font-weight:400;color:var(--r-ink-3);margin-left:2px}
+.pace-stat span{font-size:11px;color:var(--r-ink-3);white-space:nowrap;
+ overflow:hidden;text-overflow:ellipsis}
+/* 指标格数字一律走主色：空值时只把「—」本身弱化，不把整格降级。
+   否则同一个指标行里一个深一个浅，读作两种不同层级的信息。 */
+.pace-stat.na b{color:var(--r-ink);opacity:.55}
+.pace-stat.warn b{color:var(--warn-deep)}
+/* 配额轨：本轮排期按档位（快/慢/跳过）分段的整条进度带——一眼看出
+   这一轮是「新鲜数据多」还是「大部分被 TTL 挡掉」，比一行「快 6 · 慢 2
+   · TTL 内 3」的平铺数字更快读懂。图例与轨道同色同序，不另起一套颜色。 */
+.pace-rail{display:flex;height:6px;border-radius:3px;overflow:hidden;
+ background:var(--r-surface-2);margin:8px 0 0}
+.pace-rail>i{display:block;height:100%;flex:0 0 auto;min-width:2px}
+.pace-rail .rf{background:var(--r-blue)}
+.pace-rail .rs{background:color-mix(in srgb,var(--r-blue) 40%,var(--r-surface-3))}
+.pace-rail .rk{background:var(--r-hair-2)}
+/* 量尺轨 → 图例的视觉间距由这里承担（实测 6px，比跨块 8/12 小一档，
+   因为图例是轨道自身的说明）。原 5px 不在 4/6/8/12 间距阶上。
+   注意：本块与 .pace-kv 都用 padding-top 承间距，所以量「块与块 top-bottom」
+   会得 0——那里是盒子外沿，不是视觉空隙。判间距要用 Range 取内容盒。 */
+.pace-legend{display:flex;flex-wrap:wrap;gap:2px 14px;padding-top:6px;
+ font-size:11px;color:var(--r-ink-3)}
+.pace-legend span{display:inline-flex;align-items:center;gap:5px;
+ font-variant-numeric:tabular-nums;white-space:nowrap}
+.pace-legend i{width:7px;height:7px;border-radius:2px;flex:none}
+.pace-legend .rf{background:var(--r-blue)}
+.pace-legend .rs{background:color-mix(in srgb,var(--r-blue) 40%,var(--r-surface-3))}
+.pace-legend .rk{background:var(--r-hair-2)}
+.pace-legend b{font-family:var(--num);font-weight:600;color:var(--r-ink-2)}
+/* 因果链与出处：都是旁证，统一 11px；数字仍用等宽，便于竖读 */
+.pace-kv{font-size:11px;line-height:1.7;color:var(--r-ink-3);padding:8px 0 0}
+.pace-kv b{font-family:var(--num);font-weight:600;color:var(--r-ink-2);
+ font-variant-numeric:tabular-nums}
+.pace-kv .eq{color:var(--r-ink-3);padding:0 3px}
+/* 复发：可跟踪的问题清单。序号 + 渠道占品牌列，问题正文与上方速览同线 */
+.pace-recs{display:flex;flex-direction:column}
+.pace-rec{display:grid;grid-template-columns:var(--pcol) minmax(0,1fr) 44px;
+ align-items:baseline;column-gap:10px;padding:7px 0;border-bottom:1px solid var(--r-hair)}
+.pace-rec:last-child{border-bottom:0}
+.pace-rec .who{display:inline-flex;align-items:baseline;gap:5px;font-size:12px;
+ color:var(--r-ink-2);white-space:nowrap;min-width:0;font-weight:600}
+.pace-rec .who .seq{font-family:var(--num);font-size:11px;font-weight:400;
+ color:var(--r-ink-3)}
+.pace-rec .what{min-width:0;font-size:12px;color:var(--r-ink-2);
+ line-height:1.45;overflow-wrap:anywhere}
+.pace-rec .what b{font-weight:600;color:var(--r-ink)}
+.pace-rec .what .r{font-family:var(--num);font-weight:600;color:var(--r-ink-2);
+ letter-spacing:-.1px}
+.pace-rec .what .p{color:var(--r-ink-3)}
+.pace-rec .what .st{font-weight:600;white-space:nowrap}
+.pace-rec .what .st.bad{color:var(--r-red)}
+.pace-rec .what .st.warn{color:var(--warn-deep)}
+.pace-rec .what .st.ok{color:var(--ok-txt)}
+.pace-rec .what .h{display:block;font-size:11px;color:var(--r-ink-3);margin-top:1px;
+ overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pace-rec .cnt{font-family:var(--num);font-size:12px;font-weight:600;
+ color:var(--r-ink-2);text-align:right;white-space:nowrap;
+ font-variant-numeric:tabular-nums}
+.pace-rec .cnt i{font-style:normal;font-size:11px;font-weight:400;
+ color:var(--r-ink-3);margin-left:1px}
+/* 干预入口：两个按钮组，组名是小字标签，按钮与全站按钮族同档 */
+.pace-tools{display:flex;align-items:center;gap:8px 18px;flex-wrap:wrap;padding-top:4px}
+.pace-tools .g{display:inline-flex;align-items:center;gap:5px;min-width:0;
+ flex-wrap:wrap}
+.pace-tools .g>b{font-size:11px;font-weight:600;color:var(--r-ink-3);margin-right:1px}
+.pace-tools .g :is(button,a){display:inline-flex;align-items:center;height:28px;
+ padding:0 9px;border:0;border-radius:var(--r3);cursor:pointer;
+ background:var(--r-surface-2);color:var(--r-ink-2);font-family:inherit;
+ font-size:12px;font-weight:600;text-decoration:none;white-space:nowrap}
+.pace-tools .g :is(button,a):hover{background:var(--r-surface-3);color:var(--r-ink)}
+.pace-tools .g :is(button,a):focus-visible,.pace-tools .g select:focus-visible{
+ outline:2px solid var(--blue);outline-offset:2px}
+.pace-tools .g .all{color:var(--r-blue)}
+/* 无预热入口的渠道：保留位置但明确不可用（不隐藏，否则读者以为漏渲染）。
+   用虚线框 + 次要文字色区分「不可点」与「点了没反应」，仍满足对比度。 */
+.pace-tools .g button.na{background:transparent;color:var(--r-ink-3);
+ box-shadow:inset 0 0 0 1px var(--r-hair);cursor:not-allowed}
+.pace-tools .g button.na:hover{background:transparent;color:var(--r-ink-3)}
+.pace-tools .g select{height:28px;border:0;border-radius:var(--r3);
+ background:var(--r-surface-2);color:var(--r-ink-2);font-family:inherit;
+ font-size:12px;padding:0 6px;cursor:pointer}
+.pace-tools .g select:hover{background:var(--r-surface-3)}
+.pace-tools .out{font-size:11px;color:var(--r-ink-3);min-width:0;max-width:100%;
+ overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 溯源：就地展开的浅底块（不弹层、不跳页）。表头只在宽屏出现，
+   窄屏每条自带标签，不靠表头猜列。 */
+.pace-detail{margin:2px 0 6px;background:var(--r-surface-2);border-radius:var(--r10);
+ padding:10px 12px 8px}
+.pace-dh{display:flex;align-items:center;gap:8px;padding-bottom:6px;margin-bottom:4px;
+ border-bottom:1px solid var(--r-hair)}
+.pace-dh b{font-size:12px;font-weight:600;color:var(--r-ink)}
+.pace-dh .sp{flex:1 1 auto}
+.pace-detail .pace-dhint{font-size:11px;color:var(--r-ink-3)}
+.pace-dsub{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;
+ letter-spacing:var(--ls05);color:var(--r-ink-2);margin:8px 0 6px}
+/* 小标题到内容留 6px（落在间距阶）。窄档表头 `.pace-tline.head` 是
+   display:none，内容直接接在小标题后面，只靠内容自带 padding-top 不够——
+   实测 390 档「最近尝试」与「无记录」间距 0px，读作标题的续行。 */
+.pace-dsub:first-child{margin-top:0}
+.pace-tline{display:grid;grid-template-columns:86px 64px 52px minmax(0,1fr);
+ gap:8px;align-items:baseline;padding:4px 0;font-size:12px;color:var(--r-ink-2);
+ border-bottom:1px solid color-mix(in srgb,var(--r-hair) 70%,transparent)}
+.pace-tline:last-child{border-bottom:0}
+.pace-tline.head{color:var(--r-ink-3);font-size:11px;padding:0 0 2px}
+/* 表头整行同一档弱色：`.p` 列在数据行里用更重的 ink-2（入口是判读主列），
+   但同一条规则也命中表头的「入口/动作」，实测一排表头出现两种颜色
+   （时间/状态/证据 = ink-3，入口/动作 = ink-2）。 */
+.pace-tline.head .p,.pace-tline.head .t,.pace-tline.head .st,.pace-tline.head .n{color:var(--r-ink-3)}
+.pace-tline .t{font-family:var(--num);color:var(--r-ink-3);font-variant-numeric:tabular-nums}
+.pace-tline .p{color:var(--r-ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 作用域小标（r510）：跟动作名同一格、小一号、弱一档色——它是「哪个域」，
+   不是另一个动作。动作列 64px 放不下时优先保住动作名（.p 有省略号），
+   作用域退到 title；因此这里不再给它独立宽度。 */
+.pace-tline .p .sc{font-style:normal;font-size:11px;color:var(--r-ink-3);
+ margin-left:4px}
+.pace-tline .st{color:var(--r-ink-3);white-space:nowrap}
+.pace-tline .st.ok{color:var(--r-green)}
+.pace-tline .st.bad{color:var(--r-red)}
+.pace-tline .n{color:var(--r-ink-3);min-width:0;overflow:hidden;
+ text-overflow:ellipsis;white-space:nowrap}
+/* 真实请求地址（r495）：跨满整行、单行省略；不加列以免挤压证据列。
+   用 --num 等宽字体，便于肉眼比对两条记录打的是不是同一个端点。 */
+.pace-tline .u{grid-column:1/-1;font-family:var(--num);font-size:11px;
+ color:var(--r-ink-3);min-width:0;overflow:hidden;
+ text-overflow:ellipsis;white-space:nowrap;opacity:.9}
+.pace-eff{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;
+ font-size:12px;padding-bottom:6px}
+.pace-eff .k{font-size:11px;color:var(--r-ink-3)}
+.pace-eff .v{font-family:var(--num);font-weight:600;color:var(--r-ink);
+ font-variant-numeric:tabular-nums}
+.pace-eff .mut{font-size:11px;color:var(--r-ink-3)}
+/* 分域成效块（r512）：独立一行，允许折行——实测 420 档「国际域 48%（46）
+   → 53%（64）（本次干预真正针对的那一域）」不改会顶破面板宽度。 */
+.pace-effsc{white-space:normal;overflow-wrap:anywhere}
+.pace-eff .bad{color:var(--r-red)}
+.pace-eff .ok{color:var(--r-green)}
+/* 空态：说明「下一次什么时候会有」，而不是留一段白 */
+.pace-empty{padding:6px 0 4px;font-size:12px;color:var(--r-ink-3)}
+/* 行内四列（名称/状态/证据/动作）在证据列还剩 ~200px 时仍可读；实测
+   boxW 834（视口 900）时四列完全放得下，旧断点 900 让它提前塌成两行
+   ——同一张面板在 901 是 44px、900 变成 81px，白白多占一倍高度。
+   收紧到 760（boxW ≈ 694，证据列 ≈ 200px），实测 768 档仍是四列、
+   600 档仍是两行，断点两侧都没有溢出。 */
+@media(max-width:760px){
+ .pace-row{padding:8px 0;row-gap:4px;
+  grid-template-columns:var(--pcol) minmax(0,1fr) auto;
+  grid-template-areas:"nm st ac" "ev ev ev"}
+ .pace-row .st{min-width:0}
+ .pace-row .ev{grid-column:1/-1;align-items:flex-start}
+ .pace-row .ev .e1{flex:1 1 100%}
+ .pace-row .ev .e2{flex:1 1 100%;white-space:normal;overflow-wrap:anywhere}
+ .pace-row .ev{flex-wrap:wrap;gap:4px 8px}
+ .pace-row .ev .e1{white-space:normal;overflow-wrap:anywhere}
+ .pace-row .ac{gap:16px}
+}
+@media(max-width:900px){
+ .pace-led{gap:8px 16px}
+ .pace-facts{gap:4px 16px}
+ .pace-now b{font-size:16px}
+ .pace-stat{min-width:96px}
+ .pace-rec{padding:8px 0;row-gap:1px}
+ /* 备注：宽屏 nowrap 一行；窄屏最多两行。曾放开成 normal，一条 200 字
+    备注撑 3 行、5 条记录吃掉 680px（360 档行高 136px）；但一律 nowrap 又让
+    真实备注被切掉——实测「国际列表 1999/8 连续 7 次未放行（疑会话失效）」
+    在 420 档只显示 226/323px（丢 97px）、360 档丢 157px，而这几句正是
+    「该不该人工介入」的判断依据。两行 + 省略号既能读到结论，又把最坏
+    高度钉死在 2 行。 */
+ .pace-rec .what .h{white-space:normal;overflow-wrap:anywhere;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden}
+ .pace-tline{grid-template-columns:74px minmax(0,1fr);
+  grid-template-areas:"t st" "p p" "n n";gap:2px 8px}
+ .pace-tline.head{display:none}
+ .pace-tline .t{grid-area:t}
+ .pace-tline .st{grid-area:st;text-align:right}
+ .pace-tline .p{grid-area:p}
+ .pace-tline .n{grid-area:n;white-space:normal;overflow-wrap:anywhere}
+}
+@media(max-width:480px){
+ /* 量尺窄屏改 2×2：4 格 96px 在 420/360 档只能排 3 格，剩一格
+    孤零零掉到第二行（实测 3+1）。等分成两列后两行各两格；
+    480 以上仍按内容收宽（768 档若也两列会拉成 351px 空格）。 */
+ .pace-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+  width:100%;max-width:none}
+ .pace-stat{min-width:0;max-width:none}
+ /* 2 列时每行首格不能带竖线：第 3 格是第二行第一格，`first-child`
+    管不到它，实测 390 档左缘多出一条竖线，读作「第一列缺了一格」。 */
+ .pace-stat:nth-child(odd){border-left:0}
+}
+@media(max-width:420px){
+ .pace-tools .g{gap:4px}
+ .pace-tools .g :is(button,a){padding:0 7px}
+ .pace-stat{padding:8px 9px}
+}
 </style></head><body><div class="wrap">
 <svg class="svgdefs" aria-hidden="true" focusable="false"><defs>
  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M2 20h20"/></symbol>
@@ -7593,7 +8930,7 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
 </div>
 <div class="demoBar" id="demoBar" role="status" style="display:none"><span class="demoTag">DEMO</span>演示模式：数据为本地合成，仅作功能预览 · <a href="https://github.com/dengmeiluan/ticket-monitoring" target="_blank" rel="noopener">下载源码或发行包</a>即可监控真实票价</div>
 <div class="verbar" id="verbar" role="alert" style="display:none"><svg class="ic" aria-hidden="true"><use href="#i-rotate"></use></svg> 服务端已升级 <b id="verTxt"></b>，本页面是旧版、功能可能异常 —— <a href="#" onclick="location.reload();return false">点此刷新</a></div>
-<nav id="mainnav"><span id="navMon" class="on" onclick="switchView('mon')"><svg class="ic" aria-hidden="true"><use href="#i-chart"></use></svg>监控</span>
+<nav id="mainnav"><span id="navMon" class="on" onclick="switchView('mon')"><svg class="ic" aria-hidden="true"><use href="#i-chart"></use></svg>监控<i id="navAuth" style="display:none;color:var(--r-red);font-style:normal;margin-left:2px" title="">●</i></span>
  <span id="navSearch" onclick="switchView('search')"><svg class="ic" aria-hidden="true"><use href="#i-search"></use></svg>检索</span>
  <span id="navCfg" onclick="switchView('cfg')"><svg class="ic" aria-hidden="true"><use href="#i-gear"></use></svg>配置<i id="navDirty" style="display:none;color:var(--warn-deep);font-style:normal;margin-left:2px" title="配置有未保存修改">●</i></span></nav>
 <div id="monview" role="main">
@@ -7660,15 +8997,16 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
  </div>
  <div id="spMonSum" class="spmon-sum"></div>
  <span class="spmon-tools" role="group" aria-label="雷达走势工具">
-  <span class="spmon-range" id="spMonRange" role="group" aria-label="雷达走势时间范围">
+  <span class="spmon-range mon-range" id="spMonRange" role="group" aria-label="雷达走势时间范围">
    <button type="button" data-spmrange="2">48h</button><button type="button" data-spmrange="7">7 天</button><button type="button" data-spmrange="30" class="on">30 天</button><button type="button" data-spmrange="90">90 天</button><button type="button" data-spmrange="180">半年</button>
   </span>
-  <span class="spmon-mode" id="spMonMode" role="group" aria-label="雷达走势模式"><button type="button" data-spmmode="line" class="on">折线</button><button type="button" data-spmmode="kline">K线</button></span>
+  <span class="spmon-mode mon-range" id="spMonMode" role="group" aria-label="雷达走势模式"><button type="button" data-spmmode="line" class="on">折线</button><button type="button" data-spmmode="kline">K线</button></span>
  </span>
  <div class="spmon-body">
   <div id="spMonCal" class="spmon-cal" aria-label="特价日历"></div>
   <div class="spmon-main">
-   <div class="spmon-chartwrap"><canvas id="spMonChart" role="img" aria-label="特价监控走势"></canvas><span id="spMonCross" class="spmon-cross" aria-hidden="true"></span><div id="spMonTip" class="spmon-tip" aria-hidden="true" hidden></div><div id="spMonTable" class="sr-only"><table><caption>特价监控时间轴数据</caption><thead><tr><th>采集时间</th><th>最低价</th><th>低价日</th><th>渠道</th><th>标记</th></tr></thead><tbody></tbody></table></div><div id="spMonChartNote" class="spmon-note"></div></div>
+   <div class="spmon-chartwrap"><canvas id="spMonChart" tabindex="0" role="img" aria-label="特价监控走势：聚焦后按左右方向键逐点读数"></canvas><span id="spMonCross" class="spmon-cross" aria-hidden="true"></span><div id="spMonTip" class="spmon-tip" role="status" aria-live="polite" hidden></div><div id="spMonTable" class="sr-only"><table><caption>特价监控时间轴数据</caption><thead><tr><th>采集时间</th><th>最低价</th><th>低价日</th><th>渠道</th><th>标记</th></tr></thead><tbody></tbody></table></div><div id="spMonChartNote" class="spmon-note chart-note"></div></div>
+   <div class="legend mon-legend" id="spMonLegend" aria-label="雷达走势图例"></div>
    <div id="spMonLow" class="spmon-low"></div>
   </div>
   <div id="spMonSources" class="spmon-src"></div>
@@ -7719,11 +9057,12 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
  <span class="rngchip" id="rng180" onclick="setRange('180d')">半年</span></span><span class="mdgrp"><span class="rngchip" id="mdOut" onclick="toggleOutliers()" title="默认隐藏极端离群价，避免一个异常点压扁整条曲线；点击显示原值">极值</span></span></span></div>
  <div class="frow" id="chartRoutes"></div>
  <div class="chartwrap mon-chartwrap"><canvas id="chart" tabindex="0" role="img" aria-label="价格走势图：聚焦后按左右方向键逐点读数，Home/End 跳首尾，Enter 看该轮明细"></canvas>
-  <div class="chart-empty" id="chartEmpty" style="display:flex">数据加载中…</div></div>
+  <div class="chart-empty" id="chartEmpty" style="display:flex">数据加载中…</div>
+  <div class="sr-only" id="trendTipLive" role="status" aria-live="polite"></div></div>
  <div class="legend mon-legend"><span id="lgDirect"><b style="background:var(--blue)"></b>直飞最低</span>
   <span id="lgTrans"><b style="background:var(--orange)"></b>中转最低</span>
-  <span id="lgZone" title="行情价低于达标线的区间；未必可出手（达标以环标为准）"><b style="background:var(--okzone)"></b>线内区间</span><span id="lgThD"><b style="background:var(--red)"></b>直飞达标线</span><span id="lgThT"><b style="background:var(--thline)"></b>中转达标线</span>
-  <div class="muted" id="ringNote" style="flex-basis:100%;font-size:11px;margin-top:2px"></div></div></div>
+  <span id="lgZone" title="行情价低于达标线的区间；未必可出手（达标以环标为准）"><b style="background:var(--okzone)"></b>线内区间</span><span id="lgThD"><b style="background:var(--red)"></b>直飞达标线</span><span id="lgThT"><b style="background:var(--thline)"></b>中转达标线</span></div>
+ <div class="chart-note" id="ringNote"></div></div>
 
 <div class="ucard mon-card" id="calcard" style="display:none"><div class="uhead mon-cardhead"><span style="display:flex;align-items:center;gap:9px;flex-wrap:wrap"><span class="seclab inline"><span class="no">02</span><span class="zh">价格日历</span><span class="en">CALENDAR</span></span><span id="calTitle" style="font-weight:700;font-size:14px"></span></span>
  <span class="muted" id="calStats"></span></div>
@@ -7796,7 +9135,6 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
   <span id="fltBtn" aria-expanded="false" aria-controls="fltwrap" onclick="togFlt()" title="筛选；档位图例：深绿=真达标 · 描绿=行情破线（行情价低于达标线但未达标，未必可出手，达标以实心/环标为准） · 琥珀=擦边"> <svg class="ic" aria-hidden="true"><use href="#i-sliders"></use></svg> 筛选<b id="fltN" style="display:none"></b></span>
   <!-- 档位图例常驻（触屏读不到 price 格 title 的补位）：b 元素避开 .tabs span 胶囊底；「未必可出手」语义收进 title 悬停防行尾溢出；≤540 全档隐藏、语义并入 fltBtn title（吸顶条单行化），宽档常驻不受扰 -->
   <b class="muted" style="margin-left:auto;font-size:11px" title="描绿=行情破线：行情价低于达标线但未达标，未必可出手（达标以实心/环标为准）">深绿=真达标 · 描绿=行情破线 · 琥珀=擦边</b></div>
- <div class="fltsum" id="fltsum" aria-live="polite"></div>
  <div class="fbar" id="fltwrap"><div class="frow fltpresetrow" id="fltpresets">
   <span class="chiplab">智能筛选</span>
   <span class="chip fltpreset" data-fp="direct" role="button" tabindex="0" title="直飞 + 含免费托运 + 排除经停——一键组合后仍可再调" onclick="applyFltPreset('direct')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();applyFltPreset('direct')}"> <svg class="gly" aria-hidden="true"><use href="#i-plane"></use></svg> 直飞含行李</span>
@@ -7834,7 +9172,7 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
    <span class="wingrp" data-flt="lay"><span class="chiplab">中转时长：</span><input type="text" id="flaymin" aria-label="中转最短分钟" placeholder="不限" style="width:64px" oninput="applyFltD()"> –
     <input type="text" id="flaymax" aria-label="中转最长分钟" placeholder="不限" style="width:64px" oninput="applyFltD()"><span class="muted">分钟·仅中转生效</span></span>
    <span class="fltacts">
-   <button class="btn2" id="morefltBtn" aria-expanded="false" aria-controls="moreflt" onclick="togMoreFlt()">更多筛选 ▸<b id="morefltN" style="display:none"></b></button>
+   <button class="btn2" id="morefltBtn" aria-expanded="false" aria-controls="moreflt" onclick="togMoreFlt()">展开更多条件<b id="morefltN" style="display:none"></b></button>
    <button class="btn2" onclick="resetFltUI()">重置筛选与排序</button>
    <button class="btn2" onclick="expCsv()">⬇ 导出CSV</button>
    <span class="muted">点击表头可排序（再点切换升降序）</span>
@@ -7861,48 +9199,55 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
    </div>
   </div>
  <div class="fdrawer-cta" id="fdrawerCta"><button type="button" class="btn2 primary" onclick="closeFltShow()">查看筛选结果 <b id="fdCount">0</b> 条</button></div>
+ <div class="fltsum" id="fltsum" aria-live="polite"></div>
  <span class="tw-hint" id="twHint">左右滑动查看完整明细 →</span><div class="tw"><table id="ftable"><caption class="sr-only">航班明细（按出发日期与价格排序，点击行展开同班跨渠道比价）</caption><tr class="erow"><td colspan="9">加载中…</td></tr></table></div></div>
 </div><!-- /montab-details -->
 
 <!-- 审计 P2-5：display 翻转架构下键盘 Tab 序按 DOM 序——明细(04)
      原在健康(05)之后，与视觉 tab 序相反；纯文本搬移零逻辑影响 -->
 <div id="montab-health" role="tabpanel" style="display:none">
-<div class="ucard srccap" id="srccap">
- <div class="uhead">
-  <span class="seclab inline"><span class="zh">来源接入</span><span class="en">SOURCE ACCESS</span></span>
-  <span class="muted">去哪儿网页版停服后的取数路径 · 可用性以下方 24h 健康为准</span>
- </div>
- <div class="scpath" role="group" aria-label="去哪儿取数路径">
-  <div class="scnode dead" title="PC 网页已于 2026-10-10 停服"><span class="sck">PC 网页</span><b>已停服</b><em>2026-10-10 起</em></div>
-  <span class="scarr" aria-hidden="true">→</span>
-  <div class="scnode live" title="H5 机票（m.flight）登录后出全量航班明细"><span class="sck">H5 机票</span><b>登录后可用</b><em>出全量航班明细</em></div>
-  <span class="scarr" aria-hidden="true">→</span>
-  <div class="scnode gate" title="手机号 / 扫码登录，Cookie 与 H5 共用"><span class="sck"><svg class="ic" aria-hidden="true"><use href="#i-lock"></use></svg>登录态</span><b class="scstate" id="scQState" role="status" aria-live="polite" aria-atomic="true">读取中…</b><em>手机号 / 扫码</em></div>
- </div>
- <div class="scfoot">
-  <span class="scnote" id="scNote">去哪儿 App 专属价与自动下单不在采集范围；其余四渠道仍走现有 H5/页面路径。</span>
-  <span class="scacts">
-   <button type="button" class="sclink" id="scNoteBtn" aria-expanded="false" aria-controls="scNote" onclick="srxToggleScNote(this)">说明</button>
-   <button type="button" class="scbtn" id="scLoginBtn" onclick="srxGoLogin('qunar')">去登录</button>
-   <a class="scbtn ghost" href="https://touch.qunar.com/h5/flight/" target="_blank" rel="noopener noreferrer" title="打开去哪儿 H5 机票页（登录后出明细）">打开 H5</a>
-  </span>
- </div>
-</div>
 <div class="muted" id="healthEmpty" style="display:none;padding:34px 0;text-align:center">
  暂无扫描记录——完成一轮采集后，这里会出现 24h 渠道健康时间线</div>
-<div class="ucard" id="healthDiag"><div class="uhead">
- <span style="display:flex;align-items:center;gap:9px;flex-wrap:wrap"><span class="seclab inline"><span class="zh">渠道诊断</span><span class="en">DIAGNOSIS</span></span><span class="muted" id="healthDiagMeta">按最近一轮证据区分登录/验证码/IP 风控/超时</span></span></div>
+<div class="ucard" id="healthDiag"><div class="uhead" id="healthDiagHead">
+ <span style="display:flex;align-items:center;gap:9px;flex-wrap:wrap"><span class="seclab inline"><span class="zh">渠道诊断</span><span class="en">DIAGNOSIS</span></span><span class="muted" id="healthDiagMeta">按最近一轮证据区分登录/验证码/IP 风控/超时</span></span>
+ <!-- r412：来源接入原在页首自成一条卡片带——一条只描述取数路径的窄条
+      夹在「渠道诊断」「渠道健康」两张卡之间，读作割裂（用户实报「独立
+      一行的设计非常奇怪」）。并入渠道诊断卡顶部做取数路径条：讲的是
+      「这批诊断证据从哪条路取来」，与证据同卡，不再自占一段。
+      r423：并进卡内后仍是一整块满宽信息带，依旧自成一段。现在直接长在
+      标题行里（与「渠道诊断」同一行、同一基线），路径即标题的展开说明：
+      不再有第二行、不再有底纹块，说明仍绝对定位在行下。 -->
+ <div class="srccap" id="srccap" role="group" aria-label="来源接入 SOURCE ACCESS：去哪儿网页版停服后的取数路径，可用性以下方 24h 健康为准">
+  <div class="scpath" role="group" aria-label="去哪儿取数路径">
+   <div class="scnode dead" title="PC 网页已于 2026-10-10 停服"><span class="sck">PC 网页</span><b>已停服</b><em>2026-10-10 起</em></div>
+   <span class="scarr" aria-hidden="true">→</span>
+   <div class="scnode live" title="H5 机票（m.flight）登录后出全量航班明细"><span class="sck">H5 机票</span><b>登录后可用</b><em>出全量航班明细</em></div>
+   <span class="scarr" aria-hidden="true">→</span>
+   <div class="scnode gate" title="手机号 / 扫码登录，Cookie 与 H5 共用"><span class="sck"><svg class="ic" aria-hidden="true"><use href="#i-lock"></use></svg>登录态</span><b class="scstate" id="scQState" role="status" aria-live="polite" aria-atomic="true">读取中…</b><em>手机号 / 扫码</em></div>
+  </div>
+  <div class="scfoot">
+   <span class="scacts">
+    <button type="button" class="sclink" id="scNoteBtn" aria-expanded="false" aria-controls="scNote" onclick="srxToggleScNote(this)">展开说明</button>
+    <button type="button" class="scbtn" id="scLoginBtn" onclick="srxGoLogin('qunar')">去登录</button>
+    <a class="scbtn ghost" href="https://touch.qunar.com/h5/flight/" target="_blank" rel="noopener noreferrer" title="打开去哪儿 H5 机票页（登录后出明细）">打开 H5</a>
+   </span>
+  </div>
+ </div>
+</div>
+ <span class="scnote" id="scNote">去哪儿 App 专属价与自动下单不在采集范围；其余四渠道仍走现有 H5/页面路径。</span>
  <div id="healthDiagBody" class="hdiag"><span class="muted">读取中…</span></div></div>
 <div class="ucard" id="healthcard" style="display:none"><div class="uhead"><span style="display:flex;align-items:center;gap:9px;flex-wrap:wrap"><span class="seclab inline"><span class="no">01</span><span class="zh">渠道健康</span><span class="en">HEALTH</span></span><span class="muted">近 24h · 每格一轮扫描 · 点击格子看该轮日志</span></span>
  <span class="muted"><span id="hroundcnt"></span><span id="hsrcNote"></span><button id="hauthact" class="hact" type="button" hidden data-p="" onclick="srxGoLogin(this.dataset.p)">需登录 · 去登录</button></span></div>
  <div id="hbody"></div>
  <div id="pushhl"></div>
- <div class="legend">
+ <div class="legend hlegend">
   <span><b style="background:var(--green)"></b>成功</span>
   <span><b style="background:repeating-linear-gradient(135deg,var(--orange) 0 3px,var(--warnbg) 3px 5px)"></b>部分/降级</span>
   <span><b style="background:repeating-linear-gradient(45deg,var(--red) 0 2px,var(--redbg) 2px 4px)"></b>失败</span>
   <span><b class="hlh"></b>维护</span>
-  <span><b style="background:transparent;box-shadow:inset 0 0 0 1px var(--line2)"></b>未扫描</span></div></div>
+  <span><b style="background:transparent;box-shadow:inset 0 0 0 1px var(--line2)"></b>未扫描</span></div>
+ <div class="hpace"><div class="hpace-h"><b>节流与干预</b><span class="hpacer">限额、冷却、静默窗、可干预项；参数在 <button type="button" class="hlink" onclick="cfgGoThrottle()">配置 · 全局参数 · 节流</button> 里调</span></div>
+  <div id="paceBox" role="status" aria-live="polite" class="pace"></div></div></div>
 </div><!-- /montab-health -->
 </div><!-- /monview -->
 
@@ -7937,21 +9282,20 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
     配置航线</button>
    <button type="button" class="srx-btn" data-sec onclick="srxSpOpen()" title="打开特价监控：官方低价日历/榜单与真实探针">特价雷达</button>
-   <button type="button" class="srx-btn srx-ovhbtn" id="srxOvHero" onclick="srxToggleOverview()" aria-expanded="false" title="展开/收起检索概览">概览</button>
-   <button type="button" class="srx-btn srx-more-btn" aria-expanded="false" title="展开/收起检索工具" onclick="var p=this.closest('.srx-hero-act');p.classList.toggle('open');var on=p.classList.contains('open');this.setAttribute('aria-expanded',on?'true':'false');this.textContent=on?'收起':'更多工具'">更多工具</button>
+   <button type="button" class="srx-btn srx-more-btn" aria-expanded="false" title="展开/收起检索工具" onclick="var p=this.closest('.srx-hero-act');p.classList.toggle('open');var on=p.classList.contains('open');this.setAttribute('aria-expanded',on?'true':'false');this.textContent=on?'收起更多工具':'展开更多工具'">展开更多工具</button>
   </div>
  </section>
 
  <section class="srx-probe open" id="srxProbe" aria-label="主动探针">
   <div class="srx-probehead"><b>主动探针</b><em id="srxProbeMode">监控数据</em><span class="srx-probe-mini" id="srxProbeMini"></span><span class="srx-probehint">真实渠道并发采集 · 不入库</span>
    <span class="srx-probeacts">
-    <button type="button" class="srx-batchtoggle" id="srxBatchToggle" onclick="srxBatchToggle()" aria-expanded="false">组合 0/4</button>
+    <button type="button" class="srx-batchtoggle" id="srxBatchToggle" onclick="srxBatchToggle()" aria-expanded="false" title="展开/收起组合队列" aria-label="展开组合队列">组合 0/4</button>
     <button type="button" class="srx-taskbtn" id="srxTaskBtn" onclick="srxTaskOpen()" style="display:none">进度 <b id="srxTaskBtnN">0/0</b></button>
     <button type="button" class="srx-taskbtn" onclick="srxSpOpen()">特价雷达</button>
     <button type="button" class="srx-sessbtn" onclick="srxOpenSessions()" style="height:26px;padding:0 8px;font-size:11px">探针会话</button>
-    <button type="button" class="srx-probe-toggle" id="srxProbeToggle" onclick="srxToggleProbe()" aria-expanded="true">收起探针</button>
+    <button type="button" class="srx-probe-toggle" id="srxProbeToggle" onclick="srxToggleProbe()" aria-expanded="true" aria-controls="srxProbeForm"><span class="srx-chev" aria-hidden="true"></span><span class="srx-tgl-txt">收起探针</span></button>
    </span></div>
-  <div class="srx-probeform">
+  <div class="srx-probeform" id="srxProbeForm">
    <div class="srx-qrow">
     <label class="srx-field srx-fromfield" for="srxFrom"><span class="srx-flab">出发</span>
      <span class="srx-citybox"><input id="srxFrom" autocomplete="off" placeholder="上海 / SHA" aria-label="出发城市" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="srxFromDrop" onfocus="srxCityFocus(this)" onclick="srxCityFocus(this)" oninput="srxCityInput(this)" onkeydown="srxCityKey(event,this)" onchange="srxCityChanged(this)" onfocusout="srxCityBlur(this)">
@@ -8030,15 +9374,16 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
 
 
  <div class="srx-mobilebar" id="srxMobilebar" role="group" aria-label="移动端概览与筛选">
-  <button type="button" class="srx-mbtn" data-mobile="overview" aria-expanded="false">概览</button>
-  <button type="button" class="srx-mbtn" data-mobile="filters" aria-expanded="false">筛选</button>
+  <button type="button" class="srx-mbtn" data-mobile="overview" aria-expanded="false" aria-controls="srxOvBody">展开概览</button>
+  <button type="button" class="srx-mbtn" data-mobile="filters" aria-expanded="false">展开筛选</button>
   <button type="button" class="srx-mbtn" id="srxViewBtnM" aria-pressed="false" onclick="srxToggleView()">矩阵</button>
   <span class="srx-msum" id="srxMobileSummary">—</span>
  </div>
 
- <span class="srx-ovbar" id="srxOvBar" role="button" tabindex="0" aria-label="检索概览摘要（点击展开）" aria-expanded="false" onclick="srxToggleOverview()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();srxToggleOverview()}"><span class="srx-ovsum" id="srxOvSum">概览加载中…</span></span>
+ <section class="srx-overview srx-ov-collapsed" id="srxOverview" aria-label="检索概览">
+  <div class="srx-ovbody" id="srxOvBody">
 <section class="srx-band" id="srxBand" aria-label="价格日历带">
-  <div class="srx-band-h"><b id="srxBandTitle">14 日出发价带</b><span id="srxBandMeta">按出发日 · 真实落库最低价</span>
+  <div class="srx-band-h"><b id="srxBandTitle">14 日出发价带</b><span class="srx-ovsum" id="srxOvSum" role="status" aria-live="polite">概览加载中…</span><span id="srxBandMeta">按出发日 · 真实落库最低价</span>
    <span class="srx-bandnav" role="group" aria-label="价带日期窗口翻页">
     <button type="button" onclick="srxBandShift(-14)" aria-label="查看前 14 天" title="往前翻 14 天"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg></button>
     <button type="button" onclick="srxBandShift(14)" aria-label="查看后 14 天" title="往后翻 14 天"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button>
@@ -8048,7 +9393,7 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
     <button type="button" data-axis="observation" onclick="srxAxis('observation')">采集日</button>
    </span>
    <button type="button" class="srx-bandreset" id="srxBandReset" onclick="srxBandReset()" hidden>回到所选日</button>
-   <button type="button" class="srx-bandlogin" onclick="srxGoLogin()" title="打开渠道登录/会话">渠道登录</button><button type="button" class="srx-foldbtn" style="margin-left:6px" onclick="srxFold('srxBand',this)" aria-expanded="true">收起价带</button></div>
+   <button type="button" class="srx-bandlogin" onclick="srxGoLogin()" title="打开渠道登录/会话">渠道登录</button><button type="button" class="srx-foldbtn srx-ovtoggle" id="srxOvHero" onclick="srxToggleOverview()" aria-expanded="false" aria-controls="srxOvBody">展开概览</button></div>
   <div id="srxBandBody" class="srx-foldbody">
   <div class="srx-band-days" id="srxBandDays"><div class="srx-skel" style="height:48px;margin:0"></div></div>
   <div class="srx-band-note" id="srxBandNote">正在读取真实日桶…</div>
@@ -8057,13 +9402,14 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
 
  <section class="srx-brief" id="srxBrief" aria-label="五源现势"><div class="srx-skel" style="height:76px;margin:0"></div></section>
  <div class="srx-capbar" id="srxCapbar" role="note" aria-label="本次查询的渠道结果与会话状态（能力与无票分开）" hidden></div>
+ <div class="srx-audit" id="srxKpis" aria-live="polite"></div>
+  </div><!-- /srxOvBody -->
+ </section><!-- /srxOverview -->
 
  <div class="srx-mtabs" role="tablist" aria-label="移动端检索视图">
   <button type="button" class="on" data-mtab="list" role="tab" aria-selected="true">解析列表</button>
   <button type="button" data-mtab="mirror" role="tab" aria-selected="false">原页镜像</button>
  </div>
-
- <div class="srx-audit" id="srxKpis" aria-live="polite"></div>
 
  <section class="srx-context ctx-collapsed" id="srxContext" aria-label="筛选与排序">
   <div class="srx-line"><span class="srx-lab">航线</span><div class="srx-chips" id="srxPairs"></div>
@@ -8074,17 +9420,21 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
     <select id="srxSort" aria-label="排序">
      <option value="price">价格升序</option><option value="price_desc">价格降序</option><option value="dep">起飞时间</option><option value="dur">时长</option><option value="smart">智能·达标优先</option>
     </select>
-    <button type="button" class="srx-btn srx-ctxbtn" id="srxFilterBtn" onclick="srxToggleCtx()" aria-expanded="false" aria-controls="srxContext">筛选</button>
+    <button type="button" class="srx-btn srx-ctxbtn" id="srxFilterBtn" onclick="srxToggleCtx()" aria-expanded="false" aria-controls="srxContext">展开筛选</button>
     <button type="button" class="srx-btn" id="srxViewBtn" onclick="srxToggleView()" title="列表 / 航班×渠道矩阵">矩阵</button>
     <button type="button" class="srx-btn" id="srxRestoreLink" onclick="srxRestoreApply()" hidden>恢复上次条件</button>
    </div>
   </div>
   <div class="srx-line"><span class="srx-lab">日期</span><div class="srx-chips" id="srxDates"></div></div>
   <div class="srx-line"><span class="srx-lab">快筛</span><div class="srx-chips" id="srxFacets"></div>
-   <button type="button" class="srx-more" id="srxMoreBtn" onclick="srxToggleMore()" aria-expanded="false">更多筛选</button>
+   <button type="button" class="srx-more" id="srxMoreBtn" onclick="srxToggleMore()" aria-expanded="false" aria-controls="srxFmore">展开更多条件</button>
   </div>
-  <div class="srx-line"><span class="srx-lab">渠道</span><div class="srx-chips" id="srxPlats"></div></div>
+  <!-- r469：面板原先挂在 section 末尾（「速筛」「渠道」行之后），展开时
+       触发器在最右 x≈1329，面板却从最左 x=91 起、比按钮底还低 41px——
+       用户读作「展开独立占了一行、非常割裂」。移到触发按钮所在行之后，
+       展开体紧贴按钮下方，触发器与内容同属一块。 -->
   <div class="srx-fmore" id="srxFmore"></div>
+  <div class="srx-line"><span class="srx-lab">渠道</span><div class="srx-chips" id="srxPlats"></div></div>
   <div class="srx-abar" id="srxAbar"></div>
  </section>
  <div class="srx-restore" id="srxRestoreNote" hidden></div>
@@ -8125,6 +9475,7 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
   <span class="cc-chips">
    <span class="cc-chip" id="cfgDirty" role="status" aria-live="polite" title="尚未落盘的修改；保存后立即热生效">● 无未保存修改</span>
    <span class="cc-chip" id="cfgChromeRestart" role="button" tabindex="0" onclick="openRestartCenter()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openRestartCenter()}" title="查看启动级配置差量、迁移预案并重启"><svg class="ic" aria-hidden="true"><use href="#i-rotate"></use></svg><span id="cfgRestartTxt">无需重启</span></span>
+   <span class="cc-chip cc-foldall" id="cfgFoldAll" role="button" tabindex="0" aria-expanded="true" onclick="cfgFoldAll()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();cfgFoldAll()}" title="收齐所有分区的分组/航线/渠道/用户卡明细（不只看当前分区）"><svg class="ic" aria-hidden="true"><use href="#i-rows"></use></svg><span id="cfgFoldAllTxt">全部收齐</span></span>
   </span>
  </div>
  <div class="cfglayout">
@@ -8512,12 +9863,17 @@ function render(){const s=S;
     +kpiCard('t',xt,tt,'中转最低·次日'+((xt&&xt.tam)||'02:00')+'前到达',x.delta?x.delta.transfer:null,_sd)
     +`</div>`;
   }
-  /* 卡头 name/routesTxt 过 he()，与上方用户 pills 转义纪律对齐 */
+  /* 卡头 name/routesTxt 过 he()，与上方用户 pills 转义纪律对齐。
+     r419：「查看明细 / 走势」原挂在卡片最底部「全线最低：…」那一句的句尾
+     （`… ｜ 查看明细 ▸ ｜ 走势 ▸`），动作埋在长句里、离它要操作的对象
+     隔了一整块 KPI 网格，用户实报「用户明细按钮排在那里很别扭」。改为
+     卡头右侧的动作区：名字与动作同一行，动作贴着对象。 */
   h+=`<div class="ucard"><div class="uhead">
    <span class="uname"><span class="udot${xh?' hit':''}" title="${xh?'已达标':'未达标'}"></span>${he(x.name)}</span>
-   <span class="uroutes">${String(x.routesTxt||'').split('、').map(s=>'<span class="nw">'+he(s)+'</span>').join('、')}</span></div>
+   <span class="uroutes">${String(x.routesTxt||'').split('、').map(s=>'<span class="nw">'+he(s)+'</span>').join('、')}</span>
+   <span class="uact2"><a href="#" onclick="pickUser(${i});showMonTab('details');return false">查看明细 ▸</a><a href="#" onclick="pickUser(${i});jumpUserBest(${i},'${(xd&&xd.date)||(xt&&xt.date)||''}');return false">走势 ▸</a></span></div>
    ${kpis}
-   <div class="muted kpisum" style="margin-top:8px">全线最低：${mHtml}<span style="white-space:nowrap"> ｜ <a href="#" onclick="pickUser(${i});showMonTab('details');return false" style="color:var(--blue);white-space:nowrap">查看明细 ▸</a> ｜ <a href="#" onclick="pickUser(${i});jumpUserBest(${i},'${(xd&&xd.date)||(xt&&xt.date)||''}');return false" style="color:var(--blue);white-space:nowrap">走势 ▸</a></span></div>
+   <div class="muted kpisum" style="margin-top:8px">全线最低：${mHtml}</div>
   </div>`;});
  /* 重建不丢键盘焦点：快照 activeElement 的 data-k 键值（numlink 等），
     重建后按键回焦（preventScroll 防跳动）；无键元素不救（CSS :hover
@@ -8529,7 +9885,9 @@ function render(){const s=S;
  CHART_ANIM=1;
  buildRouteChips();buildDateChips();buildChips();buildChartChips();
  if(MONTAB==='details')table();   /* 非明细视图跳过重建：#ftable 不可见画了也白画，切回时 showMonTab 补调 */
- chart();renderCal();if(MONTAB==='watch'&&VIEW==='mon')wsLoad(false);mkactAll();}   /* render 尾无条件补键盘可达：概览/单航线路径下 chips 不再依赖子视图里的调用点（mkact 自身 dataset.kbd 幂等） */
+ chart();renderCal();if(MONTAB==='watch'&&VIEW==='mon')wsLoad(false);
+ if(MONTAB==='specials'&&VIEW==='mon'&&!SPMON.data){try{spMonLoad()}catch(e){}}
+ mkactAll();}   /* render 尾无条件补键盘可达：概览/单航线路径下 chips 不再依赖子视图里的调用点（mkact 自身 dataset.kbd 幂等） */
 /* KPI 数字 count-up：数据刷新时从旧值滚动到新值（600ms smoothstep） */
 const PREV={};
 function countUps(){document.querySelectorAll('a.numlink').forEach(el=>{
@@ -8571,6 +9929,13 @@ function mtabUserNext(){const us=(S&&S.users)||[];
 /* ===== 主页子视图工作台：一屏一会话（概览/走势·日历/明细/健康）；
    display 切换零 DOM 插拔（扩展免疫）；canvas 容器切回时须重绘 ===== */
 let MONTAB='overview';
+/* r412：节流面板的展开态存根必须早于 showMonTab 定义期就初始化完毕——
+   showMonTab('health') 会立刻调 loadPacing→读 PACE.detail，而 PACE 原来
+   声明在 15000 行之后：深链/键盘切到渠道健康时先报 TDZ
+   "Cannot access 'PACE' before initialization"，改成 var 后又变成
+   提升未赋值 "Cannot read properties of undefined (reading 'detail')"
+   （UI 门禁两次实测）。这里前置初始化，语义与原处一致。 */
+var PACE={detail:null,detailHTML:'',focusKey:''};
 /* 健康格弹性档实判定（r322 P3-1 单源）：先摘 fit 量固定档格带宽，
    放得下（≤容器宽+1 容差同 xhint）挂 fit 弹性铺满。coarse 恒不挂
    （matchMedia 现查——触屏仿真/设备旋转即时生效，触控 9px 固定档
@@ -8607,7 +9972,13 @@ window.addEventListener('resize',syncMtabH);
 function srxSetFold(id,folded){
  const el=$(id);if(!el)return;
  el.classList.toggle('srx-folded',!!folded);
- document.querySelectorAll('[onclick*="'+id+'"]').forEach(btn=>{
+ /* r421：按钮的 onclick 是 srxFold(this.dataset.foldtarget,this)——不含目标 id
+    字面量，旧选择器 [onclick*="srxMirror"] 永远匹配 0 个按钮，于是折叠后
+    文案仍是「收起镜像」、aria 仍是 true（状态欺骗：用户点的这一颗说的是
+    「再收一次」）。按 data-foldtarget 匹配；兼容旧的 onclick 字面量写法。 */
+ const btns=new Set([...document.querySelectorAll('[data-foldtarget="'+id+'"]')]);
+ document.querySelectorAll('[onclick*="'+id+'"]').forEach(b=>btns.add(b));
+ btns.forEach(btn=>{
   if(!btn.classList.contains('srx-foldbtn'))return;
   const base=String(btn.textContent||'').trim().replace(/^(收起|展开)/,'')||'详情';
   btn.textContent=(folded?'展开':'收起')+base;
@@ -8652,7 +10023,8 @@ function showMonTab(t,silent,hist){
  syncMtabH();
  if(t==='overview')renderMonWatch();
  if(t==='specials'){spCard(true);try{srxRadarLoadFromUser()}catch(e){};try{spMonLoad()}catch(e){}}
- if(t==='health'){try{renderHealthDiag()}catch(e){}}
+ if(t==='health'){try{renderHealthDiag()}catch(e){};try{loadPacing();_paceStartAuto()}catch(e){}}
+ if(t!=='health'){try{_paceStopAuto()}catch(e){}}
  if(t==='trend'&&!silent){chart();renderMonWatch(true);}
  if(t==='watch'&&!silent){wsLoad(false);}
  if(t==='details'&&!silent)table();   /* render 在非明细视图跳过了重建，切回补一拍（S 未到时自身有守卫） */
@@ -9278,7 +10650,7 @@ function togMoreFlt(){
  const open=box.style.display!=='none';
  box.style.display=open?'none':'';
  btn.setAttribute('aria-expanded',open?'false':'true');
- btn.firstChild.textContent=open?'更多筛选 ▸':'更多筛选 ▾';}
+ btn.firstChild.textContent=open?'展开更多条件':'收起更多条件';}
 function moreFltActive(){return (FLT.durmin||FLT.durmax?1:0)+(FLT.prate?1:0)
  +(FLT.age?1:0)+(FLT.bag?1:0)+(FLT.bagkg?1:0)+(FLT.meal?1:0)+(FLT.nolcc?1:0)
  +(FLT.wb?1:0)+(FLT.cross?1:0)+(FLT.child?1:0)
@@ -9458,7 +10830,16 @@ function filteredRows(){const u=S.users[U];
    const hay=(f.name+' '+(f.code||'')+' '+(f.trans||'')+' '+f.plat+' '+(f.depAirportCode||'')+' '+(f.arrAirportCode||'')+' '+(f.depAirport||'')+' '+(f.arrAirport||'')+' '+(f.airlineCode||'')+' '+(f.shareAirline||'')+' '+(f.cabinT||'')+' '+(f.labels||'')+' '+(f.plane||'')+' '+(f.plane2||'')).toLowerCase();
    if(!hay.includes(q))return false;}
   return true;});
- rows.sort((a,b)=>{const x=sval(a,SORT.k),y=sval(b,SORT.k);
+ rows.sort((a,b)=>{
+  /* r435：日历价（时刻双空、航班号常缺）不是可出手机票，但它的价格是
+     有效数字，会按价格混排进真实报价之间——用户扫一眼就把它当成
+     「这条航线 ￥1430 能买到」（本轮实测 120 行里 30 行是日历行，
+     紧跟在 ￥1381 真实行后面）。任何排序下都让日历行整组沉底，
+     真实报价永远先看到；同组内仍按原排序键。 */
+  const ac=(typeof srxIsCal==='function')?srxIsCal(a):!!(a.cal||a.isCal);
+  const bc=(typeof srxIsCal==='function')?srxIsCal(b):!!(b.cal||b.isCal);
+  if(ac!==bc)return ac?1:-1;
+  const x=sval(a,SORT.k),y=sval(b,SORT.k);
   // 空值哨兵恒沉底不随方向翻转（r51 审计：降序时 99999 曾变最大值
   // 置顶——日历最低价常是全表最低价却排第一）
   const xn=(x==null||x===99999),yn=(y==null||y===99999);
@@ -9581,7 +10962,7 @@ function _chunkHtml(ci){if(_CHUNKS[ci]!=null)return _CHUNKS[ci];
   `<td class="price${f.brk?' brk':(f.near?' near':'')}"${f.brk?' title="行情破线未达标：因非直挂/衔接不足/税前等原因暂不可出手"':(f.near?` title="擦边：距达标线 ≤${NEAR_PCT}%，未达标"`:'')}>${'<span class="fire">'+(f.qual?'<svg class="ic" aria-hidden="true"><use href="#i-flame"></use></svg>':'')+'</span>'}￥${f.price}${f.xphan?' <span class="stl" style="color:var(--warn);cursor:help" title="跨渠道孤低价：显著低于其他渠道同航班报价，疑似页面污染/错误价——不参与达标判定与行情最优">⚠</span>':''}${f.platKey==='fliggy'&&!f.intl?'<span class="pretax" style="cursor:help" title="飞猪列表价为不含机建燃油的裸价，出行总成本需另加此项">税前</span>':''}${f.blackCard?'<span class="pretax" style="cursor:help" title="黑卡价：渠道黑卡商品价，实付以渠道页为准">黑卡价</span>':''}${f.agePolicy?`<span class="pretax" style="color:var(--warn);cursor:help" title="资格受限专享价：仅符合限定条件（年龄/航司或平台会员资格/指定卡类型/航司协议/成团人数）的旅客可购，误购无法出行">⚠${he(f.agePolicy)}价</span>`:''}${f.riskPolicy?`<span class="pretax" style="color:var(--warn);cursor:help" title="渠道标注的高风险政策价：出票/退款类购买风险以渠道页说明为准，下单前请核实政策详情">⚠${he(f.riskPolicy)}</span>`:''}${f.ticketRisk?`<span class="pretax" style="color:var(--warn);cursor:help" title="值机时效风险（渠道弹层警示）：航班临近起飞，购票前请先到值机柜台确认出票后仍有时间值机；出票失败自动取消全额退款；已出票退改损失需自行承担">⚠值机</span>`:''}${f.lurePrice?`<span class="pretax" style="color:var(--warn);cursor:help" title="渠道列表页展示价￥${f.lurePrice}已被渠道过滤（不可购）：点进渠道预订将按本行可购价成交，请勿以该展示价比价">⚠页面价￥${f.lurePrice}不可购</span>`:''}${(f.returnFee!=null||f.changeFee!=null)?`<span class="pretax" style="cursor:help" title="该价位退改规则（渠道标注，当前档位费率、起飞前分档变动）：退票/改签手续费，不可=渠道标注不可办理">${_rc_txt(f)}</span>`:''}</td>`+
   `<td class="catt">${f.intl?'<span class="tag t-i" title="国际航线：价格为含税总价">国际</span>':''}${f.cal?'<span class="tag t-c" title="日历价：渠道日历最低含税价（非具体航班，时刻/航班号/航司不适用）">日历</span>':`<span class="tag ${f.transfer?'t-t':'t-d'}"${(f.transfer&&f.transferService)?` title="中转服务：${he(f.transferService)}"`:''}>${f.transfer?'中转':'直飞'}</span>`}</td>`+
   `<td class="datd">${f.date?he(dSlash(f.date)):'—'}</td>`+
-  `<td${((f.labels||f.labelNote||f.baggage||f.carryon||f.bizPrice!=null)||(f.childPrice!=null||f.infantPrice!=null)||f.distance!=null||(f.nearby&&f.nearby.length)||(f.trendRound&&f.trendRound.length))?` title="${he((f.labels||'').split('·').join(' · '))+(f.labels&&f.labelNote?'｜':'')+he(f.labelNote||'')+((f.labels||f.labelNote)&&f.baggage?'｜':'')+(f.baggage?he(f.baggage):'')+((f.labels||f.labelNote||f.baggage)&&f.carryon?'｜':'')+(f.carryon?he(f.carryon):'')+((f.labels||f.labelNote||f.baggage||f.carryon)&&f.bizPrice!=null?'｜':'')+(f.bizPrice!=null?he(f.bizCabin||'公务')+'￥'+he(String(f.bizPrice)):'')+((f.childPrice!=null||f.infantPrice!=null)?(((f.labels||f.labelNote||f.bizPrice!=null||f.baggage||f.carryon)?'｜':'')+(f.childPrice!=null?'儿童价￥'+he(String(f.childPrice)):'')+((f.childPrice!=null&&f.infantPrice!=null)?'｜':'')+(f.infantPrice!=null?'婴儿价￥'+he(String(f.infantPrice)):'')):'')+(f.distance!=null?((f.labels||f.labelNote||f.baggage||f.carryon||f.bizPrice!=null||f.childPrice!=null||f.infantPrice!=null)?'｜':'')+'航程'+he(String(f.distance))+'km':'')+(f.nearby&&f.nearby.length?((f.labels||f.labelNote||f.baggage||f.carryon||f.bizPrice!=null||f.childPrice!=null||f.infantPrice!=null||f.distance!=null)?'｜':'')+he(_nb_txt(f)):'')+(f.trendRound&&f.trendRound.length?((f.labels||f.labelNote||f.baggage||f.carryon||f.bizPrice!=null||f.childPrice!=null||f.infantPrice!=null||f.distance!=null||(f.nearby&&f.nearby.length))?'｜':'')+he(_rt_txt(f)):'')}"`:''}><div class="mmeta">${f.intl?'<span class="tag t-i" title="国际航线：价格为含税总价">国际</span>':''}${f.cal?'<span class="tag t-c" title="日历价：渠道日历最低含税价（非具体航班，时刻/航班号/航司不适用）">日历</span>':`<span class="tag ${f.transfer?'t-t':'t-d'}"${(f.transfer&&f.transferService)?` title="中转服务：${he(f.transferService)}"`:''}>${f.transfer?'中转':'直飞'}</span>`}<span class="mdat">${f.date?he(dSlash(f.date)):'—'}</span>${f.cross?`<span class="mdat">次日</span>`:''}<span class="mdat">${he(durTxt(f.dur)||'—')}</span>${f.trans?`<span class="mdat">经${he(f.trans)}${f.layoverT?' · 衔接'+he(f.layoverT):''}</span>`:''}${f.stale?`<span class="mdat stale" title="该渠道当轮无数据，展示 ${he(String(f.stale))}h 前补位价；不参与达标与同班比价">补位${he(String(f.stale))}h</span>`:''}<span class="mplat">${srxPlatIcon(srxPlatKey(f.platKey||f.plat))}${he(f.plat||'')}</span>${(f.entryPath||(f.prov&&f.prov.entryPath))?'<span class="srx-entry" title="本次真实请求入口（PC/H5/API；路径级证据）">入口 '+he(f.entryPath||f.prov.entryPath)+'</span>':''}</div><span class="xind" aria-hidden="true"></span>${srxAirIcon(f.code)}${he(f.name)}${f.stop?`<span class="stoptag">经停${he(f.stopCity||'')}${f.stopTimeT?` 停${he(f.stopTimeT)}`:''}${f.stopWin?`(${he(f.stopWin)})`:''}</span>`:''}${f.bagState==='direct'?'<span class="bagtag">直挂</span>':(f.bagState==='recheck'?'<span class="stoptag" title="渠道标注行李需重新托运（中转不直挂）">需转运</span>':'')}${f.lcc?'<span class="stoptag" title="廉价航空：中转常需重新值机、行李托运受限">廉航</span>':''}${(f.cabinT||f.prate||f.meal||f.shareCarrier||f.codeShare||f.fewTicket||f.depTerminal||f.arrTerminal||f.depAirport||f.arrAirport||f.planeSize||f.ptripNote||f.airlineTransfer||f.avgDelay!=null||f.transTerminal||f.transDepTerminal||f.transferTax!=null||(f.leftTickets>0&&f.leftTickets<10)||f.intl)?`<div class="stl" style="margin-top:3px">${[((f.cabinT||f.cabinCode)?_cchip(f):((f.code&&f.depTime&&f.arrTime)?'<span class="cmiss" title="该渠道列表页不提供舱位字段，无法判断经济/公务舱；比价按同班同舱分组时不会与其他舱位混比">舱位未标</span>':'')),f.intl?`<span title="国际行价格为含税总价口径，此为其中税费构成部分">含税${f.tax!=null?'￥'+he(String(f.tax)):''}</span>`:'',f.cabinCode?'<span title="舱位代码'+(f.seatTilt!=null?'｜座椅倾斜'+f.seatTilt+'°':'')+'">'+he(f.cabinCode)+'</span>':'',f.prate?'准点'+he(String(f.prate))+'%'+(f.cancelRate!=null?'·取消'+he(String(f.cancelRate))+'%':''):'',f.meal?he(f.meal):'',(FLT&&FLT.bagkg&&f.baggage)?(function(){const k=_bagKgs(f);return k.length?'<span class="nw" title="托运≥'+FLT.bagkg+'kg 筛选命中：本行免费额最大值">托运'+he(String(Math.max(...k)))+'kg</span>':'';})()
+  `<td${((f.labels||f.labelNote||f.baggage||f.carryon||f.bizPrice!=null)||(f.childPrice!=null||f.infantPrice!=null)||f.distance!=null||(f.nearby&&f.nearby.length)||(f.trendRound&&f.trendRound.length))?` title="${he((f.labels||'').split('·').join(' · '))+(f.labels&&f.labelNote?'｜':'')+he(f.labelNote||'')+((f.labels||f.labelNote)&&f.baggage?'｜':'')+(f.baggage?he(f.baggage):'')+((f.labels||f.labelNote||f.baggage)&&f.carryon?'｜':'')+(f.carryon?he(f.carryon):'')+((f.labels||f.labelNote||f.baggage||f.carryon)&&f.bizPrice!=null?'｜':'')+(f.bizPrice!=null?he(f.bizCabin||'公务')+'￥'+he(String(f.bizPrice)):'')+((f.childPrice!=null||f.infantPrice!=null)?(((f.labels||f.labelNote||f.bizPrice!=null||f.baggage||f.carryon)?'｜':'')+(f.childPrice!=null?'儿童价￥'+he(String(f.childPrice)):'')+((f.childPrice!=null&&f.infantPrice!=null)?'｜':'')+(f.infantPrice!=null?'婴儿价￥'+he(String(f.infantPrice)):'')):'')+(f.distance!=null?((f.labels||f.labelNote||f.baggage||f.carryon||f.bizPrice!=null||f.childPrice!=null||f.infantPrice!=null)?'｜':'')+'航程'+he(String(f.distance))+'km':'')+(f.nearby&&f.nearby.length?((f.labels||f.labelNote||f.baggage||f.carryon||f.bizPrice!=null||f.childPrice!=null||f.infantPrice!=null||f.distance!=null)?'｜':'')+he(_nb_txt(f)):'')+(f.trendRound&&f.trendRound.length?((f.labels||f.labelNote||f.baggage||f.carryon||f.bizPrice!=null||f.childPrice!=null||f.infantPrice!=null||f.distance!=null||(f.nearby&&f.nearby.length))?'｜':'')+he(_rt_txt(f)):'')}"`:''}><div class="mmeta">${f.intl?'<span class="tag t-i" title="国际航线：价格为含税总价">国际</span>':''}${f.cal?'<span class="tag t-c" title="日历价：渠道日历最低含税价（非具体航班，时刻/航班号/航司不适用）">日历</span>':`<span class="tag ${f.transfer?'t-t':'t-d'}"${(f.transfer&&f.transferService)?` title="中转服务：${he(f.transferService)}"`:''}>${f.transfer?'中转':'直飞'}</span>`}<span class="mdat">${f.date?he(dSlash(f.date)):'—'}</span>${f.cross?`<span class="mdat">次日</span>`:''}<span class="mdat">${he(durTxt(f.dur)||'—')}</span>${f.trans?`<span class="mdat">经${he(f.trans)}${f.layoverT?' · 衔接'+he(f.layoverT):''}</span>`:''}${f.stale?`<span class="mdat stale" title="该渠道当轮无数据，展示 ${he(String(f.stale))}h 前补位价；不参与达标与同班比价">补位${he(String(f.stale))}h</span>`:''}<span class="mplat">${srxPlatIcon(srxPlatKey(f.platKey||f.plat))}${he(f.plat||'')}</span>${(f.entryPath||(f.prov&&f.prov.entryPath))?'<span class="srx-entry" title="本次真实请求入口（PC/H5/API；路径级证据）">入口 '+he(f.entryPath||f.prov.entryPath)+'</span>':(f.rowId!=null?'<span class="srx-entry none" title="该行落库早于「采集入口」字段上线，本轮未记录请求入口；不是无采集，详情页「来源」有同一说明">入口未记录</span>':'')}</div><span class="xind" aria-hidden="true"></span>${srxAirIcon(f.code)}${he(f.name)}${f.stop?`<span class="stoptag">经停${he(f.stopCity||'')}${f.stopTimeT?` 停${he(f.stopTimeT)}`:''}${f.stopWin?`(${he(f.stopWin)})`:''}</span>`:''}${f.bagState==='direct'?'<span class="bagtag">直挂</span>':(f.bagState==='recheck'?'<span class="stoptag" title="渠道标注行李需重新托运（中转不直挂）">需转运</span>':'')}${f.lcc?'<span class="stoptag" title="廉价航空：中转常需重新值机、行李托运受限">廉航</span>':''}${(f.cabinT||f.prate||f.meal||f.shareCarrier||f.codeShare||f.fewTicket||f.depTerminal||f.arrTerminal||f.depAirport||f.arrAirport||f.planeSize||f.ptripNote||f.airlineTransfer||f.avgDelay!=null||f.transTerminal||f.transDepTerminal||f.transferTax!=null||(f.leftTickets>0&&f.leftTickets<10)||f.intl)?`<div class="stl" style="margin-top:3px">${[((f.cabinT||f.cabinCode)?_cchip(f):((f.code&&f.depTime&&f.arrTime)?'<span class="cmiss" title="该渠道列表页不提供舱位字段，无法判断经济/公务舱；比价按同班同舱分组时不会与其他舱位混比">舱位未标</span>':'')),f.intl?`<span title="国际行价格为含税总价口径，此为其中税费构成部分">含税${f.tax!=null?'￥'+he(String(f.tax)):''}</span>`:'',f.cabinCode?'<span title="舱位代码'+(f.seatTilt!=null?'｜座椅倾斜'+f.seatTilt+'°':'')+'">'+he(f.cabinCode)+'</span>':'',f.prate?'准点'+he(String(f.prate))+'%'+(f.cancelRate!=null?'·取消'+he(String(f.cancelRate))+'%':''):'',f.meal?he(f.meal):'',(FLT&&FLT.bagkg&&f.baggage)?(function(){const k=_bagKgs(f);return k.length?'<span class="nw" title="托运≥'+FLT.bagkg+'kg 筛选命中：本行免费额最大值">托运'+he(String(Math.max(...k)))+'kg</span>':'';})()
   :((f.code&&f.depTime&&f.arrTime&&!f.baggage&&!f.carryon)?'<span class="cmiss" title="该渠道列表页不提供免费行李额/手提行李字段；不代表无行李，请以渠道详情页为准">行李未标</span>':''),(f.plane||f.planeSize)?'<span class="nw nw-keep" title="'+(f.plane?'机型'+he(f.plane)+(f.plane2?'｜二段机型'+he(f.plane2):'')+'｜':'')+'数据源：渠道连廊率/机龄">'+srxPlaneIcon(f.plane||f.planeSize)+he(f.plane||f.planeSize)+(f.planeSize2?'·二段'+he(f.planeSize2):'')+(f.bridgeRate!=null?'·廊桥'+he(String(f.bridgeRate))+'%':'')+(f.planeAge?'·机龄'+he(String(f.planeAge))+'年':'')+'</span>':'',f.codeShare?'<span title="共享航班：实际承运航司可能与票面不同">共享航班</span>':'',f.shareCarrier?'共享·'+he(f.shareAirline?f.shareAirline+f.shareCarrier:f.shareCarrier):(f.shareAirline?'承运·'+he(f.shareAirline):''),f.fewTicket?he(f.fewTicket):'',(f.leftTickets>0&&f.leftTickets<10)?'余'+he(String(f.leftTickets))+'张':'',(f.depTerminal||f.arrTerminal||f.depAirport||f.arrAirport)?'<span class="nw">'+he(((_ttc(f.depAirport,f.depTerminal,f.depAirportCode))&&(_ttc(f.arrAirport,f.arrTerminal,f.arrAirportCode))&&_ttc(f.arrAirport,f.arrTerminal,f.arrAirportCode)!==_ttc(f.depAirport,f.depTerminal,f.depAirportCode))?(_ttc(f.depAirport,f.depTerminal,f.depAirportCode)+'→'+_ttc(f.arrAirport,f.arrTerminal,f.arrAirportCode)):(_ttc(f.arrAirport,f.arrTerminal,f.arrAirportCode)||_ttc(f.depAirport,f.depTerminal,f.depAirportCode)))+'</span>':'',f.transTerminal?'<span class="nw">换乘·'+he(f.transTerminal)+(f.transDepTerminal?'（'+he((f.transDepTerminal.match(/T\d+/)||[''])[0])+'出）':'')+'</span>':'',f.transferTax!=null?'<span title="飞猪列表价为不含机建燃油的裸价，出行总成本需另加此项">+机建燃油￥'+he(String(f.transferTax))+'</span>':'',f.ptripNote?he(f.ptripNote):'',_ad_txt(f.avgDelay),f.airlineTransfer?he(f.airlineTransfer):''].filter(Boolean).join(' ｜ ')}</div>`:''}${tgCap(f,k)}${f.view?`<a class="vw" href="${he(f.view)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="在${he(f.plat||'去哪儿')}查看该航线">↗</a>`:''}${f.route?`<span class="stl nw"> <span style="display:inline-block">${he(f.route)}</span><span class="tj" role="button" tabindex="0" title="查看该航线价格走势" data-r="${he(f.route)}" data-d="${he(f.date||'')}" onclick="event.stopPropagation();jumpRowTrend(this.dataset.r,this.dataset.d)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();jumpRowTrend(this.dataset.r,this.dataset.d)}"> <svg class="gly" aria-hidden="true"><use href="#i-chart"></use></svg></span></span>`:''}</td><td>${f.depTime?he(f.depTime):'—'}</td>`+
   `<td>${f.arrTime?he(f.arrTime):'—'}${f.cross?`<span class="stl xday" title="次日到达">${he(String(f.cross).replace(/\s*天/g,'').trim())}</span>`:''}</td>`+
   `<td>${he(durTxt(f.dur))||'—'}</td><td>${f.trans?he(f.trans):'—'}${(f.lay2dep||f.transGoDate)?`<div class="stl">二段 ${he([f.transGoDate&&dSlash(f.transGoDate),f.lay2dep].filter(Boolean).join(' '))} 起飞</div>`:''}${f.layoverT?`<div class="${f.layMin>0?('stl lay nw'+((+f.layoverM||0)>=f.layMin?' ok':'')):'stl nw'}"${f.layMin>0?' title="航线衔接下限 '+f.layMin+' 分钟"':''}>停${he(f.layoverT)}</div>`:''}</td>`+
@@ -9644,6 +11025,7 @@ function table(){if(!S||!S.users.length)return;/* 状态未到不渲染（render
   const wy=window.scrollY;
   buildWinSel();buildAttrChips();
   const rows=filteredRows();
+  const _pch=_NDRAW;   /* 重建前的切片深度：轮询同源重建要还原，不能把用户已展开的行截掉 */
   _ROWS=rows;_CHUNKS=[];_NDRAW=0;   /* 切片缓存随筛选/排序/换用户整体失效 */
   $('ftable').classList.toggle('big',rows.length>150);
   /* 全直飞结果集整列「—」零信息：中转列条件隐藏（按当前筛选结果集
@@ -9678,6 +11060,9 @@ function table(){if(!S||!S.users.length)return;/* 状态未到不渲染（render
  /* 同 render()：重建前快照 data-k（th=排序键 / tr=fp 行键），重建后回焦 */
   const fae=document.activeElement,fk=fae&&fae.getAttribute?fae.getAttribute('data-k'):null;
   $('ftable').innerHTML=h+'</tbody>';
+  /* 重建后按原切片深度回补（_pch=重建前的片数）：只补到「滚动位合法」
+    时，用户手动补全到 194 行的表会被 10s 轮询打回首片 120 行——正在看的
+    行凭空消失、滚动条长度突跳。深度还原后滚动位才真有落脚处。 */
  /* 表内横滚提示随行渲染重判（筛选/排序/切片续载都会改 scrollWidth；
     showMonTab/resize 批只覆盖切换与几何变化点） */
  document.querySelectorAll('.tw').forEach(x=>{
@@ -9686,7 +11071,9 @@ function table(){if(!S||!S.users.length)return;/* 状态未到不渲染（render
   const _h=x.previousElementSibling;
   if(_h&&_h.classList&&_h.classList.contains('tw-hint'))
    _h.style.display=window.innerWidth<=900?(_xh?'block':'none'):'';});
-  if(tw){/* 滚动位深于首屏切片：同步补齐切片再回设（深位轮询刷新不弹顶不丢位） */
+  if(tw){/* 切片深度先还到重建前（_pch 片），再按滚动位兜底补齐：
+              深位轮询刷新不弹顶、也不把已展开的行截回首片 */
+   while(_NDRAW<_pch&&_tblAppend()){}
    while(st>0&&tw.scrollHeight<st+tw.clientHeight&&_tblAppend()){}
    tw.scrollTop=st;}
   if(window.innerWidth<=760&&wy>0){
@@ -10366,10 +11753,214 @@ function wsTag(ctx,text,x,y,color,align){
  return box;
 }
 function wsBoxHit(a,b){return a.x<b.x+b.w-1&&b.x<a.x+a.w-1&&a.y<b.y+b.h-1&&b.y<a.y+a.h-1}
-function wsDrawChart(){
+/* ===== PCHART：三处走势唯一渲染内核（r374） =====
+   航线走势 / 航班走势 / 雷达走势只允许构造 cfg 并追加业务标注；
+   坐标域、刻度、网格、时间轴、断档分段、最近点、tooltip 定位只在这里
+   实现一次。统一内边距 48/16/12/26，需要顶部价签带的图表用 band 追加
+   业务留白（价签仍属业务标注，不进内核）。 */
+const PCHART_PAD={L:48,R:16,T:12,B:26,B2:40};
+const PCHART={
+ /* 1/2/5/10 阶梯取整：标签永远以 0/5 收尾，扫读对齐才有意义 */
+ niceTicks(mn,mx,n){
+  const span=mx-mn;if(!(span>0))return[mn];
+  const raw=span/Math.max(1,n),mag=Math.pow(10,Math.floor(Math.log10(raw||1)));
+  const norm=raw/mag,step=(norm<=1?1:norm<=2?2:norm<=5?5:10)*mag;
+  const arr=[];for(let v=Math.ceil(mn/step-1e-9)*step;v<=mx+1e-9;v+=step)arr.push(v);
+  return arr.length>=2?arr:[mn,mx];},
+ /* Y 域：单值/同价必须给最小高度，否则 (mx-mn)=0 → Y 映射 ±Infinity，
+   悬停坐标飞出视口（门禁曾实测 y=-2886） */
+ domain(vals,padRatio){
+  const v=vals.filter(Number.isFinite);
+  if(!v.length)return[0,1];
+  let mn=Math.min.apply(null,v),mx=Math.max.apply(null,v);
+  if(!(mx>mn)){const b=Math.max(4,Math.abs(mx)*0.008||4);mn-=b/2;mx+=b/2;}
+  const p=Math.max(1,(mx-mn)*(padRatio==null?0.08:padRatio));
+  return[mx>0?Math.max(0,mn-p):mn-p,mx+p];},
+ /* 断档分段：相邻间隔 > 中位间隔×1.8（且不低于 gapMin）即断线。
+   缺测区间内不画线、不填充——「没有数据」不得画成「数据完整」。 */
+ gaps(pts,gapMin){
+  if(!pts.length)return[];
+  if(pts.length<2)return[pts.slice()];
+  const iv=[];
+  for(let i=1;i<pts.length;i++){const d=pts[i].t-pts[i-1].t;if(isFinite(d)&&d>0)iv.push(d);}
+  iv.sort((a,b)=>a-b);
+  const med=iv.length?iv[Math.floor(iv.length/2)]:0;
+  const gap=Math.max(med?med*1.8:Infinity,gapMin||0);
+  const segs=[];let cur=[pts[0]];
+  for(let i=1;i<pts.length;i++){
+   if(pts[i].t-pts[i-1].t>gap){segs.push(cur);cur=[pts[i]];}else cur.push(pts[i]);}
+  segs.push(cur);return segs;},
+ /* 画布准备：尺寸未变不重设（重设即清空+重分配位图，hover 每帧都进
+   draw 时这是主要卡顿源）。返回 {ctx,W,H,dpr}。 */
+ prep(c){
+  const dpr=window.devicePixelRatio||1,W=c.offsetWidth,H=c.offsetHeight;
+  if(!W||!H)return null;
+  if(c.width!==Math.round(W*dpr)||c.height!==Math.round(H*dpr)){
+   c.width=Math.round(W*dpr);c.height=Math.round(H*dpr);}
+  const ctx=c.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
+  return{ctx,W,H,dpr};},
+ /* 坐标系：xKind='time' 按真实毫秒比例（索引等距会把 1 天缺口压成 1 个
+   刻度，等于抹掉缺测）；'index' 等距（K线桶/类别轴）。
+   band=顶部业务标注带；axisRows=2 表示底部要放两行刻度（时刻+日期），
+   底边距随之加深——三处走势都从这里取，不再各写一份 L/R/T/B。 */
+ frame(W,H,cfg){
+  const band=cfg.band||0;
+  const L=PCHART_PAD.L,R=PCHART_PAD.R,T=PCHART_PAD.T+band;
+  const B=cfg.axisRows===2?PCHART_PAD.B2:PCHART_PAD.B;
+  const pw=Math.max(10,W-L-R),ph=Math.max(10,H-T-B);
+  const x0=cfg.x0,x1=cfg.x1,span=Math.max(1e-6,x1-x0);
+  const y0=cfg.y0,y1=cfg.y1,yspan=Math.max(1e-6,y1-y0);
+  const X=cfg.xKind==='index'
+   ?(i=>L+pw*(cfg.n>1?i/(cfg.n-1):0.5))
+   :(t=>L+pw*((t-x0)/span));
+  const Y=v=>T+ph*(1-(v-y0)/yspan);
+  return{W,H,L,R,T,B,pw,ph,x0,x1,y0,y1,X,Y};},
+ /* 网格 + Y 刻度 + X 刻度：三处走势共用同一套视觉（虚线 1px、--grid、
+   标签 --mut、mono 数字）。
+   cfg.xTicks 由调用方按业务格式算好像素位：
+     [{x:像素, top:'HH:MM', bot:'MM-DD', align:'left'|'center'|'right', guide:true}]
+   ——刻度语义（采集时刻/出发日期/桶序号）属业务，内核只负责排布、
+   避让与绘制，避免三处各写一遍避让逻辑。 */
+ axes(ctx,g,cfg){
+  const num=cssv('--num')||'sans-serif',GRID=cssv('--grid')||'#b8c2cf',AXIS=cssv('--mut')||'#5a6c7d';
+  ctx.save();ctx.font='11px '+num;
+  const ticks=cfg.ticks||PCHART.niceTicks(g.y0,g.y1,4);
+  ctx.strokeStyle=GRID;ctx.lineWidth=1;ctx.globalAlpha=.55;
+  ticks.forEach(v=>{const y=Math.round(g.Y(v))+.5;
+   ctx.beginPath();ctx.moveTo(g.L,y);ctx.lineTo(g.W-g.R,y);ctx.stroke();});
+  ctx.globalAlpha=1;
+  ctx.fillStyle=AXIS;ctx.textAlign='right';ctx.textBaseline='middle';
+  ticks.forEach(v=>ctx.fillText('\uffe5'+Math.round(v),g.L-8,Math.round(g.Y(v))+.5));
+  ctx.textBaseline='top';
+  let lastR=-1e9;
+  (cfg.xTicks||[]).forEach(t=>{
+   if(!t)return;
+   const lab=t.bot||t.top||'';
+   const tw=ctx.measureText(lab).width;
+   const al=t.align||'center';
+   const left=al==='left'?t.x:(al==='right'?t.x-tw:t.x-tw/2);
+   if(left<lastR+8)return;
+   if(t.guide){
+    ctx.globalAlpha=.45;ctx.strokeStyle=cssv('--line2')||'#cbd4de';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(t.x,g.T);ctx.lineTo(t.x,g.T+g.ph);ctx.stroke();
+    ctx.globalAlpha=1;}
+   ctx.textAlign=al;
+   if(t.top&&t.bot){
+    /* 双行：上行时刻、下行日期。日期挂日分隔线底部，不被曲线压住 */
+    ctx.fillStyle=AXIS;ctx.fillText(t.top,Math.min(Math.max(t.x,g.L),g.W-g.R),g.H-g.B+12);
+    ctx.fillStyle=AXIS;
+    ctx.fillText(t.bot,Math.min(Math.max(t.x,g.L),g.W-g.R),g.H-g.B+26);}
+   else ctx.fillText(lab,Math.min(Math.max(t.x,g.L),g.W-g.R),g.H-g.B+12);
+   lastR=left+tw;});
+  ctx.strokeStyle=GRID;ctx.globalAlpha=.7;
+  ctx.beginPath();ctx.moveTo(g.L,g.T);ctx.lineTo(g.L,g.T+g.ph);ctx.stroke();
+  ctx.globalAlpha=1;ctx.restore();},
+ /* 面积填充：主系列在曲线下方铺渐变（与航线走势同一语言）。
+   三处走势的"主角线"都必须有这块底色——否则同一产品里有的有线有的
+   是裸线，视觉层级完全对不上。 */
+ area(ctx,g,pts,style){
+  const segs=PCHART.gaps(pts,style.gapMin);
+  ctx.save();
+  segs.forEach(seg=>{
+   if(seg.length<2)return;
+   ctx.beginPath();ctx.moveTo(g.X(seg[0].t),g.Y(seg[0].v));
+   seg.forEach(p=>ctx.lineTo(g.X(p.t),g.Y(p.v)));
+   ctx.lineTo(g.X(seg[seg.length-1].t),g.T+g.ph);
+   ctx.lineTo(g.X(seg[0].t),g.T+g.ph);ctx.closePath();
+   const grd=ctx.createLinearGradient(0,g.T,0,g.T+g.ph);
+   grd.addColorStop(0,style.color+'44');grd.addColorStop(1,style.color+'08');
+   ctx.fillStyle=grd;ctx.fill();});
+  ctx.restore();},
+ /* 折线：按断档分段绘制，段内不跨缺口连线。
+    r419：段内每个数据点补一个实心圆点——雷达按 2h 轮询、30 天窗里一条线
+    常只有 2–3 个点，纯折线在视觉上是「几截短横」，用户读作「短点被挡住/
+    走势断档」。有点标记后每段都读成「采到过这几笔」，断档段落与「数据少」
+    一眼可分（缺口仍然不连线、不填充，语义不变）。dot<=0 可关掉。 */
+ line(ctx,g,pts,style){
+  const segs=PCHART.gaps(pts,style.gapMin);
+  ctx.save();ctx.strokeStyle=style.color;ctx.lineWidth=style.width||1.5;
+  ctx.globalAlpha=style.alpha==null?1:style.alpha;
+  ctx.lineJoin='round';ctx.lineCap='round';
+  if(style.dash)ctx.setLineDash(style.dash);
+  const dot=style.dot==null?1.8:style.dot;
+  /* r424：r419 给段内每个采样点补圆点的意图被这里的 globalAlpha 抹掉了——
+     非聚焦线 alpha=.7，1.7px 的点再乘 70% 后在白底上几乎不可见，用户读作
+     「短点被白白的东西遮住了」。点本身是「这一轮确实采到了」的证据，必须
+     按自身不透明度画：非聚焦给 .85 起（仍比聚焦线浅，层级不变），
+     单点段同理。 */
+  const _alpha=ctx.globalAlpha;
+  segs.forEach(seg=>{
+   if(seg.length===1){ctx.beginPath();ctx.arc(g.X(seg[0].t),g.Y(seg[0].v),dot,0,7);
+    ctx.fillStyle=style.color;ctx.fill();return;}
+   ctx.beginPath();seg.forEach((p,i)=>{const x=g.X(p.t),y=g.Y(p.v);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});
+   ctx.stroke();
+   if(style.vertexDots){
+    ctx.setLineDash([]);ctx.globalAlpha=Math.max(_alpha,.85);
+    seg.forEach(p=>{ctx.beginPath();ctx.arc(g.X(p.t),g.Y(p.v),dot*0.85,0,7);
+     ctx.fillStyle=style.color;ctx.fill();});
+    ctx.globalAlpha=_alpha;}});
+  ctx.restore();return segs;},
+ /* 最近点：横轴主键、纵向次键。二维最近点会把鼠标"吸"到曲线稀疏处的
+   远处高点，读数与指针 x 对不上（门禁曾出现十字线跳离指针）。 */
+ /* 最近点：先按横轴取最近时刻（同一 x 上多系列时全部视为候选），再在
+   这些候选里按纵向距离取最近；纵向缺失时按系列顺序。
+   纯 dx*1000+dy 在横向差 1px 时会压过纵向差几百px 的点，密集区会选中
+   指针旁边另一个价格（实测悬停 1800 却读出 1860）。 */
+ pick(g,series,x,y){
+  /* 纵向值字段：航线/关注走势存 v；雷达存 p（价格）。只认 v 时雷达
+     g.Y(undefined)=NaN，纵向差恒为 NaN，比较全假 → 悬停永远命中
+     第一条线的首个候选，读数与指针位置无关（用户实报「滑了不对」）。 */
+  const val=p=>p.v!=null&&isFinite(p.v)?p.v:p.p;
+  let bestX=Infinity;
+  series.forEach(s=>{(s.pts||[]).forEach(p=>{
+   const d=Math.abs(g.X(p.t)-x);
+   if(d<bestX)bestX=d;});});
+  if(!isFinite(bestX))return null;
+  /* 同一时刻的容差取 1.5px（与工具提示"同刻并列"一致） */
+  let best=null;
+  series.forEach((s,si)=>{(s.pts||[]).forEach(p=>{
+   const dx=Math.abs(g.X(p.t)-x);
+   if(dx>bestX+1.5)return;
+   const v=val(p);
+   const dy=(y==null||!isFinite(v))?0:Math.abs(g.Y(v)-y);
+   const d=dx*1000+dy;
+   if(!best||d<best.d)best={d,dx,dy,p,s,si};});});
+  return best;},
+ /* 三图共用的轴向落位：横向跟十字线、只钳位不翻边，纵向固定顶部带。
+    旧实现四种行为并存（航线钉顶部、关注折线钉顶部、关注K线跟指针、
+    雷达两轴都跟指针），同一动作在三个面板上手感不同：跟指针的版本
+    读数时浮窗一直压在数据下方，钉顶部的版本又读作「不跟手」。
+    这里只算坐标；画布浮窗（航线）直接取返回值绘制，DOM 浮窗走
+    placeTipAxis 落位——两边同一份算术，不会再各写一套。 */
+placeAxis(boxW,boxH,tw,th,localX,topY){
+  /* 只钳位、不整块翻边：翻边会让浮窗在指针越过某个 x 时整体跳到另一侧
+     （实测 0.844→0.867 之间 left 999→829，跳 170px），用户读作「悬浮窗乱飘」。
+     贴着指针走到右缘后停在边缘，位移连续、也不挡住刚读的那一段。 */
+  const l=Math.max(8,Math.min(localX+14,boxW-tw-8));
+  const t=Math.max(8,Math.min(topY,boxH-th-8));
+  return {l:Math.round(l),t:Math.round(t)};
+},
+placeTipAxis(host,tip,cx,topY){
+  const r=host.getBoundingClientRect();
+  /* 先量再夹：浮窗内容刚被 innerHTML 换掉时，`offsetWidth` 可能还是上一帧的
+     宽度（实测 158↔169 交替的行里，有一帧读到 166 而最终渲染 169）。
+     按 166 夹右缘会让浮窗实际右沿越过画布 3~5px（1440 档实测 1304 > 1299），
+     读作「悬浮窗飘出图外」。先读一次宽度、再读一次，取较大值——
+     两次相邻读之间浏览器必已重排，第二次就是最终宽度。 */
+  const tw=Math.max(tip.offsetWidth,tip.getBoundingClientRect().width)||200;
+  const th=tip.offsetHeight||40;
+  const p=PCHART.placeAxis(r.width,r.height,tw,th,cx-r.left,topY);
+  tip.style.left=p.l+'px';tip.style.top=p.t+'px';},
+};
+function wsDrawChart(noHover){
  if(VIEW!=='mon'||MONTAB!=='watch')return;
  const c=$('wsChart');if(!c)return;
- const info=wsChartData();const empty=$('wsChartEmpty');
+ /* 悬停重绘（noHover）复用上一次的数据对象：wsChartData 每次都要重新
+    过滤/聚合全部采集点，是 3.2ms/次的真正开销来源。数据变化时由
+    wsRenderAll/wsLoad 走无缓存路径重算。 */
+ const info=(noHover&&WS._dataCache)?WS._dataCache:wsChartData();
+ if(!noHover)WS._dataCache=info;
+ const empty=$('wsChartEmpty');
  const title=$('wsChartTitle'),sub=$('wsChartSub'),foot=$('wsChartFoot');
  const g=wsCurrentGroup();
  if(title)title.textContent=g?(g.label+' · '+wsMmdd(g.date)+(g.count>1?(' · '+g.count+' 个关注'):'')):'关注航班价格走势';
@@ -10393,23 +11984,31 @@ function wsDrawChart(){
  c.parentElement&&c.parentElement.classList.remove('is-empty');
  if(empty)empty.hidden=true;
  const W=c.offsetWidth,H=c.offsetHeight;if(!W||!H)return;
- if(WS.mode==='kline'){wsDrawKline(c,W,H,info);return}
+ if(WS.mode==='kline'){wsDrawKline(c,W,H,info,noHover);return}
  const dpr=window.devicePixelRatio||1;
  if(c.width!==Math.round(W*dpr)||c.height!==Math.round(H*dpr)){c.width=Math.round(W*dpr);c.height=Math.round(H*dpr)}
  const ctx=c.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
- /* 顶部留出 36px 标注带：高/低/目标价签画在带内，不再压在数据线上。 */
- const L=58,R=18,T=W>=560?36:18,B=40,pw=Math.max(10,W-L-R),ph=Math.max(10,H-T-B);
- const X=t=>L+(t-info.x0)/(info.x1-info.x0)*pw,Y=v=>T+ph-(v-info.y0)/(info.y1-info.y0)*ph;
+ /* 顶部留出 34px 标注带：高/低/目标价签画在带内，不压数据线（业务留白
+    经 PCHART 的 band 传入，内边距仍由内核单源）。 */
+ const fg=PCHART.frame(W,H,{x0:info.x0,x1:info.x1,y0:info.y0,y1:info.y1,
+  xKind:'time',band:W>=560?22:6,axisRows:2});
+ const L=fg.L,R=fg.R,T=fg.T,B=fg.B,pw=fg.pw,ph=fg.ph,X=fg.X,Y=fg.Y;
  const GRID=cssv('--grid')||'#b8c2cf',AXIS=cssv('--mut')||'#5a6c7d',CARD=cssv('--card')||'#fff';
- ctx.font='11px '+getComputedStyle(document.documentElement).getPropertyValue('--num').trim();
- const ticks=wsNiceTicks(info.y0,info.y1,4);
- ctx.strokeStyle=GRID;ctx.lineWidth=1;ctx.globalAlpha=.55;
- ticks.forEach(v=>{const y=Math.round(Y(v))+.5;ctx.beginPath();ctx.moveTo(L,y);ctx.lineTo(W-R,y);ctx.stroke()});
- ctx.globalAlpha=1;
- ctx.fillStyle=AXIS;ctx.textAlign='right';ctx.textBaseline='middle';ticks.forEach(v=>ctx.fillText('¥'+Math.round(v),L-8,Math.round(Y(v))+.5));
- ctx.textAlign='center';ctx.textBaseline='top';const span=info.x1-info.x0;
- const nTick=W<560?3:5;for(let i=0;i<=nTick;i++){const t=info.x0+span*i/nTick,xx=Math.round(X(t));ctx.textAlign=i===0?'left':(i===nTick?'right':'center');ctx.fillText(wsAxisTime(t,span,W<760),Math.min(Math.max(xx,L),W-R),H-B+12)}
- ctx.strokeStyle=GRID;ctx.globalAlpha=.7;ctx.beginPath();ctx.moveTo(L,T);ctx.lineTo(L,T+ph);ctx.stroke();ctx.globalAlpha=1;
+ const span=info.x1-info.x0;
+ const nTick=W<560?3:5;
+ /* 双行刻度（时刻 + 日期）与航线走势同构：单行日期在跨天窗里读不出
+    「几点」，而关注走势恰恰是按小时积累的。 */
+ const _wid=t=>{const d=new Date(t),p=n=>String(n).padStart(2,'0');
+  return p(d.getMonth()+1)+'-'+p(d.getDate());};
+ PCHART.axes(ctx,fg,{ticks:PCHART.niceTicks(fg.y0,fg.y1,4),
+  xTicks:Array.from({length:nTick+1},(_,i)=>{
+   const t=info.x0+span*i/nTick;
+   const lab=wsAxisTime(t,span,W<760);
+   /* 上行只放时刻：wsAxisTime 在长窗返回的是「MM-DD」，直接当上行会
+      出现两行同一个日期（实拍 10-15 / 10-15）。短窗它本身就是时刻。 */
+   const isDayOnly=/^\d{2}-\d{2}$/.test(lab);
+   return {x:X(t),top:(isDayOnly?'':lab),bot:(isDayOnly?lab:_wid(t)),
+    align:i===0?'left':(i===nTick?'right':'center'),guide:false};})});
  const focusId=WS.focus|| (wsRouteWatches()[0]&&wsRouteWatches()[0].id)||'';
  const tagBoxes=[];
  let focusTarget=null;
@@ -10417,19 +12016,22 @@ function wsDrawChart(){
  drawSeries.forEach(s=>{
   const focused=s.w.id===focusId;const pts=s.pts;
   if(!pts.length)return;
-  const maxGap=Math.max(36*36e5,(info.x1-info.x0)*.18);
-  const segs=[];let cur=[];
-  pts.forEach(p=>{if(!cur.length||p.t-cur[cur.length-1].t<=maxGap)cur.push(p);else{segs.push(cur);cur=[p]}});if(cur.length)segs.push(cur);
+  /* 断档：与另两处同一判定（中位间隔×1.8，且不低于窗口 18%） */
+  const segs=PCHART.gaps(pts,Math.max(36*36e5,span*.18));
   if(focused){
    ctx.save();const grd=ctx.createLinearGradient(0,T,0,T+ph);grd.addColorStop(0,wsAlpha(s.color,.20));grd.addColorStop(1,wsAlpha(s.color,0));
    ctx.fillStyle=grd;segs.forEach(seg=>{if(seg.length<2)return;ctx.beginPath();ctx.moveTo(X(seg[0].t),T+ph);seg.forEach(p=>ctx.lineTo(X(p.t),Y(p.v)));ctx.lineTo(X(seg[seg.length-1].t),T+ph);ctx.closePath();ctx.fill()});ctx.restore();
   }
-  ctx.save();ctx.strokeStyle=s.color;ctx.lineWidth=focused?2.1:1.25;ctx.globalAlpha=focused?1:.55;ctx.lineJoin='round';ctx.lineCap='round';
-  segs.forEach(seg=>{ctx.beginPath();seg.forEach((p,i)=>{const x=X(p.t),y=Y(p.v);if(i)ctx.lineTo(x,y);else ctx.moveTo(x,y)});if(seg.length===1)ctx.lineTo(X(seg[0].t)+.1,Y(seg[0].v));ctx.stroke()});
-  ctx.globalAlpha=1;
+  /* 线体走 PCHART.line（与雷达/航线同一段绘制与断档分段）；
+     焦点系列粗实、其余细淡——层级由宽度+透明度表达，不复刻绘制逻辑。 */
+  PCHART.line(ctx,fg,pts,{color:s.color,width:focused?2.1:1.25,
+   alpha:focused?1:.55,gapMin:Math.max(36*36e5,span*.18),dot:1.6});
   if(focused&&pts.length<=180){pts.forEach(p=>{ctx.beginPath();ctx.arc(X(p.t),Y(p.v),1.7,0,Math.PI*2);ctx.fillStyle=CARD;ctx.fill();ctx.strokeStyle=s.color;ctx.lineWidth=1;ctx.stroke()})}
-  const lastP=pts[pts.length-1];ctx.beginPath();ctx.arc(X(lastP.t),Y(lastP.v),focused?3.5:2.4,0,Math.PI*2);ctx.fillStyle=s.color;ctx.fill();ctx.strokeStyle=CARD;ctx.lineWidth=1.4;ctx.stroke();
-  ctx.restore();
+  /* 末点半径与另两图同档 3.2（雷达折线、关注 K 线都是 3.2），聚焦放大到 3.5。
+     原非聚焦用 2.4 —— 直径 4.8px vs 另两图 6.4px，面积差 78%，同一个「当前价」
+     标记在关注图明显小一圈，是用户所说「其他走势图看着不对」的来源之一。
+     注意上面 line() 的 dot:1.6 是**孤点**半径（单点段），与这里不是同一语义。 */
+  const lastP=pts[pts.length-1];ctx.beginPath();ctx.arc(X(lastP.t),Y(lastP.v),focused?3.5:3.2,0,Math.PI*2);ctx.fillStyle=s.color;ctx.fill();ctx.strokeStyle=CARD;ctx.lineWidth=1.4;ctx.stroke();
   const tgt=Number(s.w.target);
   if(isFinite(tgt)&&tgt>0&&tgt>=info.y0&&tgt<=info.y1){
    const y=Math.round(Y(tgt))+.5;ctx.save();ctx.strokeStyle=cssv('--red')||'#c22a2e';ctx.globalAlpha=focused?.8:.28;ctx.lineWidth=focused?1.2:1;ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(L,y);ctx.lineTo(W-R,y);ctx.stroke();ctx.restore();
@@ -10460,7 +12062,15 @@ function wsDrawChart(){
   }
  }
  WS.chartInfo={mode:'line',W,H,L,R,T,B,pw,ph,X,Y,x0:info.x0,x1:info.x1,y0:info.y0,y1:info.y1,series:info.series,focusId};
- wsDrawHover();
+ /* 非悬停绘制＝一次完整底座：存成位图，供悬停合帧直接贴回 */
+ if(!noHover){
+  WS._base=_wsSnapshot(c);wsDrawHover();
+ }else if(!WS._base){WS._base=_wsSnapshot(c);}
+}
+/* 底座快照：按设备像素直接拷贝，避免悬停时重算/重绘 */
+function _wsSnapshot(c){
+ try{const b=document.createElement('canvas');b.width=c.width;b.height=c.height;
+  b.getContext('2d').drawImage(c,0,0);return b;}catch(e){return null;}
 }
 function wsKlineData(){
  const focusId=WS.focus||(wsRouteWatches()[0]&&wsRouteWatches()[0].id)||'';
@@ -10521,7 +12131,7 @@ function wsKlineData(){
  return{empty:false,src,days,mn,mx,target:isFinite(tgt)&&tgt>0?tgt:null,color:src.color,
   plat,cab,platName};
 }
-function wsDrawKline(c,W,H,info){
+function wsDrawKline(c,W,H,info,noHover){
  const k=wsKlineData(),empty=$('wsChartEmpty');
  const sub=$('wsChartSub');if(sub&&!k.empty)sub.textContent='K线 · '+k.platName+(k.cab?' · '+k.cab+'舱':'')+' · 近 '+WS.range+' 天 · '+k.days.length+' 个采集日 · 单渠道真实 OHLC';
  if(k.empty){if(empty){empty.hidden=false;empty.innerHTML='<b>'+he(k.reason)+'</b><span>K线由真实采集点的日 OHLC 聚合；没有采集日就不画蜡烛。</span>'}return}
@@ -10529,22 +12139,29 @@ function wsDrawKline(c,W,H,info){
  const dpr=window.devicePixelRatio||1;
  if(c.width!==Math.round(W*dpr)||c.height!==Math.round(H*dpr)){c.width=Math.round(W*dpr);c.height=Math.round(H*dpr)}
  const ctx=c.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
- const L=58,R=18,T=18,B=40,pw=Math.max(10,W-L-R),ph=Math.max(10,H-T-B),n=k.days.length;
- const X=i=>L+pw*((i+.5)/n),Y=v=>T+ph-(v-k.mn)/(k.mx-k.mn)*ph;
- const GRID=cssv('--grid')||'#b8c2cf',AXIS=cssv('--mut')||'#5a6c7d',CARD=cssv('--card')||'#fff';
- ctx.font='11px '+getComputedStyle(document.documentElement).getPropertyValue('--num').trim();
- const ticks=wsNiceTicks(k.mn,k.mx,4);
- ctx.strokeStyle=GRID;ctx.globalAlpha=.55;ticks.forEach(v=>{const y=Math.round(Y(v))+.5;ctx.beginPath();ctx.moveTo(L,y);ctx.lineTo(W-R,y);ctx.stroke()});ctx.globalAlpha=1;
- ctx.fillStyle=AXIS;ctx.textAlign='right';ctx.textBaseline='middle';ticks.forEach(v=>ctx.fillText('¥'+Math.round(v),L-8,Math.round(Y(v))+.5));
- ctx.textAlign='center';ctx.textBaseline='top';
- const step=Math.max(1,Math.ceil(n/(W<560?4:8)));
- k.days.forEach((d,i)=>{const _show=W<560?(i===0||i===n-1):(i%step===0||i===n-1);if(_show){const xx=Math.round(X(i));ctx.textAlign=i===0?'left':(i===n-1?'right':'center');ctx.fillText(String(d.key).slice(5),Math.min(Math.max(xx,L),W-R),H-B+12)}});
- ctx.strokeStyle=GRID;ctx.globalAlpha=.7;ctx.beginPath();ctx.moveTo(L,T);ctx.lineTo(L,T+ph);ctx.stroke();ctx.globalAlpha=1;
+ const n=k.days.length;
+ /* 与雷达同一条诚实线：只有 1 个采集日时 K 线无从比较，画出来只有一根柱、
+     两侧全空。数据没缺，缺的是第二天 —— 说清楚比给空画布好。 */
+ if(n<2){if(empty){empty.hidden=false;
+   empty.innerHTML='<b>仅 '+he(String(k.days[0]&&k.days[0].key||''))+' 一个采集日</b><span>K 线需要至少 2 天才能比较涨跌（每天一个 OHLC）。</span>'}
+  return}
+ /* 类别轴（日 K）：坐标与网格同走 PCHART，K 线只画蜡烛 */
+ const kg=PCHART.frame(W,H,{xKind:'index',n,y0:k.mn,y1:k.mx});
+ const L=kg.L,R=kg.R,T=kg.T,B=kg.B,pw=kg.pw,ph=kg.ph,Y=kg.Y;
+ const CARD=cssv('--card')||'#fff';
+ const xAt=i=>kg.L+kg.pw*((i+.5)/n);
+ PCHART.axes(ctx,kg,{ticks:PCHART.niceTicks(kg.y0,kg.y1,4),
+  xTicks:(()=>{const step=Math.max(1,Math.ceil(n/(W<560?4:8)));const out=[];
+   k.days.forEach((d,i)=>{
+    const show=W<560?(i===0||i===n-1):(i%step===0||i===n-1);
+    if(show)out.push({x:xAt(i),bot:String(d.key).slice(5),
+     align:i===0?'left':(i===n-1?'right':'center'),guide:false});});
+   return out;})()});
  /* 与航线 K 线同一 A 股语义：涨红跌绿（旧关注台反向，同页两套颜色） */
  const up=cssv('--red')||'#c22a2e',down=cssv('--green')||'#0e8345',neutral=cssv('--mut')||'#5a6c7d';
  const bw=Math.max(3,Math.min(16,pw/n*.52));
  k.days.forEach((d,i)=>{
-  const color=d.c>d.o?up:(d.c<d.o?down:neutral),x=X(i),bh=Math.max(1.5,Math.abs(Y(d.o)-Y(d.c))),top=Math.min(Y(d.o),Y(d.c));
+  const color=d.c>d.o?up:(d.c<d.o?down:neutral),x=xAt(i),bh=Math.max(1.5,Math.abs(Y(d.o)-Y(d.c))),top=Math.min(Y(d.o),Y(d.c));
   ctx.strokeStyle=color;ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(x,Y(d.h));ctx.lineTo(x,Y(d.l));ctx.stroke();
   ctx.fillStyle=color;ctx.globalAlpha=.9;ctx.fillRect(x-bw/2,top,bw,bh);ctx.globalAlpha=1;
   ctx.strokeStyle=CARD;ctx.lineWidth=1;ctx.strokeRect(x-bw/2+.5,top+.5,bw-1,bh-1);
@@ -10553,9 +12170,9 @@ function wsDrawKline(c,W,H,info){
   const y=Math.round(Y(k.target))+.5;ctx.save();ctx.strokeStyle=down;ctx.globalAlpha=.8;ctx.lineWidth=1.2;ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(L,y);ctx.lineTo(W-R,y);ctx.stroke();ctx.restore();
   wsTag(ctx,'目标 '+wsMoney(k.target),W-R-2,y-8,down,'right');
  }
- const last=k.days[n-1];ctx.beginPath();ctx.arc(X(n-1),Y(last.c),3.2,0,Math.PI*2);ctx.fillStyle=k.color;ctx.fill();ctx.strokeStyle=CARD;ctx.lineWidth=1.4;ctx.stroke();
- WS.chartInfo={mode:'kline',W,H,L,R,T,B,pw,ph,n,days:k.days,X,Y,mn:k.mn,mx:k.mx,target:k.target,color:k.color,focusId:k.src.w.id,plat:k.plat,cab:k.cab,platName:k.platName};
- wsDrawHover();
+ const last=k.days[n-1];ctx.beginPath();ctx.arc(xAt(n-1),Y(last.c),3.2,0,Math.PI*2);ctx.fillStyle=k.color;ctx.fill();ctx.strokeStyle=CARD;ctx.lineWidth=1.4;ctx.stroke();
+ WS.chartInfo={mode:'kline',W,H,L,R,T,B,pw,ph,n,days:k.days,X:xAt,Y,mn:k.mn,mx:k.mx,target:k.target,color:k.color,focusId:k.src.w.id,plat:k.plat,cab:k.cab,platName:k.platName};
+ if(!noHover){WS._base=_wsSnapshot(c);wsDrawHover();}
 }
 function wsKlineHover(info,x,tip){
  let i=Math.round((x-info.L)/info.pw*info.n-.5);i=Math.max(0,Math.min(info.n-1,i));
@@ -10563,7 +12180,15 @@ function wsKlineHover(info,x,tip){
  const ctx=$('wsChart').getContext('2d');ctx.save();ctx.strokeStyle=cssv('--mut');ctx.globalAlpha=.5;ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(px,info.T);ctx.lineTo(px,info.T+info.ph);ctx.stroke();ctx.restore();
  const diff=info.target==null?null:(d.c<=info.target?('低 ¥'+Math.round(info.target-d.c)):('高 ¥'+Math.round(d.c-info.target)));
  if(tip){tip.innerHTML='<div class="tm">'+he(d.key)+' · '+d.n+' 个采集点</div><div class="tr">'+srxAirIcon((wsWatchById(info.focusId)||{}).code)+'<i style="background:'+info.color+'"></i><span>'+he((wsWatchById(info.focusId)||{}).code||'—')+'</span><b>'+wsMoney(d.c)+'</b></div><div class="tm">'+srxPlatIcon(info.plat)+' '+he(info.platName||'')+' · 开 '+wsMoney(d.o)+' · 高 '+wsMoney(d.h)+' · 低 '+wsMoney(d.l)+' · 收 '+wsMoney(d.c)+'</div>'+(diff?'<div class="tm">目标 '+wsMoney(info.target)+' · '+diff+'</div>':'');tip.classList.add('on');
-  const wrap=$('wsChartWrap').getBoundingClientRect();let left=px+12;const tw=tip.offsetWidth||220;if(left+tw>wrap.width-6)left=px-tw-12;tip.style.left=Math.max(6,left)+'px';tip.style.top='12px';
+  /* 落位走与折线/另两图同一份算术（PCHART.placeTipAxis）。本块曾自带
+     一套左右翻边：`if(left+tw>wrap.width-6) left=px-tw-12`——指针越过阈值
+     后浮窗整块从右侧跳到左侧，实测 75%→85% 时 left 1028→807（倒退 221px），
+     同一时刻折线分支是 1010→1127 单调递增。K线浮窗体宽 270（折线 158），
+     越界更早、跳得更频繁，正是用户说的「悬浮窗乱飘」。
+     placeAxis 只钳位不翻边：贴到右缘就停住，位移连续。 */
+  PCHART.placeTipAxis($('wsChartWrap'),tip,
+    px+$('wsChartWrap').getBoundingClientRect().left,
+    Math.max(8,(info.T||0)+6));
  }
 }
 function wsSetMode(m){
@@ -10592,8 +12217,12 @@ function wsDrawHover(){
    let h='<div class="tm">'+he(String(new Date(bestT).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})))+'</div>';
    rows.forEach(r=>{const ti=wsTargetInfo(r.s.w,{price:r.p.v});h+='<div class="tr">'+srxAirIcon(r.s.w.code)+'<i style="background:'+r.s.color+'"></i><span>'+he(r.s.w.code||'—')+'</span><b>'+wsMoney(r.p.v)+'</b></div><div class="tm">'+(r.p.agg?'':srxPlatIcon(r.p.plat))+' '+he(r.p.agg?('日聚合 · '+r.p.n+' 点'):((SRX_PLATS[r.p.plat]&&SRX_PLATS[r.p.plat][0])||r.p.plat||'—'))+' · '+he(ti.text)+'</div>'});
    tip.innerHTML=h;tip.classList.add('on');
-   const wrap=$('wsChartWrap').getBoundingClientRect();let left=x-wrap.left+12;const tw=tip.offsetWidth||220;
-   if(left+tw>wrap.width-6)left=x-wrap.left-tw-12;tip.style.left=Math.max(6,left)+'px';tip.style.top='12px';
+   /* 三图同一条落位规则：横向跟十字线、只钳位不翻边，纵向固定顶部带。
+      本块曾自带一套「优先左侧」的实现，横向落位与另两图相反
+      （同一指针位置浮窗在关注页贴左、在雷达页贴右）。 */
+   PCHART.placeTipAxis($('wsChartWrap'),tip,
+     x+$('wsChartWrap').getBoundingClientRect().left,
+     Math.max(8,(info.T||0)+6));
   }
  } else if(tip)tip.classList.remove('on');
  ctx.restore();
@@ -10659,7 +12288,7 @@ function wsRenderFilters(){
   +'<select data-wsf="airline" aria-label="按航司筛选">'+opt('','全部航司',WS.airline)+airline.map(x=>opt(x,wsAirName(x),WS.airline)).join('')+'</select>'
   +'<select data-wsf="direct" aria-label="按直飞中转筛选">'+opt('','直飞/中转',WS.direct)+opt('direct','仅直飞',WS.direct)+opt('transfer','仅中转',WS.direct)+'</select>'
   +'<select data-wsf="sort" aria-label="排序">'+opt('price','价格升序',WS.sort)+opt('gap','距目标最小',WS.sort)+opt('dep','起飞时刻',WS.sort)+opt('fresh','最近采集',WS.sort)+'</select>'
-  +'<button type="button" class="ws-reset" data-wsmore="'+(WS.more?'0':'1')+'" aria-expanded="'+(WS.more?'true':'false')+'" aria-controls="wsMoref">更多筛选 '+(WS.more?'▴':'▾')+'</button>'
+  +'<button type="button" class="ws-reset" data-wsmore="'+(WS.more?'0':'1')+'" aria-expanded="'+(WS.more?'true':'false')+'" aria-controls="wsMoref">'+(WS.more?'收起更多条件':'展开更多条件')+'</button>'
   +'<span class="ws-shown" id="wsShown">显示 '+wsFiltered().length+' / '+wsRouteWatches().length+'</span>'
   +'<div class="ws-moref" id="wsMoref"'+(WS.more?'':' hidden')+'>'
   +'<select data-wsf="channel" aria-label="按渠道筛选">'+opt('','全部渠道',WS.channel)+SRX_PLAT_KEYS.map(p=>opt(p,SRX_PLATS[p][0],WS.channel)).join('')+'</select>'
@@ -10683,7 +12312,7 @@ function wsRowHTML(w){
   +'<div class="ws-rc coverage"><div class="k">渠道覆盖</div><div class="v"><b>'+((q?q.coverage:0))+' / '+chans.length+'</b></div><div class="s" style="display:flex;gap:3px;align-items:center">'+dots+'</div></div>'
   +'<div class="ws-rc state"><span class="ws-state '+st.cls+(ti.state==='hit'&&w.active!==false&&w.inScope?' hit':'')+'" title="'+he(w.inScope?'':(w.scopeReason||'航班日期已过或不在当前扫描范围'))+'"><i></i>'+st.text+'</span></div>'
   +'</div>'
-  +'<div class="ws-row-act"><button type="button" data-wslocate="'+he(w.id)+'" title="在检索台定位" aria-label="在检索台定位"><svg class="ic" aria-hidden="true"><use href="#i-search"></use></svg></button><button type="button" data-wsexpand="'+he(w.id)+'" title="展开详情" aria-label="展开详情" aria-expanded="'+(open?'true':'false')+'"><svg class="ic chev" aria-hidden="true"><use href="#i-expand"></use></svg></button></div>'
+  +'<div class="ws-row-act"><button type="button" data-wslocate="'+he(w.id)+'" title="在检索台定位" aria-label="在检索台定位"><svg class="ic" aria-hidden="true"><use href="#i-search"></use></svg></button><button type="button" data-wsexpand="'+he(w.id)+'" title="'+(open?'收起详情':'展开详情')+'" aria-label="'+(open?'收起详情':'展开详情')+'" aria-expanded="'+(open?'true':'false')+'"><svg class="ic chev" aria-hidden="true"><use href="#i-expand"></use></svg></button></div>'
   +'<div class="ws-detail" id="wsDetail-'+he(w.id)+'"'+(open?'':' hidden')+'>'+wsDetailHTML(w,q,ti)+'</div>'
   +'</article>';
 }
@@ -10712,7 +12341,7 @@ function wsRenderList(){
  box.innerHTML=list.map(wsRowHTML).join('');
  if(_eid||_fid){const _t=_eid?box.querySelector('[data-wsexpand="'+CSS.escape(_eid)+'"]'):box.querySelector('[data-wsfocus="'+CSS.escape(_fid)+'"]');if(_t)_t.focus({preventScroll:true})}
 }
-function wsRenderAll(){wsRenderHead();wsRenderKpis();wsRenderRoutes();wsRenderFilters();wsRenderList();wsRenderFocus();wsRenderLegend();wsDrawChart();wsEmptyState()}
+function wsRenderAll(){WS._base=null;WS._dataCache=null;wsRenderHead();wsRenderKpis();wsRenderRoutes();wsRenderFilters();wsRenderList();wsRenderFocus();wsRenderLegend();wsDrawChart();wsEmptyState()}
 function wsEmptyState(){const empty=!(WS.list||[]).length;const hero=$('wsEmptyHero');if(hero)hero.hidden=!empty;
  const add=document.querySelector('#montab-watch .ws-head-act [data-wsact="add"]');if(add)add.style.display=empty?'none':'';
  const cc=document.querySelector('#montab-watch .ws-chartcard');if(cc&&cc.parentElement)cc.parentElement.style.display=empty?'none':'';
@@ -10866,9 +12495,34 @@ function wsUserSet(i){
  try{if(typeof render==='function')render()}catch(e){}
  wsLoad(true);
 }
+/* 悬停合帧 + 底座位图复用（与航线走势同一策略）：
+   旧实现每次 mousemove 都 wsDrawChart() 全量重建（数据过滤、标签字符串、
+   图注 DOM），实测 3.2ms/次，连续移动明显掉帧，读作「卡顿不跟手」。
+   现在：底座只在数据/尺寸变化时画一次并存入 WS._base；悬停只把这张
+   位图贴回去，再叠加十字线与浮窗。 */
+let _wsHovRaf=0,_wsHovX=null;
 function wsHoverAt(clientX){
- const info=WS.chartInfo;if(!info)return;const c=$('wsChart'),r=c.getBoundingClientRect();
- WS.hover=Math.max(info.L,Math.min(info.L+info.pw,clientX-r.left));wsDrawChart();
+ const info=WS.chartInfo;if(!info)return;
+ _wsHovX=clientX;
+ if(_wsHovRaf)return;
+ _wsHovRaf=requestAnimationFrame(()=>{
+  _wsHovRaf=0;
+  const inf=WS.chartInfo,c=$('wsChart');if(!inf||!c||_wsHovX==null)return;
+  const r=c.getBoundingClientRect();
+  WS.hover=Math.max(inf.L,Math.min(inf.L+inf.pw,_wsHovX-r.left));
+  const ctx=c.getContext('2d');
+  if(WS._base){
+   /* dpr 变换已在绘制时设定，这里直接按 CSS 像素贴回 */
+   const dpr=window.devicePixelRatio||1;
+   ctx.save();ctx.setTransform(1,0,0,1,0,0);
+   ctx.clearRect(0,0,c.width,c.height);
+   ctx.drawImage(WS._base,0,0);
+   ctx.restore();
+   ctx.save();wsDrawHover();ctx.restore();
+  }else{
+   wsDrawChart(true);wsDrawHover();
+  }
+ });
 }
 document.addEventListener('click',ev=>{
  const t=ev.target;if(!t||!t.closest)return;
@@ -10959,7 +12613,10 @@ function chart(){if(!S||!S.users.length)return;/* 状态未到不画（render �
  if(c.width!==Math.round(c.offsetWidth*dpr)||c.height!==Math.round(H*dpr)){
   c.width=Math.round(c.offsetWidth*dpr);c.height=Math.round(H*dpr);}
  ctx.setTransform(dpr,0,0,dpr,0,0);
- const W=c.offsetWidth,L=64,R=14,T=14,B=52;
+ const W=c.offsetWidth;
+ /* 内边距从 PCHART_PAD 派生（单源），按航线走势所需扩展：
+   左侧价格刻度带更宽（￥+四位数），底部两行刻度（时刻 + 日期）。 */
+ const L=PCHART_PAD.L+16,R=PCHART_PAD.R-2,T=PCHART_PAD.T+2,B=PCHART_PAD.B2+12;
  /* 长窗数据源：CHR.long 缓存的日桶双系列（懒加载未回时 null——
     chart 先画空态，loadTrend 回来重调） */
  const _tl=TREND_LONG[CR.range];
@@ -10967,7 +12624,7 @@ function chart(){if(!S||!S.users.length)return;/* 状态未到不画（render �
   ?((CHR[u.name]||{}).long||{})[CR.r.label+'|'+_tl]
   :(CR.range==='7d'?(CR.r.history7||CR.r.history):CR.r.history);
  if(_tl&&!H0){$('chartEmpty').style.display='';
-  $('chartEmpty').innerHTML='正在加载'+TREND_LAB[CR.range]+'走势…';
+  $('chartEmpty').innerHTML='<b>正在加载 '+TREND_LAB[CR.range]+' 走势…</b><span>只画真实采集点，未采日期不补点</span>';
   loadTrend(u);return;}
  let hd=H0.direct,ht=H0.transfer;let _outHidden=0;const _basis=H0.basis||'';
  if(!SHOW_OUT&&(hd.length||ht.length)){
@@ -11079,7 +12736,7 @@ function chart(){if(!S||!S.users.length)return;/* 状态未到不画（render �
  if(!vals.length||!(K?CD.length+CT.length:hd.length+ht.length)){
   ctx.clearRect(0,0,W,H);HPTS=null;$('ringNote').innerHTML='';_ringWrote='';
   $('lgZone').style.display='none';$('lgThD').style.display='none';$('lgThT').style.display='none';
-  $('chartEmpty').innerHTML='暂无走势数据<span>完成第一轮扫描后，这里会出现近 '
+  $('chartEmpty').innerHTML='<b>暂无走势数据</b><span>完成第一轮扫描后，这里会出现近 '
    +(TREND_LAB[CR.range]||(CR.range==='7d'?'7 天':'48h'))+'的最低价曲线</span>';
   $('chartEmpty').style.display='flex';return;}
  $('chartEmpty').style.display='none';
@@ -11088,13 +12745,12 @@ function chart(){if(!S||!S.users.length)return;/* 状态未到不画（render �
     作裁切；窄值域保底 30 不变 */
  const _span=Math.max(...vals)-Math.min(...vals),_pad=Math.max(30,_span*0.04);
  const lo=Math.min(...vals)-_pad,hi=Math.max(...vals)+_pad;
- /* nice-step 整价锚（与 report.py _nice_ticks 同律）：刻度曾
-    lo+(hi-lo)k/4 浮点直出（￥2031/￥1926 类尾数价）——数据点几乎永不落线，扫读对齐
-    形同虚设。阶梯 (1,2,5,10)：标签永远 ×00/×50 收尾。门槛 ≥raw*0.5
-    （同律同改）：≥raw 档在 raw∈(100,200] 带步长突翻倍、48h 窗常态
-    仅 2 条网格线（悬崖带实证 lo=1630/hi=2060） */
- const _raw=(hi-lo)/4;let _mag=1;while(_mag*10<=_raw)_mag*=10;
- const _nice=[1,2,5,10].find(m=>m*_mag>=_raw*0.5)*_mag;
+ /* nice-step 整价锚（与 report.py _nice_ticks 同律）：阶梯 1/2/5/10，
+    标签永远以 00/50 收尾；门槛 ≥raw*0.5（≥raw 档在 raw∈(100,200]
+    会让步长突翻倍、48h 窗常态只剩 2 条网格线）。实现走 PCHART 单源，
+    与航线/关注/雷达三处同一次算法，不再各自维护步长。 */
+ const _niceSet=PCHART.niceTicks(lo,hi,4);
+ const _nice=_niceSet.length>1?(_niceSet[1]-_niceSet[0]):Math.max(1,(hi-lo)/4);
  const _k0=Math.ceil(lo/_nice-1e-9),_k1=Math.floor(hi/_nice+1e-9);
  /* 共享时间轴（r235 P1）：双系列点数不齐时索引式 X 把稀疏系列压到
     左缘（某系列仅窗尾 2 点时整条线挤在 x=L 附近，低点标注/档位环/
@@ -11272,25 +12928,18 @@ function chart(){if(!S||!S.users.length)return;/* 状态未到不画（render �
     ctx.fillStyle=best.s==='d'?(cssv('--blue')||'#0b62d6'):(cssv('--orange-txt')||'#a45508');
     ctx.fillText(ktag,kx,ky);
     placedBoxes.push([kx-3,ky-12,kx+kw+3,ky+4]);
-    ctx.font='11px sans-serif';}
+    /* 恢复值必须与 chartDraw 的初始值同源（11px --num 等宽）：
+       原先恢复成 '11px sans-serif'，等于把后续所有文字的字体从等宽数字
+       退化成比例字体——同一张画布上下部分字体不一致、数字宽度跳动。 */
+    ctx.font='11px '+(cssv('--num')||'sans-serif');}
   }else{
   const series=(pts,color,tv,xf)=>{if(!pts.length)return;
    if(pts.length>=3){
-    /* 缺口断线：相邻点真实间隔超过「中位间隔×1.8」（且不低于 1.2 个
-       聚合桶）即视为采集中断，拆段绘制而不是跨缺口拉一条假连续线。
+    /* 缺口断线：判定走 PCHART.gaps（中位间隔×1.8，且不低于 1.2 个聚合桶）。
+       三处走势共用同一阈值，避免「这页断、那页连」。
        X 仍接收轴索引，axMs 只参与缺口判定与时间比例落位。 */
-    const _ms=pts.map(p=>axMs(p[0],Date.now()));
-    const _iv=[];for(let i=1;i<_ms.length;i++){const d=_ms[i]-_ms[i-1];
-     if(Number.isFinite(d)&&d>0)_iv.push(d);}
-    _iv.sort((a,b)=>a-b);
-    const _med=_iv.length?_iv[Math.floor(_iv.length/2)]:0;
-    const _gap=_med?Math.max(_med*1.8,BUCKET*60000*1.2):Infinity;
-    const segs=[];let cur=[0];
-    for(let i=1;i<pts.length;i++){
-     const a=_ms[i-1],b=_ms[i];
-     if(Number.isFinite(a)&&Number.isFinite(b)&&b-a>_gap){segs.push(cur);cur=[i];}
-     else cur.push(i);}
-    segs.push(cur);
+    const segs=PCHART.gaps(pts.map((p,i)=>({t:axMs(p[0],Date.now()),i})),
+     BUCKET*60000*1.2).map(seg=>seg.map(o=>o.i));
     segs.forEach(seg=>{
      if(seg.length<2)return;
      ctx.beginPath();ctx.moveTo(X(xf(seg[0])),Y(pts[seg[0]][1]));
@@ -11400,7 +13049,7 @@ function chart(){if(!S||!S.users.length)return;/* 状态未到不画（render �
    tagBox(bx,by,tagW);
    ctx.fillStyle=color;ctx.fillText(tag,bx,by);
    placedBoxes.push([bx-3,by-12,bx+tagW+3,by+4]);
-   ctx.font='11px sans-serif';};
+   ctx.font='11px '+(cssv('--num')||'sans-serif');};   /* 同 chartDraw 初始值（等宽） */
   markMin(HPTS.d,cssv('--blue')||'#0b62d6',T+12);markMin(HPTS.t,cssv('--orange-txt')||'#a45508',T+44);
  }
  };  /* /chartDraw */
@@ -11409,18 +13058,23 @@ function chart(){if(!S||!S.users.length)return;/* 状态未到不画（render �
     动画轮跳过首绘：先全量画满终帧再逐帧 clip 重绘同内容=零视觉产出
     （中段右区恒等于终帧），跳过后才从旧图/空布左→右揭示 */
  const _anim=CHART_ANIM&&!RM;
- if(!_anim)chartDraw();
+ if(!_anim){chartDraw();_CHBASE=_wsSnapshot(c);}
  if(_anim){CHART_ANIM=0;const t0=performance.now();
   const step=t=>{if(RUN!==CHART_RUN)return;/* 已被新 chart 接管：旧帧作废 */
    const p=Math.max(0,Math.min(1,(t-t0)/700)),e=1-Math.pow(1-p,3);
    ctx.save();ctx.beginPath();ctx.rect(0,0,L-2+(W-L+2)*e,H);ctx.clip();
    chartDraw();ctx.restore();
-   if(p<1)requestAnimationFrame(step);};
+   if(p<1)requestAnimationFrame(step);
+   else _CHBASE=_wsSnapshot(c);};
   requestAnimationFrame(step);}
  else if(CHART_ANIM)CHART_ANIM=0;
 }
 /* 悬停提示：十字线 + 数值浮框（折线读价 / K线读 OHLC） */
 let HPTS=null,CHART_ANIM=0,CHART_RUN=0;
+/* 航线走势的悬停底座：与关注/雷达同一策略——整图只在数据或几何变化时
+   重画一次并留一张位图，之后每次移动只贴图 + 一条十字线。旧实现每次
+   mousemove 都跑完整 chart()（实测 3.2ms/帧，是另两图的 10 倍）。 */
+let _CHBASE=null;
 function drawHover(x){const c=$('chart'),ctx=c.getContext('2d');
  if(!HPTS)return;
  /* 档位后缀（与环标图例逐字同形）：flag 2=●真达标、1=○行情破线 */
@@ -11460,13 +13114,15 @@ function drawHover(x){const c=$('chart'),ctx=c.getContext('2d');
   txt=((pd||pt)[3]||'')+'　'+parts.join('　');
  }
  ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--mut').trim()||'#5a6c7d';
- ctx.setLineDash([4,4]);
+ ctx.setLineDash([3,3]);
  ctx.beginPath();ctx.moveTo(ax,HPTS.T);ctx.lineTo(ax,HPTS.B);ctx.stroke();ctx.setLineDash([]);
  /* 行预算：窄画布一行装不下（K线双系列 OHLC 读数 ~600px，390px 手机
     画布 ~370px，offsetWidth-w-4 为负曾把 tooltip 半截裁出画布）→
     按「　」部件拆行；单部件仍超宽时 K线降级只留 低/收 决策数字 */
  ctx.font='12px '+(cssv('--num')||'sans-serif');   /* 读数与图内刻度同 mono（数字扫读不跳） */
- const avail=Math.max(c.offsetWidth-8,80);
+ /* 与两张 DOM 浮窗同一条换行上限（270px）：曾用整张画布宽度，
+    宽屏上一条读数会被拉成横贯全屏的长条，而同屏另两张图是窄块。 */
+ const avail=Math.max(Math.min(c.offsetWidth-8,270),80);
  let lines=[txt];
  if(ctx.measureText(txt).width+18>avail&&parts.length)lines=parts.slice();
  let w=Math.max(...lines.map(s=>ctx.measureText(s).width))+18;
@@ -11474,23 +13130,43 @@ function drawHover(x){const c=$('chart'),ctx=c.getContext('2d');
   lines=lines.map(s=>s.replace(/ 开￥\d+/,'').replace(/ 高￥\d+/,'').replace(/  +/g,' '));
   w=Math.max(...lines.map(s=>ctx.measureText(s).width))+18;}
  w=Math.min(w,avail);
- let bx=Math.min(Math.max(ax-w/2,4),c.offsetWidth-w-4);
- const bh=24+(lines.length-1)*16;
+ /* 落位与另两图同一份算术（PCHART.placeAxis）：水平贴十字线、只钳位不翻边
+    避让右缘，垂直恒在顶部带。旧实现四份各自实现，三图纵向落点不一
+    （实测同一 fy 下航线 4 / 关注 30 / 雷达 137，后两者随指针滑动）。 */
+ const PADL=9,PADY=6,LINEH=16;
+ const bh=PADY*2+(lines.length-1)*LINEH+12;
+ const _p=PCHART.placeAxis(c.offsetWidth,c.offsetHeight,w,bh,ax,4);
+ const bx=_p.l, by=_p.t;
  ctx.fillStyle='rgba(44,62,80,.93)';   /* 有意深底白字：两主题皆可读的 tooltip 惯例，勿随主题反转 */
- if(ctx.roundRect){ctx.beginPath();ctx.roundRect(bx,4,w,bh,6);ctx.fill();}
- else ctx.fillRect(bx,4,w,bh);
+ if(ctx.roundRect){ctx.beginPath();ctx.roundRect(bx,by,w,bh,8);ctx.fill();}
+ else ctx.fillRect(bx,by,w,bh);
  ctx.fillStyle='#fff';
- lines.forEach((s,ix)=>ctx.fillText(s,bx+9,20+ix*16));}
+ lines.forEach((s,ix)=>ctx.fillText(s,bx+PADL,by+PADY+12+ix*LINEH));
+ /* 读屏可达：本浮窗是画布内绘，DOM 里没有节点可读（另两图是 DOM 浮窗）；
+    这里把同一条读数同步进 sr-only live region，三图读屏体验一致。 */
+ const _lv=$('trendTipLive');if(_lv){const _t=lines.join(' · ');if(_lv.textContent!==_t)_lv.textContent=_t;}}
 /* hover 合帧：每事件全量 chart() 曾在宽屏 dpr=2 下逐移动
    重分配画布+全量重绘，密集段可感卡顿——rAF 合帧一拍一绘；画布尺寸
    未变时不再重设 width/height（重设即清空+重分配，见 chart 内守卫） */
 let _hovX=null,_hovRaf=0;
 const _hovPaint=()=>{_hovRaf=0;if(_hovX===null)return;
- const r=$('chart').getBoundingClientRect();drawHover(_hovX-(r.left));};
+ const c=$('chart'),r=c.getBoundingClientRect(),ctx=c.getContext('2d');
+ if(_CHBASE&&_CHBASE.width===c.width&&_CHBASE.height===c.height){
+  ctx.save();ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,c.width,c.height);ctx.drawImage(_CHBASE,0,0);
+  ctx.restore();
+  ctx.save();drawHover(_hovX-(r.left));ctx.restore();
+ }else{chart();drawHover(_hovX-(r.left));}};
 $('chart').onmousemove=e=>{if(!HPTS)return;
- _hovX=e.clientX;if(!_hovRaf)_hovRaf=requestAnimationFrame(()=>{chart();_hovPaint();});};
+ _hovX=e.clientX;if(!_hovRaf)_hovRaf=requestAnimationFrame(_hovPaint);};
 $('chart').onmouseleave=()=>{_hovX=null;if(_hovRaf){cancelAnimationFrame(_hovRaf);_hovRaf=0;}
- if(HPTS)chart();};
+ const _lv=$('trendTipLive');if(_lv)_lv.textContent='';   /* 与 DOM 浮窗同步收起，避免残留旧读数 */
+ if(!HPTS)return;
+ const c=$('chart');
+ if(_CHBASE&&_CHBASE.width===c.width&&_CHBASE.height===c.height){
+  const ctx=c.getContext('2d');ctx.save();ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,c.width,c.height);ctx.drawImage(_CHBASE,0,0);ctx.restore();
+ }else chart();};
 /* 触屏 hover：touchstart/move 映射 mousemove 同一 hover 路径
    （passive 不阻塞滚动；复用 drawHover 与清理路径，不另写逻辑）。
    touchend 不在此清线——下方双拍监听是清线语义的超集（首拍记锚
@@ -11499,7 +13175,7 @@ $('chart').onmouseleave=()=>{_hovX=null;if(_hovRaf){cancelAnimationFrame(_hovRaf
    即失读数，读数只在按压期间可见） */
 const _tchHover=e=>{if(!HPTS)return;
  const t=e.touches&&e.touches[0];if(!t)return;
- _hovX=t.clientX;if(!_hovRaf)_hovRaf=requestAnimationFrame(()=>{chart();_hovPaint();});};
+ _hovX=t.clientX;if(!_hovRaf)_hovRaf=requestAnimationFrame(_hovPaint);};
 $('chart').addEventListener('touchstart',_tchHover,{passive:true});
 $('chart').addEventListener('touchmove',_tchHover,{passive:true});
 /* 键盘步进十字线（打磨池）：走势读数键盘可达——聚焦画布后
@@ -11676,13 +13352,14 @@ function armConfirm(el,fn,opts){if(!el&&!opts)return;   /* 空锚静默 */
   o.message||'此操作在保存配置后生效；保存前可通过「放弃更改」撤回。',
   o.label||'确认删除',fn,el||null);}
 /* ===== 渠道健康时间线：/api/health（monitor.log 解析，与状态同拍刷新） ===== */
-let HL=null,HL_ETAG='';
+let HL=null,HL_ETAG='',HLJ=null;
 /* Current authentication is independent of quote ETags and historical health. */
 var CHANNEL_STATE=CHANNEL_STATE||{payload:null,error:'',request:0,at:0,pending:null};
 function srxToggleScNote(btn){
  const n=document.getElementById('scNote');if(!n)return;
  const on=n.classList.toggle('open');
- if(btn)btn.setAttribute('aria-expanded',on?'true':'false');
+ if(btn){btn.setAttribute('aria-expanded',on?'true':'false');
+  btn.textContent=on?'收起说明':'展开说明';}
 }
 function channelAuthView(p){
  const cs=CHANNEL_STATE||{},j=cs.payload,s=(j&&j.plats&&j.plats[p])||{};
@@ -11703,8 +13380,52 @@ function channelAuthView(p){
   (s.error||evidence||(s.saved?'本地会话已保存；仍需实际请求核验，不等同于已登录或航班可售':'未检测到保存的本地会话'));
  return {status,label:labels[status]||'状态待确认',tone:status==='available'?'ok':status==='login_required'||status==='save_error'?'bad':'warn',needsLogin:status==='login_required',title};
 }
+/* 导航上的会话失效红点（r494）：`#hauthact` 与节流面板都只在「监控 ·
+   渠道健康」页可见，而渠道可以一整天被登录墙拦着——用户停在概览/明细/
+   检索页时界面上毫无提示，属「可干预的及时性」缺口。
+   数据源用 /api/login-state（每 2s 全局轮询），**不依赖健康页的 loadPacing**
+   ——后者只在健康页跑，挂在它上面会让红点在别的页面永不更新（等于没做）。
+   判据用 slots 的 needs_login（会话级，与登录卡的「需重登」同源）。 */
+function renderNavAuthDot(){
+ try{
+  const el=$('navAuth');if(!el)return;
+  const pay=CHANNEL_STATE&&CHANNEL_STATE.payload;
+  if(!pay||pay.demo){el.style.display='none';return;}
+  const slots=pay.slots||null;
+  let need;
+  if(slots){
+   need=Object.keys(slots).filter(k=>{
+    const s=slots[k]||{};return !!s.needs_login&&s.plat!=='demo';})
+     .map(k=>(slots[k]||{}).name||k);
+  }else{
+   need=['ctrip','qunar','fliggy','tongcheng','tuniu']
+     .filter(p=>{try{return channelAuthView(p).needsLogin;}catch(e){return false;}})
+     .map(p=>(typeof LOGIN_CN!=='undefined'&&LOGIN_CN[p])||p);
+  }
+  el.style.display=need.length?'':'none';
+  el.title=need.length
+    ?(need.join('、')+' 会话失效 · 点「监控 → 渠道健康」处理')
+    :'';
+ }catch(e){}
+}
 function renderChannelState(){
  renderLoginCards(false);renderSourceAccess();renderHealthLoginAction();
+ renderNavAuthDot();
+ /* 健康行里的会话小标（飞猪 PC/H5）只在会话态变化时要重画；健康文本
+    没变（ETag 304）也得跟上，否则改了登录态这一行要等下一轮健康拍。 */
+ if(HLJ&&typeof renderHealth==='function'){
+  const sig=JSON.stringify((CHANNEL_STATE&&CHANNEL_STATE.payload
+    &&CHANNEL_STATE.payload.slots)||null);
+  if(sig!==window._hslotSig){window._hslotSig=sig;try{renderHealth(HLJ)}catch(e){}}
+ }
+ /* 节流面板的「需登录」也要说清哪一端，它读的是同一份 slots；会话态
+    到位比节流面板晚一拍时，不重画就只能显示笼统的「会话已失效」。 */
+ if(typeof loadPacing==='function'&&$('paceBox')&&$('paceBox').innerHTML){
+  const psig=JSON.stringify((CHANNEL_STATE&&CHANNEL_STATE.payload
+    &&CHANNEL_STATE.payload.slots)||null);
+  if(psig!==window._paccSlotSig){window._paccSlotSig=psig;
+   try{loadPacing(true)}catch(e){}}
+ }
  if(typeof chBoardRefresh==='function')chBoardRefresh();
  if(typeof lgRefreshFliggy==='function')lgRefreshFliggy();
  if(typeof srxRenderCapbar==='function'&&typeof SRX!=='undefined')srxRenderCapbar();
@@ -11737,12 +13458,182 @@ function renderSourceAccess(){
 }
 function renderHealthLoginAction(){
  const ha=$('hauthact');if(!ha)return;
+ /* 会话维度优先：飞猪 PC 与 H5 是两套独立 cookie，只报「飞猪需登录」
+   时用户不知道核哪一端。有 slots 载荷就按会话判，落到具体槽位。 */
+ const slots=(CHANNEL_STATE&&CHANNEL_STATE.payload&&CHANNEL_STATE.payload.slots)||null;
+ const needSlots=slots?Object.keys(slots).filter(k=>{
+   const s=slots[k]||{};return !!s.needs_login&&s.plat!=='demo';
+ }).map(k=>{
+   /* label 是给人看的名字（「飞猪 H5」）。后端实测总会给 name；
+     万一只拿到键名（fliggy_h5）那种值，就退回「厂商 + 端」，
+     别把下划线键名直接印到按钮上。 */
+   const s=slots[k]||{};
+   let lab=String(s.name||'').trim();
+   const sl=String(s.surface_label||s.surface||'').trim();
+   if(!lab||lab.indexOf('_')>=0||lab===String(s.slot||k)){
+     const base=String(s.slot||k).split('_')[0];
+     lab=sl?(base+' '+sl):(lab||base);
+   }
+   return {key:k,label:lab,surface:sl};
+ }):null;
+ if(needSlots){
+  ha.hidden=!needSlots.length;ha.dataset.p=needSlots.length?needSlots[0].key:'';
+  if(needSlots.length){
+   /* 按钮文字直接点名是哪一端（r513）：飞猪 PC 与 H5 是两套 cookie，
+     只写「需处理 1 · 去登录」时读者根本不知道要核 PC 还是 H5，
+     非要点开配置页才看得到——而这是**最高频**的一次判断。
+     单槽位写全名；同厂多端按「飞猪 PC / H5」合写，避免按钮过长。 */
+   ha.textContent=needSlots.length===1
+     ?(needSlots[0].label+' 需登录 · 去登录')
+     :(needSlots.length>1
+       ?(()=>{
+          /* 按厂商归并：label 是「飞猪 PC」「飞猪 H5」这类自由文本。
+             注意别用 `surface_label` 拼——label 里已经带端名，会渲染成
+             「飞猪 PC PC / H5」。这里只用键前缀分组，展示仍走 label。 */
+          const byPlat={};
+          needSlots.forEach(x=>{
+            const base=String(x.key||'').split('_')[0]||String(x.label||x.key);
+            (byPlat[base]=byPlat[base]||[]).push(x);});
+          const parts=Object.keys(byPlat).map(b=>{
+            const g=byPlat[b];
+            if(g.length<=1)return String(g[0].label||g[0].key);
+            /* 公共前缀当厂商名（飞猪 PC / 飞猪 H5 → 前缀「飞猪」/「飞猪 」），
+               剩下那段才是端名。payload 里 name 可能缺失，不能依赖它。 */
+            const labs=g.map(x=>String(x.label||x.key));
+            let pre=labs[0];
+            labs.forEach(t=>{let i=0;while(i<pre.length&&i<t.length&&pre[i]===t[i])i++;pre=pre.slice(0,i);});
+            const head=pre.replace(/\s+$/,'')||String(g[0].label||b);
+            const tails=labs.map(t=>t.slice(pre.length).trim()||t);
+            return tails.length>1?(head+' '+tails.join(' / ')):head;});
+          return parts.join('、')+' 需登录 · 去登录';})()
+       :'');
+   ha.title='当前认证需要处理：'+needSlots.map(x=>x.label).join('、')+'；'
+     +'会话按端独立（飞猪 PC 与 H5 各一套），历史健康记录保留原状';}
+  return;
+ }
  const need=['ctrip','qunar','fliggy','tongcheng','tuniu'].filter(p=>channelAuthView(p).needsLogin);
  ha.hidden=!need.length;ha.dataset.p=need[0]||'';
  if(need.length){ha.textContent='需处理 '+need.length+' · 去登录';
   ha.title='当前认证需要处理：'+need.map(p=>(typeof LOGIN_CN!=='undefined'&&LOGIN_CN[p])||p).join('、')+'；历史健康记录保留原状';}
 }
+/* 账本级登录墙也要点亮顶部入口：会话槽位"已保存"不代表用起来没被拦——
+   实测去哪儿国际 H5 24h 被 login 拦 13/17 次、0 出数，会话状态却仍是
+   "已存待验"，顶部「去登录」一直 hidden，用户不点开节流面板就完全
+   不知道要去重登（可干预的及时性缺口）。只看 advice.state==='login'，
+   与节流行同源，不另造判据。 */
+function healthLoginNudge(advice){
+ try{
+  const ch=(advice&&advice.channels)||{};
+  /* 验证窗正开着的渠道不算「待处理」（r483）：人已经在窗口里操作了，
+     顶部若继续亮「去登录」，用户会从这儿再点一次——r481 只能拒绝第二次，
+     人还是白跑一趟。判据与节流行同源（scene.verify_open_at）。 */
+  const _busy=k=>!!((ch[k]||{}).scene||{}).verify_open_at;
+  const all=Object.keys(ch).filter(k=>((ch[k]||{}).advice||{}).state==='login');
+  const need=all.filter(k=>!_busy(k));
+  const ha=$('hauthact');if(!ha||!ha.hidden)return;   /* 已亮则不动 */
+  if(!need.length){
+   /* 全部都在验证中：说明系统正在处理，不应再催。这里**不禁用**按钮——
+     禁用后若验证失败/窗口超时，这个入口就再也点不动了（比误点更糟）。
+     只把文案改成「去核对」，点击仍可跳到登录页确认状态。 */
+   if(all.length){
+    ha.hidden=false;ha.dataset.p=all[0];
+    ha.textContent='验证窗口已打开 · 去核对';
+    ha.title='账本判定会话失效，但该渠道的验证窗口正开着：'
+      +'完成人机验证后直接关窗，系统会自动保存会话并单查探测，无需再次点击';
+   }
+   return;
+  }
+  /* 顶部入口也必须落到「证据指向的那一端」：账本说飞猪「国际 H5」被拦，
+     这里若只传厂商标识，点开的是飞猪 PC 的登录行——用户重登 PC 后 H5
+     依旧进不去。多会话厂商按 adv.path 选槽位，选不到才退回厂商。 */
+  const _sl=(CHANNEL_STATE&&CHANNEL_STATE.payload
+    &&CHANNEL_STATE.payload.slots)||null;
+  const _pick=k=>{
+   const adv=(ch[k]||{}).advice||{};
+   const want=String(adv.path||'').toUpperCase();
+   if(!want||!_sl)return k;
+   const own=Object.keys(_sl).map(q=>Object.assign({key:q},_sl[q]||{}))
+     .filter(x=>x.plat===k);
+   if(own.length<2)return k;
+   const hit=own.find(x=>String(x.surface||'').toUpperCase()===want)
+     ||own.find(x=>{
+       const sf=String(x.surface||'').toUpperCase();
+       return sf&&want.indexOf(sf)>=0;});
+   return hit?hit.key:k;
+  };
+  const _keys=need.map(_pick);
+  ha.hidden=false;ha.disabled=false;ha.removeAttribute('aria-disabled');
+  ha.dataset.p=_keys[0];
+  ha.textContent='需处理 '+need.length+' 家会话失效 · 去登录';
+  ha.title='账本判定会话失效：'+need.map(p=>(typeof LOGIN_CN!=='undefined'&&LOGIN_CN[p])||p).join('、')
+    +'；近 24h 该渠道被登录墙拦走多数尝试，重登才会恢复出数'
+    +((all.length-need.length)?('（另有 '+(all.length-need.length)+' 家验证窗口开着，无需重复点击）'):'');
+ }catch(e){}
+}
+/* 会话级小标：同一厂商有多个独立会话时（当前只有飞猪 PC/H5），把每个
+   会话的状态并排给出。健康行原本只有厂商一个维度，飞猪 H5 掉了会被
+   「飞猪需登录」一句话吞掉，看不出该核哪一端。单会话厂商不显示小标，
+   避免每行多一段噪声。 */
+function healthSlotNote(p){
+ const pay=CHANNEL_STATE&&CHANNEL_STATE.payload;if(!pay||!pay.slots)return '';
+ const own=Object.keys(pay.slots).map(k=>Object.assign({key:k},pay.slots[k]||{}))
+  .filter(s=>s.plat===p);
+ if(own.length<2)return '';
+ /* 演示会话是合成状态：写「未登录」会让读者以为真的没登（红色小标更
+     会被单独截屏传播）。同样按端给出，但只声明「演示」。 */
+ if(pay.demo){
+  return own.map(s=>{
+   const surf=s.surface_label||s.surface||'全端';
+   const tip=(s.name||s.key)+' · 演示会话（无真实登录态）· 账号 '+(s.account||'—');
+   return '<i class="hslot" title="'+he(tip)+'">'+he(surf+' 演示')+'</i>';
+  }).join('');
+ }
+ const LBL={login_required:'需重登',challenge:'需过验证',missing:'未登录',
+  saved:'已存待验',pending:'待采集验证',active:'登录窗口开着',page_ok:'入口可达',
+  save_error:'保存失败',available:'明细可用'};
+ return own.map(s=>{
+  const bad=s.needs_login||s.status==='save_error';
+  /* 绿色只给「有证据的可用」：真出过明细（available）或入口核验通过（page_ok）。
+     `saved` 是**只存了会话、从未核验过**——文案写着「已存待验」，旧判定却
+     把它一起染绿，同一枚徽标上绿底与「待验」互相打脸（实测飞猪 PC / H5 两端
+     都能长期停在这个状态）。待验是「还不知道」，颜色必须与文字同义。 */
+  const ok=s.status==='available'||s.status==='page_ok';
+  const tone=bad?'bad':(ok?'ok':'warn');
+  const txt=(s.surface_label||s.surface||'全端')+' '+(LBL[s.status]||'待确认');
+  /* `saved_at` 是 epoch 秒（float），旧代码直接 String() 拼进 tooltip——
+     实测渲染成「会话保存于 1793084689.694177」，既不可读也算不出多久以前。
+     这里换成「保存于 10-28 14:34（6 天前）」：绝对时刻便于对账，
+     相对时长才是判断「这会话还新不新」的依据。0 值仍是「未保存会话」。 */
+  const _sa=Number(s.saved_at||0);
+  let _saTxt='未保存会话';
+  if(_sa>0){
+   const _d=new Date(_sa*1000);
+   const _p2=n=>String(n).padStart(2,'0');
+   const _abs=(_d.getMonth()+1)+'-'+_p2(_d.getDate())+' '+_p2(_d.getHours())+':'+_p2(_d.getMinutes());
+   const _m=Math.max(0,(Date.now()-_sa*1000)/60000);
+   const _rel=_m<60?(Math.round(_m)+' 分钟前')
+     :(_m<1440?(Math.round(_m/60)+' 小时前'):(Math.round(_m/1440)+' 天前'));
+   _saTxt='保存于 '+_abs+'（'+_rel+'）';
+  }
+  const tip=[(s.name||s.key),'账号 '+(s.account||'—'),
+    _saTxt,
+    s.verified_at?('核验于 '+s.verified_at):'尚未核验',
+    s.error?('错误 '+s.error):''].filter(Boolean).join(' · ');
+  return '<i class="hslot '+tone+'" title="'+he(tip)+'">'+he(txt)+'</i>';
+ }).join('');
+}
 async function srcAccessState(force){return loadChannelState(!!force);}
+/* 从渠道健康直达「配置 · 全局参数 · 节流」分区：节流面板搬到健康卡后，
+   参数仍在配置页；原来那句「参数在…里调」是死文字，用户还得自己翻。 */
+function cfgGoThrottle(){
+ try{switchView('cfg')}catch(e){}
+ setTimeout(()=>{try{
+  showCfgPanel('globals');
+  const t=$('glThrottle');
+  if(t){t.scrollIntoView({block:'start',behavior:'smooth'});
+   setTimeout(()=>{const c=$('glbQs');if(c&&c.focus)c.focus({preventScroll:true});},320);}
+ }catch(e){}},90);
+}
 async function health(){srcAccessState(false);try{const r=await fetch('/api/health',{headers:HL_ETAG?{'If-None-Match':HL_ETAG}:{}});
  if(r.status===304)return;
  const _et=r.headers.get('ETag');
@@ -11751,7 +13642,7 @@ async function health(){srcAccessState(false);try{const r=await fetch('/api/heal
  /* 错误体不是可缓存的新鲜健康态：保留旧 ETag 会让恢复拍携带它，
    服务端回 304 后错误态永远退不出去。 */
  if(_j&&_j.err){HL_ETAG='';}else if(_et){HL_ETAG=_et;}
- if(t===HL)return;HL=t;renderHealth(_j);}
+ if(t===HL)return;HL=t;HLJ=_j;renderHealth(_j);}
  catch(e){HL_ETAG='';/* 失败拍作废内容校验：否则恢复拍仍带旧 ETag，服务端回 304 后错误态永不退出 */
   /* 错误态落点（_markStale 家族）：健康 tab 整区纯空白=零
    引导；healthcard 可见=已有真实时间线，保陈旧不闪错，恢复轮重写自愈 */
@@ -11769,17 +13660,34 @@ function renderHealthDiag(){
  const cn={available:'明细成功',login_required:'需重新登录',pending:'保存待验证',saved:'已保存待验证',stale:'Cookie 已过期',page_ok:'页面可访问待明细',challenge:'需验证',missing:'未保存'};
  const ck={expired:'已过期',missing:'无本地会话',unverified:'待验证'};
  const st={ok:'成功',part:'部分成功',fail:'失败',maint:'维护',empty:'空结果',none:'无本轮记录'};
+ /* 卡片数写进容器：定列规则按 data-n 选（见 .hdiag[data-n="5"]），
+    避免 5 张卡在 auto-fit 下排成 4+1、末张独占 1/4 宽。 */
+ box.dataset.n=String(j.diag.length);
  box.innerHTML=j.diag.map(c=>{
   const lg=cn[c.login]||c.login||'登录状态未读取';
   const cv=ck[c.cookie]||c.cookie||'未检查';
+  /* 多会话厂商点名失效端：飞猪 PC/H5 两套 cookie，只写「登录态失效」
+     会让人去核错一端。有 dead_surfaces 时把端名并入结论与按钮。 */
+  const _dead=(c.dead_surfaces||[]);
+  const _surfTxt=_dead.length?(_dead.join('/')+' '):'';
+  const _target=c.slot_action||c.plat;
+  const _btnTxt=(c.kind==='login'&&_dead.length)?('打开登录 '+_dead[0]):'打开登录';
   const btn=(c.kind==='login'||c.kind==='captcha')
-   ?'<button type="button" class="btn2" style="height:24px;padding:0 8px;font-size:11px" data-diaglogin="'+he(c.plat)+'" onclick="srxGoLogin(this.dataset.diaglogin)">打开登录</button>':'';
+   ?'<button type="button" class="btn2" style="height:24px;padding:0 8px;font-size:11px" data-diaglogin="'+he(_target)+'" onclick="srxGoLogin(this.dataset.diaglogin)">'+he(_btnTxt)+'</button>':'';
   const self='<button type="button" class="btn2" style="height:24px;padding:0 8px;font-size:11px" data-diagself="'+he(c.plat)+'" onclick="diagSelfcheck(this.dataset.diagself)">自检</button>';
-  return '<div class="hdiag-card '+he(c.kind)+'"><div class="hdiag-h">'+srxPlatIcon(c.plat)+'<b>'+he(c.name)+'</b><span class="hdiag-st">'+he(c.label)+'</span></div>'
+  /* 卡片动作写「需真实明细请发起探针」时，卡上却只有「自检」——
+     自检只查登录态/卡片判定，不跑真实查询，用户读完建议无钮可按。
+     动作文案提到探针就给一个直达探针的按钮（真链路，10–60 秒）。 */
+  const probe=(String(c.action||'').indexOf('探针')>=0)
+   ?'<button type="button" class="btn2" style="height:24px;padding:0 8px;font-size:11px" data-diagprobe="'+he(c.plat)+'" onclick="diagProbe(this.dataset.diagprobe)">发起探针</button>':'';
+  return '<div class="hdiag-card '+he(c.kind)+'"><div class="hdiag-h">'+srxPlatIcon(c.plat)+'<b>'+he(c.name)+'</b><span class="hdiag-st">'+he(_surfTxt+c.label)+'</span></div>'
    +'<div class="hdiag-l"><span>登录 <b>'+he(lg)+'</b></span><span>Cookie <b>'+he(cv)+'</b></span><span>最近轮次 <b>'+he(st[c.s]||c.s||'—')+'</b></span></div>'
    +'<div class="hdiag-a">'+he(c.action)+'</div>'
-   +(c.evidence?'<div class="hdiag-e" title="'+he(c.evidence)+'">证据：'+he(c.evidence)+'</div>':'')
-   +'<div style="display:flex;gap:6px;flex-wrap:wrap">'+btn+self+'</div></div>';
+   /* r436：证据行曾是条件渲染——只有 2/5 张卡有，那两张的「自检」被推下
+      15~23px（1512 实测 483 vs 465），五颗钮不在一条线上。证据是卡片的
+      第四行，无论有无都占同一行位，动作行才会齐。 */
+   +'<div class="hdiag-e"'+(c.evidence?' title="'+he(c.evidence)+'"':' aria-hidden="true"')+'>'+(c.evidence?('证据：'+he(c.evidence)):'')+'</div>'
+   +'<div class="hdiag-acts">'+btn+probe+self+'</div></div>';
  }).join('');
 }
 async function diagSelfcheck(p){
@@ -11790,6 +13698,13 @@ async function diagSelfcheck(p){
   toast('自检：'+j.card.label+' · '+j.card.action,'ok');renderHealthDiag();
  }catch(e){toast('自检失败：'+(e&&e.message||e),'err')}
 }
+/* 诊断卡上的「发起探针」：真跑一次查询链路（10–60 秒）。
+   直接复用节流面板的 probeNow，连带它的幂等与结果展示；
+   探针结束后重绘诊断卡，让卡片结论跟着新证据走。 */
+async function diagProbe(p){
+ await probeNow(p);
+ try{renderHealthDiag()}catch(e){}
+}
 function renderHealth(j){
  /* 已有时间线时错误体保陈旧（与 catch 分支「healthcard 可见=保陈旧不
     闪错」政策对齐）：瞬态 500 曾把整条格带掀成错误文案，下一轮询才自愈 */
@@ -11797,8 +13712,17 @@ function renderHealth(j){
  const _he=$('healthEmpty');
  if(!j||!j.rounds||!j.rounds.length){
   if(_he){_he.style.display='';
+   /* 「暂无记录」也要分两种（r517）：从未采集 vs 采集停了。
+      实测采集停了 26 小时时，这里仍写「完成一轮采集后会出现时间线」，
+      读者会一直等——而节流行此时已经写着「采集停了」（r516），
+      同一屏两句话互相矛盾。空态沿用同一个信号 `last_seen_at`。 */
+   const _ls=String((j&&j.last_seen_at)||'');
+   const _stale=_ls&&_minsAgo(_ls)!=null&&_minsAgo(_ls)>=360;
    _he.innerHTML=(j&&j.err)?'⚠ 健康数据读取失败（详见服务日志）'
-    :'暂无扫描记录——完成一轮采集后，这里会出现 24h 渠道健康时间线';}
+    :(_stale?('⚠ 采集已停：最近一条采集记录在 '+he(String(_ls).slice(5,16))
+              +'（'+Math.floor(_minsAgo(_ls)/60)+' 小时前）。'
+              +'这里不会自己恢复——请检查监控进程与扫描周期是否在运行')
+            :'暂无扫描记录——完成一轮采集后，这里会出现 24h 渠道健康时间线');}
   $('healthcard').style.display='none';   // 空态/错误态回收旧卡：500 错误体曾点亮空态文案而旧 96 轮格带同屏并存
   /* 推送连败源随健康数据一并清零（红帽双源合成，Soldier Minor-1）：
      账本空窗后 _ovPushStreak 残留旧值会让红帽常亮而健康页推送通道
@@ -11810,7 +13734,12 @@ function renderHealth(j){
  const CN={'qunar':'去哪儿','fliggy':'飞猪','ctrip':'携程','tongcheng':'同程','tuniu':'途牛'};
  const SM={'ok':'成功','part':'部分成功','fail':'失败','maint':'维护模式','empty':'空结果'};
  let h='';
- const plats=Object.keys(j.stats||{}).sort();
+ /* 渠道顺序单源：曾用 Object.keys().sort() 的字母序（ctrip→fliggy→qunar），
+    与节流面板的 API key 序（qunar→fliggy→ctrip）各排一套，同屏两张表
+    渠道顺序不同。统一走 SRX_PLAT_ORDER（携程→去哪儿→飞猪→同程→途牛）。 */
+ const plats=Object.keys(j.stats||{}).sort((a,b)=>{
+  const ia=SRX_PLAT_ORDER.indexOf(a),ib=SRX_PLAT_ORDER.indexOf(b);
+  return (ia<0?99:ia)-(ib<0?99:ib)||String(a).localeCompare(String(b));});
  for(const p of plats){const st=j.stats[p];
   const att=st.ok+st.part+st.fail;
   const rate=att?Math.round(st.rate*100):null;
@@ -11821,7 +13750,23 @@ function renderHealth(j){
      直接给「航班级 50/87」，不再出现假 100%。 */
   const detAll=att?Math.round(detOk/att*100):null;
   const useDet=calOnly>0;
-  const shownRate=useDet?detAll:rate;
+  /* 徽标口径统一到**查询口径**（与服务端 advice、分域/分通路小标同源）。
+     此前徽标按轮次、小标按查询，同一行会出现「13%」与「国际 73%」并列，
+     看起来像数据打架。轮次明细仍保留在格带与 title 里可查。 */
+  const _qp=(j.paths||{})[p]||{};
+  const _qscope=((_qp.scopes)||{});
+  let _qok=0,_qall=0;
+  for(const _k of ['dom','intl']){
+   const _q=_qscope[_k];
+   if(_q&&(_q.attempts||0)>0){_qall+=_q.attempts;_qok+=Math.round((_q.rate||0)*_q.attempts);}}
+  const qRate=_qall>0?Math.round(_qok/_qall*100):null;
+  /* 徽标优先「在用口径」：退役通路（如被窗历取代的旧日历）的历史成败
+     不该继续拖低一家健康渠道。无退役通路时与查询口径完全一致。 */
+  const _liveRate=(_qp.query_rate_live!=null
+    && (_qp.query_attempts_live||0)>0)
+    ? Math.round(Number(_qp.query_rate_live)*100) : null;
+  const shownRate=useDet?detAll:(_liveRate!==null?_liveRate
+    :(qRate!==null?qRate:rate));
    const cells=j.rounds.map((r,ri)=>{const c=(r.plats||{})[p];
    if(!c)return `<i class="hc none" title="${r.ts} 未扫描"></i>`;
    const _d=c.detail||0,_c=c.cal||0;
@@ -11840,12 +13785,74 @@ function renderHealth(j){
   const _cap=['日历 '+calN,'明细 '+detN,'需登录 '+authN].join(' · ');
   const _badgeTxt=shownRate===null?'—':(useDet?'航班级 '+detOk+'/'+att:shownRate+'%')+(maintN?' · 维护':'');
   const _title=useDet
-   ?`近24h 航班级成功率 ${detOk}/${att} · ${calOnly} 轮仅日历价（计入分母，不计成功） · ${_cap}${st.maint?'（维护 '+st.maint+' 轮）':''}`
-   :`近24h成功率 ${st.ok}/${att} · ${_cap}${st.maint?'（维护 '+st.maint+' 轮）':''}`;
+   ?`近24h 航班级成功率 ${detOk}/${att}（轮次口径） · ${calOnly} 轮仅日历价（计入分母，不计成功） · ${_cap}${st.maint?'（维护 '+st.maint+' 轮）':''}`
+   :`近24h 查询成功率 ${shownRate===null?'—':shownRate+'%'}（一次查询有任一路径出数即算成功；与服务端建议同源） · 轮次口径 ${st.ok}/${att} · ${_cap}${st.maint?'（维护 '+st.maint+' 轮）':''}`;
+  /* 分域小标：同一家渠道国内与国际走不同入口/登录墙，混成一个数会
+     掩盖「哪一端坏了」（实报：同程厂商级 10%，而国际窗历当天全成功、
+     国内 H5 全绿）。只有两端都有样本时才显示，避免单端渠道添噪声。 */
+  /* 分域优先用查询口径（paths.scopes，与 advice 同源）；缺失时回落到
+     轮次口径（by_scope）。两套口径混用会让用户以为数据打架。
+     同一节点的 `rate`（尝试级）不能当分域读数：它在节流面板里会与
+     右半的查询率并列成「国内 95% · 国际 62% · 查询 82%」，三个数
+     互相证不出来（实测去哪儿）。分域与徽标同读查询口径后，
+     39/39 + 24/38 = 63/77 = 82% 可核对。 */
+  const _qsc=((j.paths||{})[p]||{}).scopes||{};
+  const _bs=(j.by_scope||{})[p]||{};
+  const _scTxt=[];
+  for(const _k of ['domestic','international']){
+   const _key=(_k==='domestic'?'dom':'intl');
+   const _q=_qsc[_key];
+   const _qN=_q?((_q.query_attempts_live!=null?_q.query_attempts_live:_q.query_attempts)||0):0;
+   if(_q&&_qN>0){
+    const _qR=(_q.query_rate_live!=null?_q.query_rate_live:_q.query_rate);
+    _scTxt.push((_k==='domestic'?'国内 ':'国际 ')+(_qR==null?'—':Math.round(Number(_qR)*100)+'%'));
+    continue;}
+   const _n=_bs[_k];
+   if(_n&&(_n.ok+_n.part+_n.fail)>0){
+    _scTxt.push((_k==='domestic'?'国内 ':'国际 ')+Math.round((_n.rate||0)*100)+'%');}}
+  /* 通路维度（第三维）：同厂商内 PC/H5/日历/窗历 各自成功率，退役通路
+     标灰并注明，避免"某个通路坏了"被藏进厂商总分。 */
+  const _pi=(j.paths||{})[p]||{};
+  const _pw=_pi.paths||{}, _pr=[];
+  for(const _k of Object.keys(_pw)){
+   const _v=_pw[_k]||{};
+   const _dead=(_pi.retired||[]).indexOf(_k)>=0;
+   if(_dead){_pr.push(_k+' 退役');continue;}
+   if((_v.attempts||0)<=0){continue;}
+   _pr.push(_k+' '+Math.round((_v.rate||0)*100)+'%');}
+  const _pathHtml=_pr.length
+   ?`<span class="hpath" title="${he('近24h分通路：'+_pr.join(' · ')+'；退役=该通路已被替代，不再计入健康度')}">${he(_pr.join(' · '))}</span>`
+   :'';
+  const _scopeHtml=(_scTxt.length>1||_pathHtml)
+   ?`<span class="hscope" title="${he('近24h分端成功率：'+_scTxt.join(' · ')+'；分端样本各自独立，不互相冲抵')}">${he(_scTxt.join(' · '))}${_pathHtml}</span>`
+   :'';
+  /* 会话维度（第四维）：同一厂商多个独立会话时逐端列出状态。 */
+  const _slotNote=healthSlotNote(p);
+  const _slotHtml=_slotNote?`<span class="hslots" title="${he('会话按端独立：飞猪 PC 与 H5 是两套 cookie，任一端失效只影响该端')}">${_slotNote}</span>`:'';
   h+=`<div class="hrow"><span class="hlab">${srxPlatIcon(p)}${CN[p]||p}</span>`
    +`<span class="hcells" onkeydown="_roving(event,this)">${cells}</span>`
-   +`<span class="hbadge ${cls}" title="${_title}">${_badgeTxt}</span></div>`;}
+   +`<span class="hbadge ${cls}" title="${_title}">${_badgeTxt}</span>`.concat(
+     _scopeHtml, _slotHtml, '</div>');}
  const rc=$('hroundcnt');
+ /* 有轮次但采集已经停了（r518）：此时每行徽标显示的是**停摆前**的历史
+    成功率，而同一屏节流面板已经写着「采集停了」——不标注的话，读者会
+    把「成功率 96%」读成现状。只在卡头点名「下面这些是历史」，不改徽标
+    语义（徽标仍是真实的历史数字，不伪造也不抹掉）。 */
+ try{
+  const _ls2=String(j.last_seen_at||'');
+  const _m2=_ls2?_minsAgo(_ls2):null;
+  /* 先清掉上一次渲染留下的标记：这段在每轮轮询都会跑，
+     不清会越叠越多（实测同屏出现 3 个「采集已停」）。 */
+  document.querySelectorAll('#hroundcnt ~ .hstale').forEach(e=>e.remove());
+  if(_m2!=null&&_m2>=360){
+   const _d2=document.createElement('span');
+   _d2.className='hstale';
+   _d2.textContent='⚠ 采集已停 '+Math.floor(_m2/60)+' 小时 · 下方为停摆前的历史数据';
+   _d2.title='最近一条采集记录在 '+String(_ls2).slice(5,16)
+     +'；这些轮次都发生在那之前，不代表当前可用性';
+   if(rc&&rc.parentNode)rc.parentNode.insertBefore(_d2,rc.nextSibling);
+  }
+ }catch(e){}
  if(rc)rc.textContent=(S&&S.demo?'DEMO · 合成健康 · ':'')+'近 24h 共 ' + j.rounds.length + ' 轮 · ';
  renderHealthLoginAction();renderHealthDiag();
  $('hbody').innerHTML=h;
@@ -11934,7 +13941,7 @@ async function showLog(el){let p=null,ts=null;if(el&&el.dataset){p=el.dataset.p;
  const r=await fetch('/api/logtail?plat='+p+'&ts='+encodeURIComponent(ts));
  if(_sq!==_PV_SEQ)return;
  const j=await r.json();if(!j.ok){toast(heFriendly(j.err)||'读取失败','err');return;}
- $('pvTitle').textContent='📄 '+( {'qunar':'去哪儿','fliggy':'飞猪','ctrip':'携程','tongcheng':'同程','tuniu':'途牛'}[p]||p )+'｜'+ts+' 轮日志';
+ $('pvTitle').innerHTML='<svg class="ic" aria-hidden="true"><use href="#i-file"></use></svg>'+( {'qunar':'去哪儿','fliggy':'飞猪','ctrip':'携程','tongcheng':'同程','tuniu':'途牛'}[p]||p )+'｜'+ts+' 轮日志';
  document.querySelector('#pvMask .pvcard').setAttribute('aria-label','渠道轮日志');
  $('pvFoot').textContent=(S&&S.demo)?'演示模式 · 合成轮日志回放':'轮日志为原文直读（非渲染预览）· 仅尾部 2MB 读取范围 · 完整日志见 logs/monitor.log';
  const lines=j.lines||[];
@@ -12222,6 +14229,13 @@ function closePv(){$('pvMask').classList.remove('on');
  const ret=_PV_RETURN;_PV_RETURN=null;
  if(ret&&ret.focus)try{ret.focus();}catch(e){}}
 let _PV_RETURN=null;
+/* 最近一次交互是否来自键盘：程序化 focus() 在 Chrome 里仍会命中
+   :focus-visible，于是鼠标打开弹层时关闭钮全程闪一圈蓝环（用户读作
+   「莫名其妙的高亮方块」）。只在键盘操作时移交焦点，鼠标路径把焦点
+   留在触发钮上——ESC/点遮罩都能关，无障碍不降级。 */
+let _LASTKBD=false;
+addEventListener('keydown',e=>{_LASTKBD=true;},true);
+addEventListener('pointerdown',e=>{_LASTKBD=false;},true);
 function _openPvMask(){_PV_RETURN=document.activeElement;
  /* 滚动条宽度补偿（老内核兜底）：锁滚摘视口滚动条会让内容整体横移
     （弹层开/关各跳一次=「点击闪烁不丝滑」的机械根因）。
@@ -12247,6 +14261,7 @@ function _openPvMask(){_PV_RETURN=document.activeElement;
  const _fv=()=>{if(!_m.classList.contains('on'))return;
   const cs=getComputedStyle(_m);
   if(cs.visibility==='visible'&&parseFloat(cs.opacity||'0')>0){
+   if(!_LASTKBD)return;   /* 鼠标打开：不动焦点，避免关闭钮常亮蓝环 */
    const x=$('pvClose');if(x)try{x.focus();}catch(e){}return;}
   if(Date.now()-_t0<3000)requestAnimationFrame(_fv);};
  requestAnimationFrame(_fv);}
@@ -12257,12 +14272,14 @@ async function pushLog(){const _sq=++_PV_SEQ;_PV_PENDING=true;try{
  const j=await r.json();
  if(!j.ok){toast(heFriendly(j.err)||'读取失败','err');return;}
  const items=j.items||[];
- $('pvTitle').textContent=items.length?('📨 推送记录（最近 '+items.length+' 条）'):'📨 暂无推送记录';
+ $('pvTitle').innerHTML=(items.length
+   ?'<svg class="ic" aria-hidden="true"><use href="#i-bell"></use></svg>推送记录<span class="pvhead-n">最近 '+items.length+' 条</span>'
+   :'<svg class="ic" aria-hidden="true"><use href="#i-bell"></use></svg>暂无推送记录');
  document.querySelector('#pvMask .pvcard').setAttribute('aria-label','推送记录');
  $('pvFoot').textContent=(S&&S.demo)?'演示模式 · 合成推送记录回放':'推送历史本地存档回放 · 明细总表图以当时图床链接呈现（可能已过期）';
   $('pvBody').innerHTML=items.length?items.map(p=>
-  `<div class="plitem${p.ok?'':' bad'}" onclick="const d=this.nextElementSibling;d.style.display=d.style.display==='none'?'':'none'">`+
-  `<span>${p.ok?'✅':'⚠️'}</span><span style="flex:1">${he(p.title||'')}</span>`+
+  `<div class="plitem${p.ok?'':' bad'}" aria-expanded="false" onclick="const d=this.nextElementSibling;const o=d.style.display==='none';d.style.display=o?'':'none';this.setAttribute('aria-expanded',o?'true':'false')">`+
+  `<svg class="plchev" aria-hidden="true"><use href="#i-expand"></use></svg><span class="vh">${p.ok?'成功':'失败'}</span>${p.ok?'':'<span class="plst">失败</span>'}<span style="flex:1">${he(p.title||'')}</span>`+
   `${p.ch?`<span class="plch">${he(CH_CN[p.ch]||p.ch)}</span>`:''}`+
   `${(!p.ok&&p.errcode!=null)?`<span class="plch" style="color:var(--warn)" title="通道错误码：-1=系统繁忙（幽灵送达——报错但消息可能已入群，勿据此判定未送达）；-2=未收到响应（网络异常轮也落账，便于发现断网）；其他码见通道文档">${he(String(p.errcode))}</span>`:''}`+
   `<span class="plts">${p.img?`<span title="部分推送图内嵌失败，邮件端该图保留外链（可能加载慢）" style="color:var(--warn)">${he(p.img)}</span> · `:''}${he(p.ts||'')}</span></div>`+
@@ -12600,6 +14617,21 @@ function spMonSetMode(m){
  spMonSyncTools();
  const s=SPMON.chart;if(s)spMonDraw(s.dateSeries,s.selDate,s.lowDate);
 }
+/* 雷达图例：与航线/关注共用 .mon-legend 同一色块语言。此前这里只有一句
+   纯文字注脚（「每线=一个出发日期 · 红=最低日 · 蓝=选中」），另两图是带
+   色块的图例——同一种看图动作，三种表达。 */
+function spMonRenderLegend(){
+ const box=$('spMonLegend');if(!box)return;
+ const s=SPMON.chart||{},low=s.lowDate||'',sel=s.selDate||'';
+ const cols=cssv('--red')||'#c22a2e',blue=cssv('--blue')||'#0b62d6';
+ const item=(c,t)=>'<span><b style="background:'+c+'"></b>'+esc(t)+'</span>';
+ /* 最低日与选中日是同一天时只留一条——曾并排画两个同日期色块，
+    读作两条不同系列。 */
+ box.innerHTML=(low&&low===sel)
+  ?(item(cols,'最低日 · 选中 '+(low?' '+esc(String(low).slice(5)):'')))
+  :(item(cols,'最低价日'+(low?' '+esc(String(low).slice(5)):''))
+    +item(blue,'选中日'+(sel?' '+esc(String(sel).slice(5)):'')));
+}
 function spMonDraw(dateSeries,selDate,lowDate){
  const c=$('spMonChart'),note=$('spMonChartNote');if(!c)return;
  const tip=$('spMonTip');if(tip)tip.hidden=true;
@@ -12608,12 +14640,36 @@ function spMonDraw(dateSeries,selDate,lowDate){
  spMonSyncTools();
  const rangeMs=SPMON.range>0?SPMON.range*24*3600*1000:0;
  const cutoff=Date.now()-rangeMs;
- const series=(dateSeries||[]).map(x=>({
+ /* 口径归一（r373）：历史快照混着裸票价与含税总价，同轴画两把尺子
+    会把 Y 域拉成 74–1178，真实走势被压成贴底细线、上半屏全空白。
+    仅当确实存在多口径时才按可信度取一种（含税>裸价>未标）；单口径
+    数据（含无 basis 的历史/测试数据）原样保留，不做任何过滤。 */
+ const _rawSeries=(dateSeries||[]).map(x=>({
   date:String(x.date||''),
   pts:(x.points||[]).map(p=>({t:new Date(String(p.at).replace(' ','T')).getTime(),
    p:Number(p.price),at:p.at,ch:p.channel,basis:p.basis}))
    .filter(p=>isFinite(p.t)&&isFinite(p.p)&&p.p>0&&(!rangeMs||p.t>=cutoff))
  })).filter(x=>x.pts.length);
+ const _BASIS_RANK={'tax_included':0,'bare':1,'':2,'unknown':2};
+ /* 缺 basis 元数据的点并入主口径：否则「有/无 basis」被误判成两种
+    口径，过滤后可能一条都不剩（Y 域 ±Infinity、悬停坐标飞出视口）。 */
+ const _hasMissing=_rawSeries.some(x=>x.pts.some(p=>!p.basis));
+ const _distinct=[...new Set(_rawSeries.flatMap(x=>x.pts
+   .map(p=>p.basis||'').filter(b=>b||!_hasMissing)))];
+ const _mixed=_distinct.length>1;
+ const _basisUsed=(()=>{
+  if(!_mixed)return _distinct[0]||'';
+  let best=null;
+  _distinct.forEach(b=>{const r=_BASIS_RANK[b]==null?2:_BASIS_RANK[b];
+   if(best==null||r<best.r)best={b:b,r:r};});
+  return best?best.b:'';})();
+ const series=_mixed
+  ? _rawSeries.map(x=>({date:x.date,
+     pts:x.pts.filter(p=>!_hasMissing||!p.basis
+        ? (p.basis||'')===_basisUsed||!p.basis
+        : (p.basis||'')===_basisUsed)})).filter(x=>x.pts.length)
+  : _rawSeries;
+ SPMON.basisOnly=_mixed?(_basisUsed||''):'';
  const all=series.flatMap(x=>x.pts);
  const times=[...new Set(all.map(p=>p.t))].sort((a,b)=>a-b);
  const focus=series.find(x=>x.date===selDate)||series.find(x=>x.date===lowDate)||series[0];
@@ -12629,42 +14685,69 @@ function spMonDraw(dateSeries,selDate,lowDate){
  }
  const wrap=c.parentElement;
  const baseW=Math.max(320,wrap.clientWidth||600);
+ /* 画布宽度＝可视宽与「点数×最小间距」取大，并设上限：
+     - 窄于此，密集时间点会挤成一条糊线，悬停也分不开相邻点；
+     - 宽于可视宽时必须**真的能滚**（r373 把宽度锁成可视宽，拖动
+       指令还在、光标还是 grab，但 scrollWidth==clientWidth，
+       拖了不动 = 用户实报的「滑动卡顿」）。
+     最新数据在右端，绘完自动滚到尾部；用户手动拖动过就不再抢。 */
  const units=SPMON.mode==='kline'?candles.length:times.length;
- const W=units>5?Math.max(baseW,Math.min(2600,units*54)):baseW;
+ const MINPX=SPMON.mode==='kline'?46:30;
+ const W=Math.max(baseW,Math.min(units*MINPX,baseW*2.4));
  c.style.width=W+'px';
  const H=c.clientHeight||180,dpr=window.devicePixelRatio||1;
- c.width=Math.max(1,Math.round(W*dpr));c.height=Math.max(1,Math.round(H*dpr));
+ /* r424：位图尺寸未变就不重设——重设 width/height 等于清空 + 重分配位图，
+     悬停/节流重绘时整幅闪一下，读作「不丝滑」（PCHART.prep 已为此写过
+     同一条注释，雷达这条路径却一直无条件重设）。内容仍要每帧 clearRect。 */
+ const _bw=Math.max(1,Math.round(W*dpr)),_bh=Math.max(1,Math.round(H*dpr));
+ if(c.width!==_bw|c.height!==_bh){c.width=_bw;c.height=_bh;}
  const ctx=c.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
  const tb=$('spMonTable')&&$('spMonTable').querySelector('tbody');
  if(tb)tb.innerHTML=series.flatMap(x=>x.pts.map(p=>{
   const mk=x.date===lowDate?(x.date===selDate?'最低日 · 选中':'最低日'):(x.date===selDate?'选中':'');
   return '<tr><td>'+he(String(p.at||''))+'</td><td>¥'+he(String(p.p))+'</td><td>'+he(x.date)+'</td><td>'+he(SRX_RADAR_NAMES[p.ch]||p.ch||'')+'</td><td>'+he(mk)+'</td></tr>';
  })).join('');
- const padL=44,padR=18,padT=12,padB=22;
- ctx.strokeStyle=cssv('--grid')||'#d7dee8';ctx.lineWidth=1;ctx.fillStyle=cssv('--mut')||'#5a6c7d';ctx.font='10px var(--num)';
  const fmtAt=t=>{const d=new Date(t);return String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')};
  if(SPMON.mode==='kline'){
   if(!candles.length){
    if(note)note.textContent='当前范围无采集快照 · 切到更大范围或继续积累后显示 K 线（'+(focus?focus.date:'')+'）';
    return;
   }
-  let lo=Math.min(...candles.map(x=>x.l)),hi=Math.max(...candles.map(x=>x.h));
-  const pad=Math.max(1,(hi-lo)*0.08);lo-=pad;hi+=pad;
-  const Y=p=>padT+(hi-p)/(hi-lo)*(H-padT-padB);
-  for(let i=0;i<4;i++){const p=hi-(hi-lo)*i/3,yy=Y(p);ctx.beginPath();ctx.moveTo(padL,yy);ctx.lineTo(W-padR,yy);ctx.stroke();ctx.fillText('¥'+Math.round(p),4,yy+3)}
-  const bw=Math.max(4,Math.min(18,(W-padL-padR)/candles.length*0.55));
+  /* 只有 1 个采集日时不画蜡烛：整块 1200px 画布上会只出现一根细柱、两侧全空，
+     读作「图表坏了」；而悬停也无从比较（24 个指针位置给出同一个开收高低）。
+     数据没缺，缺的是「第二天」——如实说清楚，比给一个看着像图表的空画布诚实。
+     演示库只有当天数据，这一条最容易在演示态命中。 */
+  if(candles.length<2){
+   /* 只写脚注不够：整块 210px 画布会剩一大片空白、只在底部一行小字，
+     比原来那根孤零零的蜡烛更像「页面坏了」。用与另两图同一套居中空态。 */
+   /* 脚注不再重复同一句话：空态本身已经写清楚了，底部再写一遍同义长句
+      只会在同一屏出现两次「仅…一个采集日」。 */
+   if(note)note.textContent='';
+   let kempty=document.getElementById('spMonKEmpty');
+   if(!kempty&&c.parentElement){
+    kempty=document.createElement('div');kempty.id='spMonKEmpty';kempty.className='spmon-empty spmon-kempty';c.parentElement.appendChild(kempty);}
+   if(kempty){kempty.style.display='flex';kempty.style.height=H+'px';kempty.style.width='min(100%,'+W+'px)';
+    kempty.innerHTML='<b>仅 '+he(candles[0].d)+' 一个采集日</b><span>K 线需要至少 2 天才能比较涨跌（每天一个 OHLC）。</span>'}
+   return;
+  }
+  {const kempty=document.getElementById('spMonKEmpty');if(kempty)kempty.style.display='none'}
+  /* K 线同走 PCHART：域/刻度/内边距与折线同源，只额外传 index 轴 */
+  const kd=PCHART.domain(candles.map(x=>x.h).concat(candles.map(x=>x.l)),0.08);
+  const kg=PCHART.frame(W,H,{xKind:'index',n:candles.length,y0:kd[0],y1:kd[1]});
+  SPMON.geo={W,H,padL:kg.L,padR:kg.R,padT:kg.T,padB:kg.B,times,series,candles,
+   X:kg.X,Y:kg.Y,kline:true};
+  PCHART.axes(ctx,kg,{ticks:PCHART.niceTicks(kg.y0,kg.y1,4),
+   xTicks:candles.map((c,i)=>({x:kg.X(i),bot:c.d.slice(5),
+    align:i===0?'left':(i===candles.length-1?'right':'center'),guide:false}))});
+  const bw=Math.max(3,Math.min(16,kg.pw/candles.length*0.52));
   candles.forEach((cd,i)=>{
-   const x=padL+(i+0.5)/candles.length*(W-padL-padR);
-   const up=cd.c>=cd.o;
+   const x=kg.X(i),up=cd.c>=cd.o;
    const col=up?(cssv('--red')||'#c22a2e'):(cssv('--green')||'#0e8345');
-   ctx.strokeStyle=col;ctx.fillStyle=col;ctx.lineWidth=1;
-   ctx.beginPath();ctx.moveTo(x,Y(cd.h));ctx.lineTo(x,Y(cd.l));ctx.stroke();
-   const y1=Y(Math.max(cd.o,cd.c)),y2=Y(Math.min(cd.o,cd.c));
+   ctx.strokeStyle=col;ctx.fillStyle=col;ctx.lineWidth=1.2;
+   ctx.beginPath();ctx.moveTo(x,kg.Y(cd.h));ctx.lineTo(x,kg.Y(cd.l));ctx.stroke();
+   const y1=kg.Y(Math.max(cd.o,cd.c)),y2=kg.Y(Math.min(cd.o,cd.c));
    ctx.fillRect(x-bw/2,y1,bw,Math.max(1.5,y2-y1));
   });
-  ctx.fillStyle=cssv('--mut')||'#5a6c7d';ctx.textAlign='left';
-  ctx.fillText(candles[0].d.slice(5),padL,H-6);
-  if(candles.length>1){ctx.textAlign='right';ctx.fillText(candles[candles.length-1].d.slice(5),W-padR,H-6);ctx.textAlign='left'}
   if(note)note.textContent='K线='+(focus.date||'最低日')+' 的监控快照按日聚合（开/收/高/低）· '+candles.length+' 日 · 红涨绿跌 · 范围 '+SPMON.range+' 天';
   return;
  }
@@ -12672,58 +14755,78 @@ function spMonDraw(dateSeries,selDate,lowDate){
   if(note)note.textContent='当前范围监控次数不足（'+times.length+' 次采集）· 切到更大范围或继续积累后显示每个出发日的走势';
   return;
  }
- const ps=all.map(x=>x.p);let mn=Math.min(...ps),mx=Math.max(...ps);
- if(focus&&focus.pts&&focus.pts.length){
-  /* 口径混排会让 Y 轴被旧口径的裸价拉垮（实测裸 ¥185 与含税 ¥685
-     同轴 → 新价挤在顶端、旧价贴地）。以最近一次采集的口径为主尺：
-     主口径点连续成线，旧口径点只留小点不连线——既不伪造平滑，
-     也不把「口径修正」画成暴涨。 */
-  const lb=focus.pts[focus.pts.length-1].basis||'';
-  const main=all.filter(p=>(p.basis||'')===lb).map(p=>p.p);
-  if(main.length){mn=Math.min(...main);mx=Math.max(...main);}
- }
- const pad=Math.max(1,(mx-mn)*0.08);mn=Math.max(0,mn-pad);mx+=pad;
- const X=t=>padL+(t-times[0])/Math.max(1,times[times.length-1]-times[0])*(W-padL-padR);
- const Y=p=>padT+(mx-p)/(mx-mn)*(H-padT-padB);
- SPMON.geo={W,H,padL,padR,padT,padB,times,series,X,Y};
- for(let i=0;i<4;i++){const p=mx-(mx-mn)*i/3,yy=Y(p);ctx.beginPath();ctx.moveTo(padL,yy);ctx.lineTo(W-padR,yy);ctx.stroke();ctx.fillText('¥'+Math.round(p),4,yy+3)}
+ /* Y 域＝聚焦日区间 ∪ 全集区间：只取聚焦日会把别的日期画到画布外
+    （实测 ±3492px）；只取全集又会把单日波动压成贴底细线（上半屏
+    全空）。并集既放大单日又不裁其它线。 */
+ const ps=all.map(x=>x.p);
+ const fp=(focus&&focus.pts&&focus.pts.length)?focus.pts.map(p=>p.p):[];
+ const y0y1=PCHART.domain(fp.length>=2?ps.concat(fp):ps,0.08);
+ /* 视觉架构对齐航线走势：同一左内距（四位数 ￥ 不贴边）、同一双行
+   刻度（时刻 + 日期）、同一主系列面积填充。三条走势必须是同一个产品。 */
+ const g=PCHART.frame(W,H,{x0:times[0],x1:times[times.length-1],
+  y0:y0y1[0],y1:y0y1[1],xKind:'time',axisRows:2,band:8});
+ const gx=g.X,gy=g.Y;
+ SPMON.geo={W,H,padL:g.L,padR:g.R,padT:g.T,padB:g.B,times,series,X:gx,Y:gy};
+ /* 缺口判定下限＝30 分钟采样×2；雷达按 2 小时自动轮询，跨过 4 小时
+    即视为断档（不画跨缺口的假连续线） */
+ const _gapMin=4*3600*1000;
+ const _dayOf=t=>{const d=new Date(t);return String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
+ /* 日期行只在新的一天出现：同一日内三处刻度都写 10-26 是噪声
+    （航线走势是「逢日变更才画」同律）。 */
+ let _prevDay='';
+ PCHART.axes(ctx,g,{ticks:PCHART.niceTicks(g.y0,g.y1,4),
+  xTicks:[0,1,2,3].map(i=>{const t=times[Math.round(i*(times.length-1)/3)];
+   const hm=fmtAt(t).slice(-5),day=_dayOf(t);
+   const showDay=day!==_prevDay;_prevDay=day;
+   return {x:g.X(t),top:hm,bot:showDay?day:'',
+    align:i===0?'left':(i===3?'right':'center'),guide:false};})});
  series.forEach(x=>{
   const low=x.date===lowDate,sel=x.date===selDate;
   const mainBasis=(focus&&focus.pts&&focus.pts.length)?(focus.pts[focus.pts.length-1].basis||''):null;
-  ctx.strokeStyle=low?(cssv('--red')||'#c22a2e'):(sel?(cssv('--blue')||'#0b62d6'):'#aab4c0');
-  ctx.lineWidth=low||sel?2.4:1;ctx.globalAlpha=low||sel?1:.38;ctx.lineJoin='round';ctx.lineCap='round';
-  /* 旧口径点只留小点、不连线：裸票价与含税价不是同一把尺子，
-     连起来会把「口径修正」画成一次暴涨（实测裸 ¥185 → 含税 ¥685
-     的垂线）。同口径连续，跨口径断笔。 */
-  let seg=[];
-  const flush=()=>{if(!seg.length)return;
-   if(seg.length===1){ctx.beginPath();ctx.arc(X(seg[0].t),Y(seg[0].p),1.6,0,Math.PI*2);ctx.fillStyle=ctx.strokeStyle;ctx.fill()}
-   else{ctx.beginPath();seg.forEach((p,i)=>{const xx=X(p.t),yy=Y(p.p);i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy)});ctx.stroke()}
-   seg=[];};
-  x.pts.forEach(p=>{
-   const isMain=(mainBasis==null)||((p.basis||'')===mainBasis);
-   if(seg.length&&((seg[seg.length-1].basis||'')!==(p.basis||'')||!isMain))flush();
-   seg.push(p);
-   if(!isMain)flush();});
-  flush();
+  const _col=low?(cssv('--red')||'#c22a2e'):(sel?(cssv('--blue')||'#0b62d6'):(cssv('--ink-3')||'#647080'));
+  /* 主角线（最低日/选中日）铺面积——与航线走势的主系列同一条视觉语言 */
+  if(low||sel)PCHART.area(ctx,g,x.pts.map(p=>({t:p.t,v:p.p})),{color:_col,gapMin:_gapMin});
+  /* 非聚焦日期线过淡会整条看不见（#aab4c0 × .55 在白底上近乎消失，
+     用户读作「白白的遮挡」）；改用中性墨色 + .7，保持层级但可辨。 */
+  PCHART.line(ctx,g,x.pts.map(p=>({t:p.t,v:p.p,basis:p.basis||''})),{
+   color:_col,width:low||sel?2.2:1.2,alpha:low||sel?1:.7,gapMin:_gapMin,
+   /* r419：雷达每次采集才一个点，2–3 点一条线看不出「采过几次」；
+      给段内每个点补小圆点，短段也能读成真实采样而非被遮挡的断线。 */
+   vertexDots:true,dot:2});
+  /* 跨口径断点：主尺切换处画空心断点，明示口径修正而非暴涨 */
+  if(mainBasis!=null){
+   x.pts.forEach(p=>{
+    if((p.basis||'')!==mainBasis){
+     ctx.beginPath();ctx.arc(gx(p.t),gy(p.p),1.6,0,7);
+     ctx.fillStyle=cssv('--surface')||'#fff';ctx.fill();
+     ctx.strokeStyle=cssv('--mut')||'#5a6c7d';ctx.lineWidth=1;ctx.stroke();}});
+  }
   const last=x.pts[x.pts.length-1];
-  if(low||sel){ctx.fillStyle=low?(cssv('--red')||'#c22a2e'):(cssv('--blue')||'#0b62d6');ctx.beginPath();ctx.arc(X(last.t),Y(last.p),3.2,0,Math.PI*2);ctx.fill()}
-  ctx.globalAlpha=1;
+  if(low||sel){
+   ctx.fillStyle=low?(cssv('--red')||'#c22a2e'):(cssv('--blue')||'#0b62d6');
+   ctx.beginPath();ctx.arc(gx(last.t),gy(last.p),3.2,0,7);ctx.fill();}
  });
- ctx.fillStyle=cssv('--mut')||'#5a6c7d';
- const ticks=Math.max(2,Math.min(4,times.length));
- let lastRight=-1e9;
- for(let i=0;i<ticks;i++){
-  const t=times[Math.round(i*(times.length-1)/Math.max(1,ticks-1))];
-  const label=fmtAt(t), tw=ctx.measureText(label).width;
-  let xx=X(t), align=i===0?'left':(i===ticks-1?'right':'center');
-  const left=align==='left'?xx:(align==='right'?xx-tw:xx-tw/2);
-  if(left<lastRight+8)continue;
-  ctx.textAlign=align;ctx.fillText(label,xx,H-6);lastRight=left+tw;
- }
- ctx.textAlign='left';
- if(note)note.textContent='每线=一个出发日期 · 红=最低日'+(lowDate===selDate?'/选中':'')+' · 蓝=选中 · 线尾圆点=最新采集价'+((dateSeries||[]).some(x=>x.basis_changed)?' · 含口径变化日':'')+' · 范围 '+SPMON.range+' 天 · '+times.length+' 次采集 · 最近 '+fmtAt(times[times.length-1]);
- requestAnimationFrame(spMonPanState);
+ /* 图例（色块）负责「哪种颜色是什么」；注脚负责「怎么读」——
+    两者分工与另两图一致，但注脚里的读法句子必须保留（既有门禁与
+    用户已熟悉的措辞）。 */
+ if(note)note.textContent='每线=一个出发日期 · 线尾圆点=最新采集价 · 空心点=口径修正 · 范围 '+SPMON.range+' 天 · '+times.length+' 次采集 · 最近 '+fmtAt(times[times.length-1])+((dateSeries||[]).some(x=>x.basis_changed)?(SPMON.basisOnly?(' · 仅画'+({tax_included:'含税总价',bare:'裸价','':'口径未标'}[SPMON.basisOnly]||SPMON.basisOnly)+'口径'):' · 含口径变化日'):'')
+  /* r452：采样跨度远小于所选档位时，切档画面必然一模一样——只写
+     「范围 180 天 · 3 次采集」会让人以为档位是假的。把跨度如实报出来，
+     用户才知道放大范围不会凭空多出采样点。 */
+  +(function(){
+    const spanH=(times[times.length-1]-times[0])/36e5;
+    const rng=SPMON.range*24;
+    if(times.length>1&&spanH<rng*0.5)
+      return ' · 现有采集仅跨 '+(spanH<48?Math.round(spanH)+' 小时':
+        Math.round(spanH/24)+' 天')+'，再放大范围不会多出采样点';
+    return '';})();
+ spMonRenderLegend();
+ requestAnimationFrame(function(){
+  spMonPanState();
+  /* 首绘/切范围后滚到最新；用户拖动过后保持用户位置（SPMON.userPan） */
+  if(!SPMON.userPan&&wrap&&wrap.scrollWidth>wrap.clientWidth+4){
+   wrap.scrollLeft=wrap.scrollWidth-wrap.clientWidth;}
+ });
 }
 window.addEventListener('resize',function(){
  clearTimeout(SPMON.rt);
@@ -12732,26 +14835,45 @@ window.addEventListener('resize',function(){
 function spMonHover(e){
  const c=$('spMonChart'),t=$('spMonTip'),g=SPMON.geo,cross=$('spMonCross');
  if(!c||!t||!g||!g.series.length)return;
+ /* 画布尺寸在隐藏/重排后可能已过期（geo.H 为旧值 → Y 坐标离谱，悬停
+    永不命中）。重绘一次再继续，之后只走一条命中路径——旧码把同一段
+    命中逻辑抄了两份，两份各修一次必然漂移。 */
+ const _cw=c.clientWidth,_ch=c.clientHeight;
+ let gg=g;
+ if(_cw>0&&_ch>0&&(Math.abs(g.W-_cw)>2||Math.abs(g.H-_ch)>2)){
+  const s2=SPMON.chart;
+  if(!s2)return;
+  spMonDraw(s2.dateSeries,s2.selDate,s2.lowDate);
+  gg=SPMON.geo;if(!gg||!gg.series||!gg.series.length)return;}
+ if(gg.kline){
+  /* K 线：按桶序号反查（类别轴没有连续时间可插值） */
+  const r=c.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
+  const cd=gg.candles||[];
+  if(!cd.length||my<gg.padT||my>gg.H-gg.padB){t.hidden=true;if(cross)cross.style.display='none';return}
+  let bi=0,bd=Infinity;
+  cd.forEach((x,i)=>{const d=Math.abs(gg.X(i)-mx);if(d<bd){bd=d;bi=i}});
+  const cd0=cd[bi],x0=gg.X(bi);
+  if(cross){cross.style.display='block';cross.style.left=Math.round(c.offsetLeft+x0)+'px';
+   cross.style.top=(c.offsetTop+gg.padT)+'px';cross.style.height=(gg.H-gg.padT-gg.padB)+'px'}
+  t.innerHTML='<b>'+he(cd0.d)+'</b> · 开 ¥'+he(String(Math.round(cd0.o)))+' · 收 ¥'+he(String(Math.round(cd0.c)))
+   +'<br>高 ¥'+he(String(Math.round(cd0.h)))+' · 低 ¥'+he(String(Math.round(cd0.l)));
+  t.hidden=false;PCHART.placeTipAxis(c.parentElement,t,e.clientX,(gg.padT||0)+6);
+  return;}
  const r=c.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
- if(mx<g.padL||mx>g.W-g.padR||my<g.padT||my>g.H-g.padB){t.hidden=true;if(cross)cross.style.display='none';return}
- let best=null;
- g.series.forEach(s=>s.pts.forEach(p=>{
-  const dx=g.X(p.t)-mx,dy=g.Y(p.p)-my,d=dx*dx+dy*dy;
-  if(!best||d<best.d)best={d,p,s};
- }));
+ if(mx<gg.padL||mx>gg.W-gg.padR||my<gg.padT||my>gg.H-gg.padB){t.hidden=true;if(cross)cross.style.display='none';return}
+ const best=PCHART.pick(gg,gg.series,mx,my);
  if(!best){t.hidden=true;if(cross)cross.style.display='none';return}
  const p=best.p,basis=p.basis==='tax_included'?'含税':(p.basis==='bare'?'裸价':(p.basis?'口径未标':''));
- if(cross){const gx=g.X(p.t);cross.style.display='block';cross.style.left=Math.round(c.offsetLeft+gx)+'px';cross.style.top=(c.offsetTop+g.padT)+'px';cross.style.height=(g.H-g.padT-g.padB)+'px'}
+ /* 十字线跟指针 x（与航线同律），不吸附到采样点：雷达一天只有几次
+    采集，吸附会让十字线整段停在同一个 x 上不动（实测指针 35%/55%/75%
+    三处十字线恒为 626px），用户读作「不跟手」。读数仍取最近实测点。 */
+ if(cross){cross.style.display='block';cross.style.left=Math.round(c.offsetLeft+mx)+'px';
+  cross.style.top=(c.offsetTop+gg.padT)+'px';cross.style.height=(gg.H-gg.padT-gg.padB)+'px'}
  t.innerHTML='<b>'+he(best.s.date)+'</b> · ¥'+he(String(Math.round(p.p)))
   +'<br>'+he(String(p.at||'').slice(5,16))+' · '+he(SRX_RADAR_NAMES[p.ch]||p.ch||'—')
   +(basis?' · '+he(basis):'');
  t.hidden=false;
- const wr=c.parentElement.getBoundingClientRect();
- let left=e.clientX+12,top=e.clientY-t.offsetHeight-10;
- if(left+t.offsetWidth>wr.right-6)left=e.clientX-t.offsetWidth-12;
- if(left<wr.left+6)left=wr.left+6;
- if(top<8)top=e.clientY+14;
- t.style.left=Math.round(left)+'px';t.style.top=Math.round(top)+'px';
+ PCHART.placeTipAxis(c.parentElement,t,e.clientX,(gg.padT||0)+6);
 }
 (function(){
  const c=$('spMonChart');if(!c)return;
@@ -12759,10 +14881,54 @@ function spMonHover(e){
  let tipT=0,raf=0;
  const hideTip=function(){const t=$('spMonTip');if(t)t.hidden=true;const x=$('spMonCross');if(x)x.style.display='none'};
  const move=e=>{if(SPMON.panning)return;const x=e.clientX,y=e.clientY;
+  /* r435：触摸横向滑动时手指一直压在画布上，pointermove 每帧都会算 hover，
+     把十字线和浮窗一路拖着走（实测 12 步触摸拖触发 3 次 hover、松手后
+     浮窗仍 visible、十字线 display:block）——用户读作「滑动不丝滑 + 白白
+     的遮挡」。触摸拖动期间只滑不读点；松手由 pointerup 收起浮层。 */
+  if(e.pointerType==='touch'){
+   /* 手指移动超过阈值即视为「拖动」：本次手势结束时不再读点（r436）。 */
+   if(SPMON.tapX!=null&&(Math.abs(x-SPMON.tapX)>6||Math.abs(y-SPMON.tapY)>6))SPMON.tapMoved=true;
+   return}
   if(raf)return;raf=requestAnimationFrame(()=>{raf=0;spMonHover({clientX:x,clientY:y})})};
  c.addEventListener('pointermove',move);
- c.addEventListener('pointerdown',function(e){SPMON.panning=false;clearTimeout(tipT);spMonHover(e)});
- c.addEventListener('pointerup',function(){SPMON.panning=false;clearTimeout(tipT);tipT=setTimeout(hideTip,2600);});
+ /* 键盘读点（与航线/关注走势同律）：聚焦画布后 ←/→ 逐点、Home/End 跳首尾。
+    雷达此前只有鼠标路径，键盘用户完全读不到走势。 */
+ let _spKb=null;
+ c.addEventListener('keydown',function(e){
+  if(!SPMON.geo)return;
+  const g=SPMON.geo;
+  const pts=g.kline?(g.candles||[]):(g.times||[]);
+  const N=pts.length;if(!N)return;
+  if(e.key==='ArrowRight')_spKb=_spKb===null?0:Math.min(N-1,_spKb+1);
+  else if(e.key==='ArrowLeft')_spKb=_spKb===null?N-1:Math.max(0,_spKb-1);
+  else if(e.key==='Home')_spKb=0;
+  else if(e.key==='End')_spKb=N-1;
+  else return;
+  e.preventDefault();
+  const r=c.getBoundingClientRect();
+  const lx=g.kline?g.X(_spKb):g.X(g.times[_spKb]);
+  /* 画布宽于容器时可横向滚动：屏幕 x = 画布左缘 + 画布内 x（画布左缘已含滚动偏移） */
+  spMonHover({clientX:r.left+lx,
+              clientY:r.top+g.padT+(g.H-g.padT-g.padB)/2});
+ });
+ c.addEventListener('blur',function(){_spKb=null;});
+ c.addEventListener('pointerdown',function(e){
+  SPMON.panning=false;clearTimeout(tipT);
+  /* r435 曾把触摸按下整体改成「只收浮层」——连「点一下某天看读数」也一起
+     禁掉了（uitest v297 图表点按立即红：浮窗 hidden）。触摸的正确语义是
+     「按一下=读点，按住拖=只滑动」：按下先收起旧浮层，松手时若没移动过就
+     读一次。移动判定用 pointerdown 记录的坐标，见 pointerup。 */
+  if(e.pointerType==='touch'){hideTip();SPMON.tapX=e.clientX;SPMON.tapY=e.clientY;SPMON.tapMoved=false;return}
+  spMonHover(e)});
+ c.addEventListener('pointerup',function(e){
+  SPMON.panning=false;clearTimeout(tipT);
+  /* 触摸「点按」（没移动）= 读这一点；拖过（tapMoved）就只滑不读。 */
+  if(e&&e.pointerType==='touch'&&SPMON.tapX!=null&&!SPMON.tapMoved){
+   const dx=Math.abs(e.clientX-SPMON.tapX),dy=Math.abs(e.clientY-SPMON.tapY);
+   if(dx<=6&&dy<=6)spMonHover({clientX:e.clientX,clientY:e.clientY});
+  }
+  SPMON.tapX=null;
+  tipT=setTimeout(hideTip,2600);});
  c.addEventListener('pointercancel',function(){SPMON.panning=false;clearTimeout(tipT);hideTip()});
  c.addEventListener('pointerleave',function(e){if(e&&e.pointerType==='touch')return;hideTip()});
  window.addEventListener('scroll',hideTip,{passive:true});
@@ -12777,10 +14943,12 @@ function spMonHover(e){
   w.addEventListener('pointermove',function(e){
    if(!down)return;
    const dx=e.clientX-sx;if(Math.abs(dx)>3)moved=true;
-   if(moved){e.preventDefault();w.scrollLeft=sl-dx;hideTip()}
+   if(moved){e.preventDefault();SPMON.userPan=true;w.scrollLeft=sl-dx;hideTip()}
   });
   const up=function(){if(!down)return;down=false;w.classList.remove('dragging');setTimeout(()=>{SPMON.panning=false},40)};
   w.addEventListener('pointerup',up);w.addEventListener('pointercancel',up);w.addEventListener('pointerleave',function(e){if(down&&e.buttons===0)up()});
+  /* 滚轮横向通道由下方通用委托（.hcells/#montabs/.spmon-chartwrap/
+     .spmon-cal 一条）统一处理，这里不再重复挂监听。 */
  }
 })();
 (function(){
@@ -12854,7 +15022,7 @@ function srxRadarRender(j){
  const nsel=(q.channels||[]).filter(function(p){return !!SRX_PLATS[p]}).length;
  const dlab=nsel>=5?'查五渠道明细':('查'+nsel+'渠道明细');
  let h='<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;margin-bottom:8px">'
-  +'<b style="font-size:15px">'+he(q.from_name||q.from)+' → '+he(q.to_name||q.to||'全国')+'</b>'
+  +'<b style="font-size:16px">'+he(q.from_name||q.from)+' → '+he(q.to_name||q.to||'全国')+'</b>'
   +'<span class="muted">'+he(q.start||'')+' → '+he(q.end||'')+' · '+dates.length+' 个日期有价</span>';
  if(low.date)h+='<span class="chip" title="'+he(_radarLowNote(low))+'" style="border-color:var(--blue);color:var(--blue)">最低 ¥'+he(low.price)+' · '+he(low.date)+' · '+he(SRX_RADAR_NAMES[low.channel]||low.channel)+(low.basis_mixed?' · 口径混合':'')+'</span>';
  h+='</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(108px,1fr));gap:6px;margin-bottom:10px">';
@@ -12862,7 +15030,7 @@ function srxRadarRender(j){
   const b=d.best||{},hi=low.date===d.date;
   h+='<button type="button" class="chip" style="height:auto;min-height:54px;flex-direction:column;align-items:flex-start;justify-content:center;gap:2px;'+(hi?'border-color:var(--blue);color:var(--blue)':'')+'" title="'+he(d.date)+' · '+he(SRX_RADAR_NAMES[b.channel]||b.channel)+' · '+(b.kind==='calendar'?'日历价':'榜单价')+'" onclick="srxRadarDetail(\''+he(d.date)+'\')">'
    +'<span style="font-size:10px;color:var(--mut)">'+he(d.date.slice(5))+' · '+he(SRX_RADAR_NAMES[b.channel]||b.channel)+'</span>'
-   +'<b style="font-size:15px">¥'+he(b.price)+'</b>'
+   +'<b style="font-size:16px">¥'+he(b.price)+'</b>'
    +'<span style="font-size:10px;color:var(--mut)">'+(b.kind==='calendar'?'日历价':'榜单价')+(_radarBasis(b)?' · '+he(_radarBasis(b)):'')+'</span></button>';
  });
  h+='</div><div style="display:flex;flex-direction:column;gap:5px">';
@@ -13319,14 +15487,20 @@ function gotoPulseHealth(el){let ts=el,bad='';
    overflow-x:auto 容器纵向滚轮默认不动横滚、Shift+滚轮无可发现性
    ——容器级 deltaY→scrollLeft 转写（仅当容器真横向可滚；宽屏放得
    下恒不抢滚轮）。委托挂恒存 document，innerHTML 重建子树不丢监听 */
+/* r432：到边必须把滚轮交还页面——此前无条件 preventDefault 且继续加
+   scrollLeft，滚到最左/最右后再滚毫无反应，页面也滚不动，读作「卡住」。
+   只在真能吃下这次增量时才接管；吃不下就放行给页面纵向滚动。 */
 document.addEventListener('wheel',function(ev){
  if(!ev.deltaY)return;
  const t=ev.target;
  if(!(t&&t.closest))return;
  const wrap=t.closest('.hcells,#montabs,.spmon-chartwrap,.spmon-cal');
  if(!wrap||wrap.scrollWidth<=wrap.clientWidth+4)return;
+ const max=wrap.scrollWidth-wrap.clientWidth;
+ const d=ev.deltaY;
+ if((wrap.scrollLeft<=0&&d<0)||(wrap.scrollLeft>=max-1&&d>0))return;
  ev.preventDefault();
- wrap.scrollLeft+=ev.deltaY;
+ wrap.scrollLeft=Math.max(0,Math.min(max,wrap.scrollLeft+d));
 },{passive:false});
 /* 状态 pill 直达「仅达标」明细：看到达标→看谁达标的高频路径一步收口
    （resetFlt 先回全选清残留筛选，再切 🔥 档；高亮同步与 tabs onclick 同式） */
@@ -13519,7 +15693,7 @@ function switchView(v,hist){const _from=VIEW;VIEW=v;
  $('monview').style.display=v==='mon'?'':'none';
  $('searchview').style.display=v==='search'?'':'none';
  $('cfgview').style.display=v==='cfg'?'':'none';
- try{if(v==='cfg'){loadPacing();_paceStartAuto();}else{_paceStopAuto();}}catch(e){}
+ try{_paceStopAuto();if(v==='mon'&&MONTAB==='health'){loadPacing();_paceStartAuto();}}catch(e){}
  try{const _u=v==='mon'?'#mon':v==='search'?'#search':'#cfg';if(hist===false)history.replaceState(null,'',_u);else history.pushState(null,'',_u)}catch(e){}   /* URL 深链同步：用户导航入栈，hash 回放只对齐不叠栈 */
   if(v==='search'){SRX.shown=null;renderSearch();if(!S&&!LOADN)load()}
   if(v==='search'&&_from==='cfg')lgWatchStop();
@@ -13553,9 +15727,12 @@ try{const _hq=location.hash.slice(1);
 try{const _hv=location.hash.slice(1).split('/')[0];if(_hv==='cfg')switchView('cfg',false);else if(_hv==='search')switchView('search',false);}catch(e){}
 /* ===== 渠道登录：弹窗登录 + 会话保存（免命令行） ===== */
 const LOGIN_CN = {qunar:'去哪儿', ctrip:'携程', tongcheng:'同程',
- tuniu:'途牛', fliggy:'飞猪'};
-const LOGIN_NEED = {qunar:'必须', ctrip:'必须', tongcheng:'建议',
- tuniu:'国内需', fliggy:'国际需'};   /* qunar：2026-10-10 网页版停服后匿名 H5 不出价 */
+ tuniu:'途牛', fliggy:'飞猪', fliggy_h5:'飞猪 H5'};
+/* 全渠道统一「必须登录」：入口页可匿名浏览，但出价/明细都要登录后才有。
+   此表曾写「建议/国内需/国际需」——那套分档已按用户要求整体废弃，
+   差异只保留在**会话槽位**（飞猪 PC/H5 双槽，其余全端单槽）。 */
+const LOGIN_NEED = {qunar:'必须', ctrip:'必须', tongcheng:'必须',
+ tuniu:'必须', fliggy:'必须', fliggy_h5:'必须'};
 let SRX_LOGIN_T=0,SCAT=0;   /* 旧检索页同步点保留，实际以 loadChannelState 为准 */
 let LGSIG='';   /* 登录态内容签名：轮询期状态无变化不重绘（重建按钮
    会打断用户正要点按的动作件——签名防抖+失败显式失效签名） */
@@ -13607,7 +15784,7 @@ function lgFliggyModalHTML(){
  }
  return '<div class="lgmodal-h"><b>飞猪双端登录</b><span>PC 与 H5 会话独立</span>'
   +'<button type="button" class="x" onclick="lgCloseModal()" aria-label="关闭">✕</button></div>'
-  +'<div class="lgmodal-b"><div class="lgmodal-note">飞猪 PC 可匿名查价；淘宝 H5 进入即登录。两域同一淘宝账号，但会话不共享，需要分别登录。</div>'
+  +'<div class="lgmodal-b"><div class="lgmodal-note">两端都必须登录：PC 与淘宝 H5 出价/明细都要登录后才有。同一淘宝账号，但两域会话不共享，需要分别登录。</div>'
   +'<div class="lglanes">'+lane(pc,'PC 飞猪账号')+lane(h5,'H5 淘宝账号')+'</div></div>';
 }
 let LG_LASTFOCUS=null;
@@ -13617,7 +15794,7 @@ function lgOpenFliggy(){
  LG_LASTFOCUS=document.activeElement;m.innerHTML=lgFliggyModalHTML();
  m.classList.add('open');k.classList.add('open');
  if(typeof srxLockBody==='function')srxLockBody();
- const x=m.querySelector('.x');if(x)try{x.focus()}catch(e){}
+ const x=_LASTKBD?m.querySelector('.x'):null;if(x)try{x.focus()}catch(e){}
 }
 function lgCloseModal(){
  const m=$('lgModal'),k=$('lgMask');if(!m||!m.classList.contains('open'))return;
@@ -13634,8 +15811,10 @@ function renderLoginCards(force){
  const sig=JSON.stringify([j&&j.plats,j&&j.slots,CHANNEL_STATE&&CHANNEL_STATE.error,j&&j.demo]);
  if(!force&&sig===LGSIG)return;LGSIG=sig;
  const order=['ctrip','qunar','fliggy','fliggy_h5','tongcheng','tuniu'];
- const reqs={ctrip:'必须登录',qunar:'必须登录',fliggy:'可匿名查价',
-  fliggy_h5:'必须登录',tongcheng:'建议登录',tuniu:'建议登录'};
+ /* 全渠道统一「必须登录」：入口页虽可匿名浏览，但出价/明细必须登录。
+    此前 fliggy 写「可匿名查价」、同程/途牛写「建议登录」，用户不知该不该登。 */
+ const reqs={ctrip:'必须登录',qunar:'必须登录',fliggy:'必须登录',
+  fliggy_h5:'必须登录',tongcheng:'必须登录',tuniu:'必须登录'};
  let slots;
  if(j&&j.slots){
   slots=order.map(k=>j.slots[k]).filter(Boolean);
@@ -13652,21 +15831,29 @@ function renderLoginCards(force){
   {key:'ctrip',name:'携程',tag:'全端',slots:[by.ctrip]},
   {key:'qunar',name:'去哪儿',tag:'H5',slots:[by.qunar]},
   {key:'fliggy',name:'飞猪',tag:'PC / H5',
-   sub:'H5 需淘宝登录 · PC/H5 分别登录',slots:[by.fliggy,by.fliggy_h5]},
+   slots:[by.fliggy,by.fliggy_h5]},
   {key:'tongcheng',name:'同程',tag:'全端',slots:[by.tongcheng]},
   {key:'tuniu',name:'途牛',tag:'全端',slots:[by.tuniu]},
  ].map(g=>Object.assign({},g,{slots:(g.slots||[]).filter(Boolean)}))
   .filter(g=>g.slots.length);
- function slotCard(s){
+ /* 行体只渲染「表面 + 状态说明」，操作按钮由卡片统一放到第三列。
+    此前单渠道把按钮嵌在 .lgslot 内、飞猪双端却是 .lgcard 直接子级，
+    两种结构让第三列在单渠道行塌成 0px：按钮右缘差 14px、行高 52/65
+    参差（实测 1440 视口）。统一 DOM 后三列自成一列，右缘对齐。 */
+ function slotBody(s){
   const key=s.slot||s.plat,p=s.plat||key,st=s.status||(s.saved?'saved':'missing');
   const v=legacy?channelAuthView(p):null;
   const surface=s.surface_label||(legacy?'当前账号':'全端');
   const requirement=(key==='ctrip'||key==='qunar')?'必须登录':(s.requirement||reqs[key]||'');
   const sub=[s.account||'',requirement,v?v.label:slotStatusCn(st)]
    .filter(Boolean).join(' · ');
+  // 「全端」已由卡片 tag 显示，槽位行内不再重复一遍（曾出现两行"全端"），
+  // 只留圆点 + 账号/要求/状态；有独立表面名（如飞猪 PC/H5）才显示。
+  const _head = (surface && surface !== '全端')
+    ? `<span>${he(surface)}</span>` : '';
   return `<div class="lgslot" data-slot="${key}">`
-   +`<div class="lgslot-h"><span>${he(surface)}</span><span class="lgdot${lgDotCls(s,v)}" title="${LG_DOT_TIP}"></span></div>`
-   +`<div class="lgsub" title="${he(s.detail||(v?v.title:''))}">${he(sub)}</div>${lgActionHTML(s)}</div>`;
+   +`<div class="lgslot-h">${_head}<span class="lgdot${lgDotCls(s,v)}" title="${LG_DOT_TIP}"></span></div>`
+   +`<div class="lgsub" title="${he(s.detail||(v?v.title:''))}">${he(sub)}</div></div>`;
  }
  box.innerHTML='<div class="lggrid">'+groups.map(g=>{
   const p=g.key,anySaved=g.slots.some(s=>s.saved),anyActive=g.slots.some(s=>s.active);
@@ -13678,10 +15865,20 @@ function renderLoginCards(force){
   const dual=g.slots.length>1;
   const pc=dual?g.slots.find(s=>s.slot==='fliggy'):null;
   const h5=dual?g.slots.find(s=>s.slot==='fliggy_h5'):null;
+  // 双端（飞猪）与单渠道走同一套三列：名字 | 说明+槽位 | 操作。
+  // 按钮一律作为 .lgcard 直接子级，第三列才不会塌成 0。
+  // 双端（飞猪）与单渠道同构：说明段沿用 g.sub（已含 PC/H5 状态），
+  // 不再额外塞一段，否则两段说明叠在同一格里互相压字。
   const inner=dual
-   ?`<div class="lgsection">PC ${he(lgShortStatus(pc))} · H5 ${he(lgShortStatus(h5))}</div>`
-    +`<button class="btn2" onclick="lgOpenFliggy()">${ic('lock')} 双端登录</button>`
-   :`<div class="lgslots one">${g.slots.map(slotCard).join('')}</div>`;
+   ?`<div class="lgslots one"><div class="lgslot"><div class="lgslot-h"><span>PC</span>`
+    +`<span class="lgdot${lgDotCls(pc)}" title="${LG_DOT_TIP}"></span></div>`
+    +`<div class="lgsub">${he(lgShortStatus(pc))}</div></div>`
+    +`<div class="lgslot"><div class="lgslot-h"><span>H5</span>`
+    +`<span class="lgdot${lgDotCls(h5)}" title="${LG_DOT_TIP}"></span></div>`
+    +`<div class="lgsub">${he(lgShortStatus(h5))}</div></div></div>`
+    +`<div class="lgact"><button class="btn2" onclick="lgOpenFliggy()">${ic('lock')} 双端登录</button></div>`
+   :`<div class="lgslots one">${g.slots.map(slotBody).join('')}</div>`
+    +`<div class="lgact">${g.slots.map(lgActionHTML).join('')}</div>`;
   return `<div class="lgcard${anySaved?' saved':''}${anyActive?' active':''}${anyNeed?' stale':''}" data-channel="${p}">`
    +`<div class="lgname">${srxPlatIcon(p)}<span class="lgnm">${he(g.name)}</span><span class="lgtag">${he(g.tag)}</span></div>`
    +(g.sub?`<div class="lgsection">${he(g.sub)}</div>`:'')
@@ -13693,11 +15890,19 @@ var CHLINK_CFG_DATA=null;
 const CHLINK_VARIANTS=[["pc","domestic"],["h5","domestic"],["pc","intl"],["h5","intl"]];
 function chlinkName(p){return ((SRX_PLATS&&SRX_PLATS[p]&&SRX_PLATS[p][0])||LOGIN_CN[p]||p)}
 function chlinkChip(c,special){
+ const raw=(c&&(c.surface_label||c.surface))||'';
  if(!c)return '<span class="chlink off"><span class="chlink-surface">—</span><span class="chlink-top"><b>未配置</b></span></span>';
- const surface=special?((((c.surface_label||c.surface)||'')+' 特价')):((c.surface_label||c.surface)+(c.scope_label?(' '+c.scope_label):''));
- if(!c.ok)return '<span class="chlink off" data-surface="'+he(surface)+'" title="'+he(c.note||'不供')+'"><span class="chlink-surface">'+he(surface)+'</span><span class="chlink-top"><b>不供</b></span><span class="chlink-note">'+he(c.note||'')+'</span></span>';
+ const surface=special?(raw+' 特价'):(raw+(c.scope_label?(' '+c.scope_label):''));
+ if(!c.ok){
+  const off='<span class="chlink-surface">'+he(surface)+'</span><span class="chlink-top"><b>'+(special?he(raw):'不供')+'</b><span class="chlink-note">'+he(c.note||'')+'</span></span>';
+  return '<span class="chlink off" data-surface="'+he(surface)+'" title="'+he(c.note||'不供')+'">'+off+'</span>';
+ }
  let title=String(c.note||'').replace(/^(PC|H5)\s*/i,'').replace(/^(国内|国际)\s*/,'').trim();
  if(!title)title=special?'特价机票':'机票搜索';
+ /* 特价行：只留 PC/H5 + 页面说明，登录要求由上方「渠道登录」统一说明 */
+ if(special){
+  return '<a class="chlink" data-surface="'+he(surface)+'" href="'+he(c.url)+'" target="_blank" rel="noopener noreferrer" onclick="return srxOpenChannel(this.href,event)" title="'+he(c.url+' · '+(c.note||''))+'"><span class="chlink-surface">'+he(surface)+'</span><span class="chlink-top"><b>'+he(raw)+'</b><span class="chlink-note">'+he(title)+'</span></span><span class="chlink-go">↗</span></a>';
+ }
  const kind=c.note==='航线直达'?'直达':(c.note&&c.note.indexOf('其他范围')===0?'入口':'打开');
  const auth=c.login?('<span class="chlink-auth '+(c.login_required?'req':'opt')+'" title="'+he('页面登录：'+c.login+(c.login_required?'（必须登录）':'（可选）'))+'">'+he(c.login)+'</span>'):'';
  return '<a class="chlink" data-surface="'+he(surface)+'" href="'+he(c.url)+'" target="_blank" rel="noopener noreferrer" onclick="return srxOpenChannel(this.href,event)" title="'+he(c.url+' · '+(c.note||'')+(c.login?(' · 页面需'+c.login):''))+'"><span class="chlink-surface">'+he(surface)+'</span><span class="chlink-top"><b>'+he(title)+'</b></span>'+auth+'<span class="chlink-go">'+kind+' ↗</span></a>';
@@ -13713,12 +15918,12 @@ function chBandHTML(p,cells,specials,meta,probe,extraNote){
  let h='<div class="chband" role="group" aria-label="'+he(chlinkName(p))+'渠道入口" style="--chc:var(--c-'+p+')" data-channel="'+p+'">';
  h+='<div class="chband-id"><div class="chband-name">'+srxPlatIcon(p)+'<b>'+he(chlinkName(p))+'</b>'+dot+'</div>';
  const _sl=(meta&&meta.session_label)||'';
- if(_sl)h+='<div class="chband-meta"><span class="chsess '+he((meta&&meta.session)||'')+'">'+he(_sl)+'</span></div>';
+ const _note=(meta&&meta.login_note)||'';
+ if(_sl)h+='<div class="chband-meta"><span class="chsess '+he((meta&&meta.session)||'')+'"'+(probe&&_note?(' title="'+he(_note)+'"'):'')+'>'+he(_sl)+'</span></div>';
  if(extraNote)h+='<div class="chband-note" title="'+he(extraNote)+'">'+he(extraNote)+'</div>';
  h+='</div><div class="chband-body">';
  if(cells)h+='<div class="chband-grid">'+cells.map(c=>chlinkChip(c)).join('')+'</div>';
- if(specials)h+='<div class="chband-specs">'+specials.map(c=>chlinkChip(c,true)).join('')+'</div>';
- if(probe&&meta&&meta.login_note)h+='<div class="chband-login-note">'+he(meta.login_note)+'</div>';
+ if(specials)h+='<div class="chband-specs"><span class="chspec-k">特价</span>'+specials.map(c=>chlinkChip(c,true)).join('')+'</div>';
  return h+'</div></div>';
 }
 function chBoardRefresh(){
@@ -13854,7 +16059,9 @@ async function loginStart(p,b,slot){
   const j=await r.json();
   if(j.ok){const nm=key==='fliggy_h5'?'飞猪 H5（淘宝）':(key==='fliggy'?'飞猪 PC':(LOGIN_CN[p]||p));
    toast('🔐 '+nm+' 登录窗口已弹出——请在窗口完成登录，回这里点「我已登录完成」','ok');}
-  else toast(heFriendly(j.err)||'启动失败','err');
+  else toast(j.kind==='no_gui'
+    ?('⚠ 这台服务没有图形界面，弹不出登录窗口。请在桌面环境运行后登录，或把 user_data 拷过来；详情见「渠道登录」每张卡的说明。')
+    :(heFriendly(j.err)||'启动失败'),'err');
  }catch(e){toast('请求失败','err');}
  b.classList.remove('busy');setTimeout(loadLogin,400);}
 async function loginFinish(plat,b,slot){if(b&&b.classList.contains('busy'))return;
@@ -14851,13 +17058,38 @@ async function pathPreview(kind,inp,verbose){
   if(verbose)toast(j.valid?'✅ 目标路径可用':'⚠ '+((j.warning)||'目标路径不可用'),j.valid?'ok':'err');
  }catch(e){if(pv)pv.innerHTML='<span class="warn">校验请求失败（服务不可达）</span>';}}
 function _paceLeft(s){s=Math.max(0,parseInt(s)||0);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
+/* "YYYY-MM-DD HH:MM:SS" → 距今多少分钟（本地时区，与后端 _age_min 同口径）。
+   解析失败返回 null，调用方回落显示原始时间戳，不臆造时长。 */
+function _minsAgo(ts){
+ try{
+  const m=String(ts||'').match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if(!m)return null;
+  const t=new Date(+m[1],+m[2]-1,+m[3],+m[4],+m[5],+(m[6]||0)).getTime();
+  if(!isFinite(t))return null;
+  return Math.max(0,(Date.now()-t)/60000);
+ }catch(e){return null;}
+}
 function _pacePct(v){return Math.round((parseFloat(v)||0)*100);}
 function _paceColor(p){return p>=70?'#1a9e75':(p>0?'#b07700':'var(--red)');}
 async function paceReset(p){
+ /* 幂等：解除不是纯本地开关——后端会立刻跑一次单条查询探测来回答
+    「解了到底通没通」。连点三次就是三次真链路（每次 10–60 秒），
+    既烧预算，结果还会互相覆盖，最后显示的可能不是最后一次。 */
+ if(PACE_BUSY['reset:'+p])return;
+ PACE_BUSY['reset:'+p]=1;
+ const _rbtn=document.querySelector('[data-pk="'+p+':reset"]');
+ if(_rbtn){_rbtn.disabled=true;_rbtn.setAttribute('aria-busy','true');}
  try{
   const j=await (await fetch('/api/pacing/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p})})).json();
-  toast(j.ok?('已解除 '+p+' 熔断'):('解除失败：'+(j.err||'')));
+  /* dup = 另一处正在解除并单查探测：既不是失败也不是成功，如实说清楚 */
+  toast(j.ok?('已解除 '+p+' 熔断')
+    :(j.dup?String(j.err||'正在解除并探测'):('解除失败：'+(j.err||''))));
  }catch(e){toast('解除失败：'+e);}
+ finally{
+  delete PACE_BUSY['reset:'+p];
+  const _rb=document.querySelector('[data-pk="'+p+':reset"]');
+  if(_rb){_rb.disabled=false;_rb.removeAttribute('aria-busy');}
+ }
  loadPacing();
 }
 let _probeScope='';
@@ -14868,33 +17100,59 @@ async function probeAll(){
  // 顺序逐个自检：不并发开浏览器（并发本身就是限流来源），
  // 也让结果按渠道顺序滚出来，便于对照。
  const out=$('probeOut');if(!out)return;
- const list=['qunar','fliggy','ctrip','tongcheng','tuniu'];
- _probeAllRes='全部自检中（顺序执行，约 1–5 分钟）…';
- out.innerHTML=_probeAllRes;
- const lines=[];
- for(const p of list){
-  try{
-   const j=await (await fetch('/api/channel/probe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p,scope:_probeScope})})).json();
-   lines.push(esc(p)+'：'+(j.ok?((j.rows||0)+' 条'):('失败 '+(j.err||''))));
-  }catch(e){lines.push(esc(p)+'：失败');}
-  _probeAllRes=lines.join(' · ');
-  const o2=$('probeOut');if(o2)o2.innerHTML=_probeAllRes;
+ /* 幂等：整批要跑 1–5 分钟，连点会把 5 家再跑两遍。在途直接忽略。 */
+ if(PACE_BUSY['probe:all'])return;
+ PACE_BUSY['probe:all']=1;
+ try{
+  const list=['qunar','fliggy','ctrip','tongcheng','tuniu'];
+  _probeAllRes='全部自检中（顺序执行，约 1–5 分钟）…';
+  out.innerHTML=_probeAllRes;
+  const lines=[];
+  for(const p of list){
+   try{
+    const j=await (await fetch('/api/channel/probe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p,scope:_probeScope})})).json();
+    lines.push(esc(p)+'：'+(j.ok?((j.rows||0)+' 条'):('失败 '+(j.err||''))));
+   }catch(e){lines.push(esc(p)+'：失败');}
+   _probeAllRes=lines.join(' · ');
+   const o2=$('probeOut');if(o2)o2.innerHTML=_probeAllRes;
+  }
+ }finally{
+  /* 抛出也要解锁：只清在途表不解锁，整批按钮会永久失效 */
+  delete PACE_BUSY['probe:all'];
  }
  loadPacing();
 }
 async function warmAll(){
- const list=['qunar','fliggy','tuniu'];
- const out=$('warmOut');_warmAllRes='全部预热中…';
- if(out)out.innerHTML=_warmAllRes;
- for(const p of list){
-  try{await fetch('/api/channel/warmup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p})});}catch(e){}
+ /* 只对声明了预热入口的渠道发请求；清单来自 /api/pacing 的
+    cfg.warmup_platforms（与按钮行同源），不再写死三家——
+    写死会让配置改了以后「全部」和逐个按钮对不上。 */
+ const list=(PACE_CFG&&PACE_CFG.warmup_platforms)||[];
+ const out=$('warmOut');
+ if(!list.length){_warmAllRes='配置里没有可预热的渠道';if(out)out.textContent=_warmAllRes;return;}
+ if(PACE_BUSY['warm:all'])return;      /* 幂等：在途不重发整批 */
+ PACE_BUSY['warm:all']=1;
+ try{
+  _warmAllRes='全部预热中…';
+  if(out)out.innerHTML=_warmAllRes;
+  for(const p of list){
+   try{await fetch('/api/channel/warmup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p})});}catch(e){}
+  }
+  _warmAllRes='预热已顺序执行完成（'+list.length+' 家）';
+ }finally{
+  /* 抛出也要解锁，否则「全部预热」永久失效 */
+  delete PACE_BUSY['warm:all'];
  }
- _warmAllRes='预热已顺序执行完成';
  const o3=$('warmOut');if(o3)o3.innerHTML=_warmAllRes;
  loadPacing();
 }
 async function probeNow(p){
  const out=$('probeOut');if(!out)return;
+ /* 幂等：自检要跑 10–60 秒的真链路，连点会串行真跑多次（实测 3 连点
+    3 个请求），既烧预算又把风控往前推。在途即忽略并禁用按钮。 */
+ if(PACE_BUSY['probe:'+p])return;
+ PACE_BUSY['probe:'+p]=1;
+ const _pbtn=document.querySelector('[data-pk="probe:'+p+'"]');
+ if(_pbtn){_pbtn.disabled=true;_pbtn.setAttribute('aria-busy','true');}
  _probeAllRes='';
  out.textContent='正在自检 '+p+(_probeScope?('（'+_probeScope+'）'):'')+'（约 10–60 秒）…';
  try{
@@ -14910,11 +17168,25 @@ async function probeNow(p){
    +((j.retry_after)?(' · 服务端要求等 '+j.retry_after+'s'):'');
   toast(p+' 自检完成：'+j.rows+' 条');
  }catch(e){out.innerHTML='<span style="color:var(--red)">'+esc(String(e))+'</span>';}
+ finally{
+  delete PACE_BUSY['probe:'+p];
+  const _b3=document.querySelector('[data-pk="probe:'+p+'"]');
+  if(_b3){_b3.disabled=false;_b3.removeAttribute('aria-busy');}
+ }
 }
 async function verifyNow(p){
+ /* 幂等：验证窗口是 900 秒的人工操作，连点第二次会先卡在渠道锁上，
+    等第一个窗口关掉后再弹一个——人刚做完验证，屏幕上又冒出同样页面。
+    后端 r480 已按渠道拒绝重复开窗；这里再挡一层，避免无谓请求和
+    「点了却毫无反馈」的观感。 */
+ if(PACE_BUSY['verify:'+p]){toast('验证窗口已经开着：完成验证后直接关窗即可');return;}
+ PACE_BUSY['verify:'+p]=1;
+ const _vbtn=document.querySelector('[data-pk="'+p+':verify"]');
+ if(_vbtn){_vbtn.disabled=true;_vbtn.setAttribute('aria-busy','true');}
  try{
   const j=await (await fetch('/api/channel/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p})})).json();
-  toast(j.ok?('已打开 '+p+' 验证窗口：过完验证直接关窗'):('打开失败：'+(j.err||'')));
+  toast(j.ok?('已打开 '+p+' 验证窗口：过完验证直接关窗')
+    :(j.dup?String(j.err):('打开失败：'+(j.err||''))));
   if(j.ok&&j.scene&&j.scene.note)toast('现场：'+String(j.scene.note).slice(0,80));
   if(j.ok){
    // 验证是异步的：关窗后才落 verify 结果。有限次自动刷新，让
@@ -14922,146 +17194,753 @@ async function verifyNow(p){
    let n=0;const t=setInterval(()=>{n++;loadPacing();if(n>=6)clearInterval(t);},10000);
   }
  }catch(e){toast('打开失败：'+e);}
+ finally{
+  /* 只解除「请求在途」与按钮禁用；窗口本身还在等人操作，
+     真正的重复开窗由后端按渠道拦（那里才知道窗口何时关闭）。 */
+  delete PACE_BUSY['verify:'+p];
+  const _vb=document.querySelector('[data-pk="'+p+':verify"]');
+  if(_vb){_vb.disabled=false;_vb.removeAttribute('aria-busy');}
+ }
 }
 async function warmNow(p){
+ /* 幂等：同名干预在途时不重复发。channel_slot 是互斥锁、不是去重——
+   连点 3 次会串行真打 3 次首页（实测 3 个请求），既叠加风控又浪费预算，
+   反而把成功率打低。在途期间同时禁用按钮，给出可见的「进行中」。 */
+ if(PACE_BUSY['warm:'+p])return;
+ PACE_BUSY['warm:'+p]=1;
  const out=$('warmOut');if(out)out.textContent='预热 '+p+' 中…（约 3–8 秒）';
+ const _btn=document.querySelector('[data-pk="warm:'+p+'"]');
+ if(_btn){_btn.disabled=true;_btn.setAttribute('aria-busy','true');}
  try{
   const j=await (await fetch('/api/channel/warmup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p})})).json();
-  const msg=j.ok?('预热 '+p+' 完成'):('预热失败：'+(j.err||''));
-  if(out)out.innerHTML=j.ok?('<span style="color:#1a9e75">'+esc(msg)+'</span>'):('<span style="color:var(--red)">'+esc(msg)+'</span>');
+  /* dup = 另一处已在对该渠道预热（另一个标签页/直接调接口）：既不是
+     成功也不是失败，如实说「正在预热」，别让人以为自己的点击丢了。 */
+  const msg=j.dup?String(j.err||'该渠道正在预热'):(j.ok?('预热 '+p+' 完成'):('预热失败：'+(j.err||'')));
+  if(out)out.innerHTML=(j.dup||!j.ok)?('<span style="color:var(--mut)">'+esc(msg)+'</span>')
+    :('<span style="color:#1a9e75">'+esc(msg)+'</span>');
   toast(msg);
  }catch(e){if(out)out.textContent='预热失败：'+e;}
+ finally{
+  delete PACE_BUSY['warm:'+p];
+  /* 必须恢复按钮：只清在途表而不解锁，用户点一次后按钮就永久灰着
+     （实测完成后 disabled 仍为 true），下一次想再预热得先等面板重建。 */
+  const _b2=document.querySelector('[data-pk="warm:'+p+'"]');
+  if(_b2){_b2.disabled=false;_b2.removeAttribute('aria-busy');}
+ }
 }
+/* 节流面板的展开态：溯源是面板内的一个可开合区，不另起弹层；
+   展开期间 10 秒自动刷新只更新数字，不得整块重建（旧实现会把它抹掉，
+   读作「点了溯源收不起来」）。PACE 的初始化已前移到 MONTAB 处
+   （showMonTab 定义早于此处，见该处注释）。 */
 let _paceTimer=null,_paceSnapAt=0;
+async function paceTrace(p){
+ const same=(p&&PACE.detail===p);
+ PACE.detail=same?null:(p||null);
+ PACE.detailHTML='';
+ if(same){loadPacing();return;}
+ /* 打开：先让 loadPacing 重建出「已展开」的面板骨架（此时 detail 已设，
+    loadPacing 的守卫会走刷新分支，所以这里用 force 跳过守卫），
+    再异步填内容——否则骨架永远不出现（旧实现点了没反应）。 */
+ await loadPacing(true);
+ await _paceTraceFill(PACE.detail);
+}
+async function _paceTraceFill(p){
+ try{
+  const j=await (await fetch('/api/trace?platform='+encodeURIComponent(p)+'&limit=8',{cache:'no-store'})).json();
+  if(PACE.detail!==p)return;
+  if(!j.ok){PACE.detailHTML='<div class="pace-kv">溯源失败：'+esc(j.err||'')+'</div>';}
+  else{
+   const rows=(j.rows||[]).map(r=>{
+    const t=String(r.fetched_at||'').slice(5,16),st=String(r.path_status||'');
+    const tone=(st==='ok'||st==='calendar')?'ok':(st==='empty'?'':'bad');
+    /* 真实请求地址（r495）：账本从 r407 起就记了 request_url（实测 20/20
+       条都有值），但界面从不显示——用户看到「H5 被拦」却不知道打的是哪个
+       地址，没法判断是入口选错还是真被拦，属「可定位」缺口。
+       不加列（会挤压 note）：有值时另起一行，单行省略 + title 给全文。 */
+    const _u=String(r.request_url||'').trim();
+    const _uHtml=_u?('<span class="u" title="'+esc(_u)+'">'+esc(_u)+'</span>'):'';
+    return '<div class="pace-tline"><span class="t">'+esc(t)+'</span>'
+     +'<span class="p">'+esc(r.entry_path||'?')+'</span>'
+     +'<span class="st '+tone+'">'+esc(st)+'</span>'
+     +'<span class="n">'+esc(String(r.note||'').slice(0,60))+'</span>'
+     +_uHtml+'</div>';
+   }).join('');
+   const ivs=(j.interventions||[]).map(x=>{
+    const t=String(x.at||'').slice(5,16),act=String(x.action||'');
+    const tail=[x.rows?(esc(String(x.rows))+' 行'):'',x.ms?((x.ms/1000).toFixed(1)+'s'):'',
+      x.note?esc(String(x.note).slice(0,48)):''].filter(Boolean).join(' · ');
+    /* 自动熔断/自动降频不是"操作失败"：ok=0 是它的正常语义。
+       曾一律按 ok 染红写「失败」，读起来像人工操作出错。 */
+    const _auto=/^auto_/.test(act);
+    const _ver=_auto?'系统自动':(x.ok?'成功':'失败');
+    const _tone=_auto?'':(x.ok?'ok':'bad');
+    /* 动作名中文（与成效行的「上次重登/自检/预热」同一套词）：英文枚举
+       直出时，读者看到「relogin」无法与面板上的「重登」对上号。 */
+    const _acn=({probe:'自检',warmup:'预热',reset:'解除',verify:'验证',
+      relogin:'重登',auto_trip:'自动熔断'})[act]||act;
+    /* 作用域（r510）：账本里 `scope` 早就分开记了（实测 probe 有 dom/intl
+       两组、relogin 记槽位），但表里只渲染动作名——同两条「自检」长得一模
+       一样，读者无法定位失败在哪一域；PC 与 H5 各自的重登同样分不清。
+       scope 与动作名并排、小一号字，空值不占位。 */
+    const _sc=String(x.scope||'').trim();
+    const _scn=({dom:'国内',intl:'国际',pc:'PC',h5:'H5',
+      fliggy_h5:'飞猪 H5'})[_sc]||_sc;
+    const _acHtml=esc(_acn)+(_scn?('<i class="sc">'+esc(_scn)+'</i>'):'');
+    return '<div class="pace-tline"><span class="t">'+esc(t)+'</span>'
+     +'<span class="p" title="'+esc(act+(_sc?(' · '+_sc):''))+'">'+_acHtml+'</span>'
+     +'<span class="st '+_tone+'">'+_ver+'</span>'
+     +'<span class="n">'+tail+'</span></div>';
+   }).join('');
+   const eff=j.effect||{};
+   let effHTML='';
+   if(eff.has){
+    const b=(eff.before==null)?'无样本':(Math.round(eff.before*100)+'%（'+eff.before_n+'）');
+    const a2=(eff.after==null)?'无样本':(Math.round(eff.after*100)+'%（'+eff.after_n+'）');
+    const tr=(eff.trend||[]).map(t=>((t.rate==null)?'—':(Math.round(t.rate*100)+'%'))).join(' · ');
+    /* 分域前后（r512）：渠道级「43.6% → 70.8%」会把「国际通路只从 47.8%
+       升到 53.1%」盖住——国内正常、国际全挂时渠道级照样接近 100%，读作
+       「这次干预很成功」。自检是按域点的，成效也必须按域说。
+       只在后端确实给了该组字段时附注（scope 不是域时后端不给）。 */
+    const _scb=(eff.scope==='dom'||eff.scope==='intl')
+      ?({nm:(eff.scope==='intl'?'国际':'国内'),
+          b:(eff.scope_before==null)?'无样本':(Math.round(eff.scope_before*100)+'%（'+eff.scope_before_n+'）'),
+          a:(eff.scope_after==null)?'无样本':(Math.round(eff.scope_after*100)+'%（'+eff.scope_after_n+'）')})
+      :null;
+    /* 「没有新样本」有两种完全不同的原因（r514）：刚干预完还没轮到采集
+       （正常等待），和**采集压根停了**（故障）。实测 fliggy 重登 103 次、
+       样本停在 25.6 小时前，旧文案一律写「干预后还没有新样本」——读者会
+       一直等一个不会来的样本，而不是去看采集为什么停。 */
+    const _noNew=(eff.after==null)
+      ?(eff.stalled
+        ?('<span class="bad">· 采集已停 '+esc(String(eff.stalled_hours))+' 小时'
+          +'（该渠道最后一条样本 '+esc(String(eff.last_sample_at).slice(5,16))
+          +'），这次干预还没被验证</span>')
+        :'<span class="mut">· 干预后还没有新样本</span>')
+      :'';
+    effHTML='<div class="pace-eff"><span class="k">干预后对比</span>'
+     +'<span class="v">'+esc(b)+' → '+esc(a2)+'</span>'
+     +_noNew
+     +'</div>'
+     /* 分域读数是**独立一块**，不能塞进上面那行 flex：实测会拼成
+        「71%（120）域 48%（46）→53%（64）」，读作一个乱码数字。 */
+     +(_scb?('<div class="pace-kv pace-effsc">'+esc(_scb.nm)+'域 '
+        +esc(_scb.b)+' → '+esc(_scb.a)
+        +'<span class="mut">（本次干预真正针对的那一域）</span></div>'):'')
+     +(tr?('<div class="pace-eff">每 30 分钟 '+esc(tr)
+        +(eff.regressed?' <span class="bad">最近回落</span>':'')+'</div>'):'');
+   }
+   PACE.detailHTML=effHTML
+    +'<div class="pace-dsub">最近尝试</div>'
+    +'<div class="pace-tline head"><span class="t">时间</span><span class="p">入口</span>'
+      +'<span class="st">状态</span><span class="n">证据</span></div>'
+    +(rows||'<div class="pace-kv">无记录</div>')
+    +'<div class="pace-dsub">干预记录</div>'
+    +'<div class="pace-tline head"><span class="t">时间</span><span class="p">动作</span>'
+      +'<span class="st">结果</span><span class="n">耗时 / 说明</span></div>'
+    +(ivs||'<div class="pace-kv">暂无干预</div>');
+  }
+ }catch(e){PACE.detailHTML='<div class="pace-kv">溯源失败：'+esc(String(e))+'</div>';}
+ const to=$('traceOut');if(to)to.innerHTML=PACE.detailHTML;
+}
 function _paceStartAuto(){
- // 节流面板只在配置页可见时自动刷新：冷却倒计时走字、验证/补采结果
- // 自动出现。离开配置页或页面隐藏即停，避免无谓轮询。
+ // 节流面板挂在「监控 · 渠道健康」里，只有该视图可见时才轮询：
+ // 冷却倒计时走字、可干预项自动出现。其它视图或页面隐藏即停。
  if(_paceTimer)return;
  _paceTimer=setInterval(()=>{
-  if(document.hidden||VIEW!=='cfg'){return;}
+  if(document.hidden||VIEW!=='mon'||MONTAB!=='health')return;   /* 只在「监控 · 渠道健康」可见时轮询 */
   const box=$('paceBox');if(!box)return;
   if(Date.now()-_paceSnapAt<4500)return;   // 防止与手动刷新叠加
   loadPacing();
  },10000);
 }
 function _paceStopAuto(){if(_paceTimer){clearInterval(_paceTimer);_paceTimer=null;}}
-async function loadPacing(){
+/* 节流面板本轮快照：渠道行同时给「按轮判定（advice）」「分域/分通路
+   近 24h」「在用口径查询率」三种读数——它们各自回答不同问题，合并成
+   一个数就会互相打架（曾出现徽标 13%、小标 73% 并列）。 */
+let PACE_LR={};
+/* 在途干预表（幂等）：键形如 warm:qunar / probe:qunar。channel_slot 只保证
+   串行，不保证不重复——连点三次就会真打三次站。 */
+const PACE_BUSY={};
+/* 最近一次 /api/pacing 的 cfg：warmAll() 要按同一份预热清单发请求，
+   否则「全部」与逐个按钮的覆盖面会不一致。 */
+let PACE_CFG=null;
+async function loadPacing(force){
  const box=$('paceBox');if(!box)return;
+ /* 溯源区展开且非强制重建时，只刷新详情内容：旧实现每 10s 全量
+    innerHTML，用户点开的详情在下一拍就被抹掉（读作「收不起来」）。
+    paceTrace 传 force=true 时允许重建出「已展开」的骨架。 */
+ if(PACE.detail&&!force){await _paceTraceFill(PACE.detail);return;}
  try{
   const j=await (await fetch('/api/pacing',{cache:'no-store'})).json();
   _paceSnapAt=Date.now();
-  if(!j.ok){box.innerHTML='<span style="color:var(--red)">'+esc(j.err||'读取失败')+'</span>';return;}
+  if(!j.ok){box.innerHTML='<div class="pace-empty">读取失败：'+esc(j.err||'未知错误')+'</div>';return;}
   const CN={qunar:'去哪儿',fliggy:'飞猪',ctrip:'携程',tongcheng:'同程',tuniu:'途牛'};
-  const q=j.quiet||{},lr=j.last_round||{},ch=j.channels||{};
-  const chips=Object.keys(ch).map(k=>{
-   const v=ch[k]||{},nm=CN[k]||k,adv=v.advice||{};let t='';
-   if(v.state==='cooldown')t='<span style="color:var(--red)">冷却 '+_paceLeft(v.remain_s)+(v.reason?' · '+esc(v.reason):'')+'</span>';
-   else if(v.needs_login)t='<span style="color:#b07700">需登录</span>';
-   else if(adv.state==='path_degraded')t='<span style="color:#b07700">路径劣化</span>';
-   else if(adv.state==='soft_reject')t='<span style="color:#b07700">软拒待预热</span>';
-   else if(adv.state==='recovering')t='<span style="color:#1a9e75">恢复中</span>';
-   else if(adv.state==='calendar_only')t='<span style="color:#b07700">仅有日历</span>';
-   else if(adv.state==='stale')t='<span style="color:#b07700">数据陈旧</span>';
-   else if(adv.state==='degraded')t='<span style="color:#b07700">成功率低</span>';
-   else t='<span style="color:#1a9e75">正常</span>';
-   let acts=' <a href="javascript:void(0)" onclick="showTrace(\''+k+'\')" style="color:var(--blue);font-size:11px">溯源</a>';
+  const q=j.quiet||{},lr=j.last_round||{},ch=j.channels||{},cf=j.cfg||{};
+  /* 干预成效（{plat: {has,before,after,after_n,action,regressed}}）：原本只在
+     点开「溯源」后才看得到。最高准则是「让用户做能提高成功率的操作」——
+     那这条证据就必须出现在决定行上：看到同程 44% 的同时，就该看到
+     「上次预热把它从 44% 拉到 100%」，否则用户不知道该按哪个钮。 */
+  const EFF=j.effect||{};
+  PACE_LR=lr;
+  /* 账本判定的会话失效要点亮顶部「去登录」（与节流行同源，见函数注释） */
+  try{healthLoginNudge(j)}catch(e){}
+  PACE_CFG=cf;
+  /* 分域/分通路账：渠道行速览与复发账共用。演示库没有路径账时为空，
+     此时速览只显示「按轮判定」，绝不拿别的数顶替。 */
+  let PTH={},_pthDemo=true;
+  try{
+   const _pj=await (await fetch('/api/paths?hours=24',{cache:'no-store'})).json();
+   PTH=_pj.platforms||{};
+   _pthDemo=!!_pj.demo;   /* 服务端显式标记：合成聚合 vs 真库账本 */
+  }catch(e){}
+  const _tk=k=>CN[k]||k;
+  const _n=v=>{const n=parseInt(v)||0;return n;};
+  const _rate=v=>(v==null?'—':Math.round(Number(v)*100)+'%');
+  /* —— 台账头：左三格「系统现在怎么节流」+ 右侧本轮实发 —— */
+  const _qOn=!!(q.start&&q.end);
+  const qs=_qOn?((q.active?'窗内不扫 ':'窗外 ')+esc(q.start)+'–'+esc(q.end)):'已关闭';
+  const _lim=[];if(cf.min_gap_s)_lim.push('间隔 '+cf.min_gap_s+'s');
+  if(cf.per_minute)_lim.push('每分 '+cf.per_minute+' 次');
+  const _tr=(lr.trips||[]).length;
+  const led='<div class="pace-led"><div class="pace-facts">'
+   +'<span class="pace-fact" title="静默窗内不发起任何采集；窗口外正常扫"><i class="dot '+(_qOn?(q.active?'warn':'ok'):'')+'" aria-hidden="true"></i>'
+    +'<span class="k">静默窗</span><span class="v">'+qs+'</span></span>'
+   +'<span class="pace-fact" title="最小间隔 = 同一渠道两次请求的最短间隔；每分钟上限 = 全渠道合计（0 表示不限）"><span class="k">限速</span><span class="v">'
+    +esc(_lim.join(' · ')||'不限')+'</span></span>'
+   +'<span class="pace-fact" title="熔断 = 失败连击达到阈值后自动冷却，冷却结束后自动恢复"><span class="k">熔断</span><span class="v">'
+    +(_tr?('<span style="color:var(--r-amber)">'+_tr+' 次冷却中</span>'):'无')+'</span></span>'
+   /* 成功率保护：set_health 按近 24h 查询率自动拉长该渠道 TTL
+      （<40% ×3、<70% ×1.5、样本<5 不判）。这段自适应后端一直在算，
+      但界面从不显示——用户只看到「变慢了」，不知道是系统在保护渠道，
+      容易误判成故障并手动乱按。这里把它如实交代。 */
+   +(()=>{
+      /* 关掉成功率保护时要说「已关闭」，不能写「无」——「无」读作
+         「当前没有渠道被降频」，会让用户以为保护还在生效。 */
+      if(cf.health_penalty_enabled===false)
+       return '<span class="pace-fact" title="成功率保护已被手动关闭：仍统计成功率，但不再自动拉长 TTL"><span class="k">降频</span><span class="v">已关闭</span></span>';
+      /* 阈值文案要跟当前配置一致（r485）：此前写死「低于 70%…40%…样本不足 5 次」，
+         用户把合格线改成 0.8 后界面仍在说 70%，等于看不出自己的设置生效没有。 */
+      const _hok=Math.round((cf.health_ok_ratio==null?0.7:cf.health_ok_ratio)*100);
+      const _hsl=Math.round((cf.health_slow_ratio==null?0.4:cf.health_slow_ratio)*100);
+      const _hsf=(cf.health_slow_factor==null?1.5:cf.health_slow_factor);
+      const _hms=(cf.health_min_samples==null?5:cf.health_min_samples);
+      const _hint='近 24h 查询率低于 '+_hok+'% 会自动拉长该渠道 TTL（低于 '
+        +_hsl+'% 拉 '+(cf.health_slowest_factor==null?3:cf.health_slowest_factor)
+        +' 倍，'+_hsl+'%~'+_hok+'% 拉 '+_hsf+' 倍），样本不足 '+_hms+' 次不判';
+      const _pen=Object.keys(ch).map(k=>({k:k,h:(ch[k]||{}).health||{}}))
+        .filter(x=>(x.h.penalty||1)>1)
+        .sort((a,b)=>b.h.penalty-a.h.penalty);
+      if(!_pen.length)return '<span class="pace-fact" title="'+esc(_hint)+'"><span class="k">降频</span><span class="v">无</span></span>';
+      return '<span class="pace-fact" title="'+esc(_hint)+'；系统按近 24h 成功率自动拉长 TTL，避免对已受限的渠道继续加压">'
+       +'<i class="dot warn" aria-hidden="true"></i><span class="k">降频</span><span class="v">'
+       +esc(_pen.map(x=>_tk(x.k)+' ×'+String(Math.round((x.h.penalty||1)*10)/10)).join(' · '))
+       +'</span></span>';
+     })()
+   +'</div>'
+   +'<div class="pace-now"><b>'+_n(lr.sent)+'<i>/'+(_n(lr.sent)+_n(lr.paced))+'</i></b>'
+    +'<span>实发 / 计划</span></div></div>';
+  /* —— 章节级结论：要不要动手 —— */
+  /* 演示数据不是「正常」的证据：标成正常会让访客以为渠道已实测通过。
+     全渠道同一句演示文案且无连击样本时，状态改「演示」、走中性色，
+     证据写「无真实样本」，比五行重复同一句话更诚实也更好扫读。
+     必须定义在结论行之前（结论行也用它），否则 TDZ。 */
+  const _demoAll=Object.keys(ch).length>0&&Object.keys(ch).every(k2=>{
+   const a3=(ch[k2]||{}).advice||{};
+   return a3.state==='ok'&&String(a3.hint||'').split(/[，；。]/)[0]==='演示数据'
+     &&!(ch[k2]||{}).ok_streak;});
+  /* 通路账是「真账」还是「合成轮次」由服务端 `demo` 标记决定（不靠形状猜）：
+     演示站里 advice 全是「演示数据」，但 /api/paths 也可能给真库（运维把
+     demo 页接到真库时）。此前只看 advice，于是真账也被一起遮成「合成样本」
+     ——实测去哪儿国际 H5 真实 0/24、查询率 11%，同一页健康卡显示 11%，
+     节流面板却写「不参与成功率」，两个数打架。真账照常给数。 */
+  const _maskSynth=_demoAll&&_pthDemo;
+  const _act=[],_auto=[],_wait=[],_unk=[];
+  Object.keys(ch).forEach(k=>{
+   const a2=(ch[k]||{}).advice||{};if(!a2.hint)return;
+   const one=_tk(k)+'：'+a2.hint+(a2.eta_s?('（'+_paceLeft(a2.eta_s)+'）'):'');
+   if(a2.severity==='act')_act.push(one);
+   else if(a2.severity==='wait')_wait.push(one);
+   else if(a2.severity==='auto')_auto.push(one);
+   else if(a2.state==='unknown')_unk.push(_tk(k));
+  });
+  /* 结论分三行，各管一件事：必须人动手 / 只能等 / 已自动处理。
+     合成一行会变成 200+ 字的墙（5 家渠道实测两行满宽），而人只关心
+     第一行；自动项仍可逐条溯源（行内速览 + 复发表）。 */
+  const _note=(_act.length?('<div class="pace-note act"><i class="dot warn" aria-hidden="true"></i>'
+      +'<span>需要处理：'+esc(_act.join('；'))+'</span></div>'):'')
+   +(_wait.length?('<div class="pace-note wait"><i class="dot warn" aria-hidden="true"></i>'
+      +'<span>等待恢复（倒计时归零自动放行）：'+esc(_wait.join('；'))+'</span></div>'):'')
+   +(_auto.length?('<div class="pace-note ok"><i class="dot ok" aria-hidden="true"></i>'
+      +'<span>已自动处理 '+_auto.length+' 家：'+esc(_auto.map(a=>a.split('：')[0]).join('、'))
+      +'，无需人工（依据见各行）</span></div>'):'')
+   +(_unk.length?('<div class="pace-note"><i class="dot" aria-hidden="true"></i>'
+      +'<span>待首轮 '+_unk.length+' 家：'+esc(_unk.join('、'))
+      +'，近 24h 无样本，跑一轮后才可判断</span></div>'):'')
+   /* 全绿只能在全绿时说话：曾出现「五个渠道都待首轮」却打出「各渠道近
+     24h 正常」——零样本不许冒充正常。演示数据同样不是「正常」的证据。 */
+   +((_act.length||_wait.length||_auto.length||_unk.length)?'':
+      (_demoAll
+       ?('<div class="pace-note"><i class="dot" aria-hidden="true"></i>'
+         +'<span>演示数据 · 无真实采集样本，跑一轮真实扫描后才可判断</span></div>')
+       :('<div class="pace-note ok"><i class="dot ok" aria-hidden="true"></i>'
+         +'<span>无需操作 · 各渠道近 24h 正常，到点自动排下一轮</span></div>')));
+  /* —— 逐渠道行 —— */
+  /* 渠道行顺序与上方健康行同源（SRX_PLAT_ORDER）：两表相邻，各排一套
+     顺序时用户要重新找行。未知渠道排在已知之后，保持稳定。 */
+  const _order=Object.keys(ch).sort((a,b)=>{
+   const ia=SRX_PLAT_ORDER.indexOf(a),ib=SRX_PLAT_ORDER.indexOf(b);
+   return (ia<0?99:ia)-(ib<0?99:ib)||String(a).localeCompare(String(b));});
+  const chips=_order.map(k=>{
+   const v=ch[k]||{},nm=_tk(k),adv=v.advice||{};
+   /* node/pw/sc/dead 供「为什么是这个状态」使用（路径劣化要指名劣化端
+     或通路，数据陈旧要报最近成功时刻），必须在标签分支之前解构，否则 TDZ。 */
+   const node=PTH[k]||{},pw=node.paths||{},sc=node.scopes||{},dead=node.retired_paths||[];
+   let lab=_demoAll&&v.state==='ok'&&!v.needs_login?'演示':'正常';
+   let tone=_demoAll&&v.state==='ok'&&!v.needs_login?'':'ok',ev='';
+   if(v.state==='cooldown'){lab='冷却 '+_paceLeft(v.remain_s);tone='bad';
+    ev=(v.reason==='ip'?'出口 IP 被拦':(v.reason==='captcha'?'验证挑战':(v.reason?'失败连击':'自动冷却')));}
+   /* 需登录时要说清「哪一端」：飞猪 PC/H5 是两套独立 cookie，只写
+      「需登录」用户不知道点哪个去验证，也会误以为整家渠道都挂了。
+      槽位数据来自 channelAuthView 同源的 /api/login-state，演示会话
+      只声明「演示」，不冒充真实登出。 */
+   else if(v.needs_login||adv.state==='login'){
+    /* adv.state==='login' 来自账本（近 24h 该域被登录墙拦走多数尝试），
+       v.needs_login 来自运行时熔断——两者都要进这个分支，否则后端判对
+       了、界面仍落「正常」，用户看不到该去重登（实测去哪儿国际 18/23
+       被拦，界面却显示正常）。 */
+    lab='需登录';tone='warn';
+    const _pay=CHANNEL_STATE&&CHANNEL_STATE.payload;
+    const _own=_pay&&_pay.slots?Object.keys(_pay.slots)
+      .map(k=>Object.assign({key:k},_pay.slots[k]||{}))
+      .filter(x=>x.plat===k):[];
+    if(_own.length>1){
+     const _bad=_own.filter(x=>x.needs_login||x.status==='save_error')
+      .map(x=>x.surface_label||x.surface||'全端');
+     ev=_bad.length?(_bad.join('/')+' 会话已失效'):'会话已失效';
+    } else ev='会话已失效';
+    /* 账本判来的登录（多来自单一域的登录墙统计）要带上量化证据：
+       后端 hint 里有「国际 H5 被拦 18/23 次」，比一句「会话已失效」
+       更能让用户判断该不该现在就去重登。运行时 needs_login 没有这条，
+       保持原文案不变。 */
+    if(!v.needs_login&&adv.state==='login'&&adv.hint){
+     ev=String(adv.hint).split(/[—；]/)[0].trim()||ev;
+    }
+   }
+   /* 每个非 ok 状态都要自述「为什么」，否则 e1 落成破折号——而破折号
+     在本面板专指「近 24h 无样本」，与同一行右侧的分域/查询率直接打架
+     （实测同程行显示「— 国内 100% · 国际 74% …」）。 */
+   else if(adv.state==='path_degraded'){
+    lab='路径劣化';tone='warn';
+    /* 说清「哪一端/哪条通路」劣化即可——百分比紧邻右半已经给过，
+       e1 再报一遍数字读作啰嗦（实测「国际 74% 偏低 … 国际 74%」）。 */
+    const _badD=[],_badP=[];
+    ['dom','intl'].forEach(sk=>{
+     const s1=sc[sk];
+     if(s1&&(parseInt(s1.attempts)||0)>0&&(parseFloat(s1.rate)||0)<0.85)
+      _badD.push(sk==='dom'?'国内':'国际');
+    });
+    Object.keys(pw).forEach(pp=>{
+     if(dead.indexOf(pp)>=0)return;
+     const w2=pw[pp]||{};
+     if((parseInt(w2.attempts)||0)>0&&(parseFloat(w2.rate)||0)<0.85)
+      _badP.push(pp);
+    });
+    /* 兜底不能凭空断言「存在低成功率通路」：走到这里说明 pw/sc 里根本没有
+       可用的通路样本（否则上面两段必有一条命中），那是「没有账」，
+       不是「账里有坏路」。分开说，读者才知道该等数据还是该修路。 */
+    ev=_badD.length?(_badD.join('/')+' 端成功率偏低')
+      :(_badP.length?(_badP.slice(0,2).join('/')+' 通路成功率偏低')
+        :'暂无通路账，先跑一轮再判断');
+    /* 指名「哪一端 × 哪条通路」只有多少有效率。实测去哪儿国际 H5 只有
+       25%（32 次）而同渠道国内 H5 是 80%——只说「国际端偏低」读者既不
+       知道是哪条路，也不知道差多少，更无从决定该怎么干预。
+       带样本数：32 次和 3 次的 25% 完全不是一回事。 */
+    const _worst=[];
+    ['dom','intl'].forEach(sk=>{
+     const s1=sc[sk];if(!s1)return;
+     Object.keys(s1.paths||{}).forEach(pp=>{
+      const q=s1.paths[pp]||{};
+      const n=parseInt(q.attempts)||0;
+      if(n>=5&&(parseFloat(q.rate)||0)<0.6)
+       _worst.push((sk==='dom'?'国内':'国际')+' '+pp+' '
+         +Math.round((parseFloat(q.rate)||0)*100)+'%（'+n+' 次）');
+     });
+    });
+    if(_worst.length)ev=_worst.slice(0,2).join(' · ')+' 偏低';
+   }
+   else if(adv.state==='soft_reject'){lab='软拒待预热';tone='warn';
+    ev='上轮被风控软拒，本轮先预热';}
+   else if(adv.state==='recovering'){lab='恢复中';tone='ok';ev='已恢复出数，待稳定';}
+   else if(adv.state==='calendar_only'){lab='仅有日历';tone='warn';
+    ev='只拿到日历价，明细未取得';}
+   else if(adv.state==='stale'){lab='数据陈旧';tone='warn';
+    /* 只说一个时间戳（「最近成功 10-28 14:34」）读者算不出停了多久，
+       而右半又写着「查询 100%」——左边陈旧、右边满分，语义打架。
+       这里改成「已停 X」的相对时长，并点明右侧是历史口径。 */
+    if(node&&node.last_ok_at){
+     const _m=_minsAgo(node.last_ok_at);
+     const _ago=(_m==null)?String(node.last_ok_at).slice(5,16)
+       :(_m>=60?('已停 '+(Math.floor(_m/60))+' 小时'+(Math.round(_m%60)?(' '+Math.round(_m%60)+' 分'):''))
+                :('已停 '+Math.round(_m)+' 分钟'));
+     ev=_ago+'（右侧为停更前的历史口径）';
+    } else ev='超过 TTL 无新数据';}
+   else if(adv.state==='degraded'){lab='成功率低';tone='warn';
+    ev=adv.hint?String(adv.hint).split(/[，；。]/)[0]:'查询成功率偏低';}
+   else if(adv.state==='stalled'){lab='采集停了';tone='bad';
+    /* 与「待首轮」必须分开（r516，用户反馈「登录都配好了但渠道全红」）：
+       待首轮是正常启动过渡，采集停了是故障——两者的动作完全不同。 */
+    ev=adv.hint?String(adv.hint).split(/——/)[0]:'该渠道长时间没有采集样本';}
+   else if(adv.state==='unknown'){lab='待首轮';tone='';ev='近 24h 无样本';}
    const vf=(v.scene&&v.scene.verify)||null;
-   if(vf)t+=' <span style="color:'+(vf.ok?'#1a9e75':'var(--red)')+';font-size:11px">验证后'+(vf.ok?('✓'+vf.rows+'条'):'✗未通过')+((vf.refill&&vf.refill.rows)?(' · 补采+'+vf.refill.rows):'')+'</span>';
-   if(v.scene&&v.scene.retripped)t+=' <span style="color:var(--red);font-size:11px">验证未通过，已重新熔断 '+_paceLeft(v.scene.retripped.cooldown_s)+'</span>';
+   if(vf)ev=(vf.ok?('验证后 ✓'+vf.rows+' 条'):'验证后未通过')+((vf.refill&&vf.refill.rows)?(' · 补采 +'+vf.refill.rows):'');
+   /* 验证刚通过且确实出数时，标签不能还挂「需登录」（r482）：那等于
+     自己否定自己的证据——右边写「验证后 ✓7 条」，左边仍在催重登。
+     账本（advice）要等下一轮采集才更新，这段过渡期必须由验证结论兜住。
+     验证未通过不在此列：那时「需登录」是对的。 */
+   if(vf&&vf.ok&&(parseInt(vf.rows)||0)>0){lab='验证已通过';tone='ok';}
+   /* 验证窗正开着（r482）：这是「人正在操作」的中间态，必须先于
+      其它结论显示——否则用户点完「去验证」回来看还是「需登录」，
+      读作「点了没反应」，于是再点一次。窗口关掉后该字段即被清除，
+      改由上面的 vf 给出真实结论。 */
+   const _vo=(v.scene&&v.scene.verify_open_at)||null;
+   if(_vo){lab='验证中';tone='warn';
+    /* 超时用「分钟」说话：_paceLeft(900) 会渲染成 15:00，读起来像
+       「还有一个半小时」，而它其实是窗口的硬超时上限。 */
+    const _vt=Math.round(((v.scene&&v.scene.verify_timeout_s)||900)/60);
+    ev=_vo+' 起验证窗口已打开 · 完成人机验证后直接关窗，会话自动保存并单查探测'
+      +'（窗口最长 '+_vt+' 分钟，超时自动关闭）';}
+   if(v.scene&&v.scene.retripped){lab='验证未过 · 已重新熔断';tone='bad';
+    ev='冷却 '+_paceLeft(v.scene.retripped.cooldown_s);}
    const ef=v.effect||null;
    if(ef&&ef.state&&ef.state!=='none'){
-    const ecol=(ef.severity==='ok')?'#1a9e75':(ef.severity==='act'?'var(--red)':'#b07700');
-    t+=' <span style="color:'+ecol+';font-size:11px" title="'+esc(ef.hint||'')+'">干预'+
-       (ef.state==='improved'||ef.state==='recovered'?'有效':(ef.state==='pending'?'待观察':(ef.state==='provisional'?'待复验':(ef.state==='no_effect'?'无效':(ef.state==='regressed'?'先好后坏':'部分改善')))))+'</span>';
+    const _ef=(ef.state==='improved'||ef.state==='recovered')?'干预有效'
+     :(ef.state==='pending'?'干预待观察':(ef.state==='provisional'?'干预待复验'
+     :(ef.state==='no_effect'?'干预无效':(ef.state==='regressed'?'先好后坏':'部分改善'))));
+    ev=(ev?ev+' · ':'')+_ef;
    }
-   if(v.state==='cooldown')acts=' <a href="javascript:void(0)" onclick="paceReset(\''+k+'\')" style="color:var(--blue);font-size:11px">解除</a>'+acts;
-   if(v.needs_login||(v.state==='cooldown'&&(v.reason==='ip'||v.reason==='captcha')))
-     acts=' <a href="javascript:void(0)" onclick="verifyNow(\''+k+'\')" style="color:#b07700;font-size:11px">去验证</a>'+acts;
-   return '<span style="white-space:nowrap" title="'+esc(adv.hint||'')+'">'+nm+' '+t+acts+'</span>';
+   /* 速览左半：分域 → 分通路（退役通路明确标「退役」，不静默消失）。
+      分域样本各自独立、不互相冲抵：国内好、国际被登录墙拦住时，混成
+      一个数会把「国际不能用了」藏进总分。
+      分域必须用查询口径（`query_rate_live` 优先，与徽标同源）：曾读
+      `attempts/rate`（尝试级），于是去哪儿渲染成「国内 95% · 国际 62%
+      · 查询 82%」，三个数没有一个能对上——95/62 按尝试、82 按查询。
+      换查询口径后 39/39 + 24/38 = 63/77 = 82%，左右两半可互相核对。 */
+   const scoped=(name,label)=>{
+    const s1=sc[name];if(!s1)return '';
+    const _qa=_n(s1.query_attempts_live!=null?s1.query_attempts_live:s1.query_attempts);
+    if(!_qa)return '';
+    const _qr=(s1.query_rate_live!=null?s1.query_rate_live:s1.query_rate);
+    return label+' '+(_qr==null?'—':_rate(_qr));
+   };
+   const pws=[];
+   Object.keys(pw).forEach(pp=>{
+    if(dead.indexOf(pp)>=0)return;
+    const w=pw[pp]||{};if(!(parseInt(w.attempts)||0))return;
+    const det=_n(w.detail_ok),cal=_n(w.calendar_ok);
+    pws.push(pp+' '+(det===0&&cal>0?('×'+cal):_rate(w.rate)));
+   });
+   dead.forEach(pp=>pws.push(pp+' 退役'));
+   const pathTxt=_maskSynth?'':[scoped('dom','国内'),scoped('intl','国际')]
+    .concat(pws).filter(Boolean).join(' · ');
+   /* 速览右半：查询级成功率 + 明细/日历拆分。路径成功不等于查询成功
+      （查询可能全空或只有日历价），两者必须分开显示，否则「100%」会
+      掩盖「明细一条没拿到」。退役通路不计入在用口径。 */
+   const _qn=_n(node.query_attempts_live!=null?node.query_attempts_live:node.query_attempts);
+   const _qr=(node.query_rate_live!=null?node.query_rate_live:node.query_rate);
+   const _qdet=_n(node.query_detail_ok),_qcal=_n(node.query_calendar_only);
+   /* 演示态不显示精确百分比：`--demo` 的「查询 97% / 明细 x / n 次」是按
+      合成轮次迭代算出来的，读起来与真实实测一模一样，用户实报「很多都是
+      补位数据，感觉有点奇怪」。演示只说明「这是合成样本」，不给可被引用
+      的读数；真实实例仍照常给百分比与次数。
+      真账（PTH 来自真库）不受此限：演示 advice + 真账本时照常给数，
+      否则同一页健康卡 11%、这里「不参与成功率」，两个数打架。 */
+   /* 演示态这半栏必须写明「合成样本 · 不参与成功率」：这半栏是
+      「量到了什么」，演示数字是按合成轮次迭代算的，与实测读数长得一模一样，
+      不写就会被当成真实百分比引用（r425 门禁守的就是这条）。
+      去重只针对 e1 的「无真实样本」——那句与结论行完全重复；
+      「不参与成功率」是定性说明，保留。 */
+   const _qbit=_maskSynth
+    ?('合成样本 · 不参与成功率')
+    :(_qn?('查询 <b>'+_rate(_qr)+'</b> · 明细 '+_qdet+' / 日历 '+_qcal+' · '+_qn+' 次'):'');
+   /* 两半分工固定：e1 只讲「为什么是这个状态」，e2 只讲「量到了什么」。
+     曾经 e1 在无结论时回落成通路串，于是同一串通路在左右两半各出现
+     一次（实测「国内 100% · 国际 100%…」整句重复），读起来像两条读数。
+     e1 为空时也不能直接落「—」：破折号在本面板专指「近 24h 无样本」，
+     而「正常」行没有依据时打「—」会被读成「没测到」——实测演示模式
+     五行齐全却全是「正常 —」。空依据时先用建议文案的首句，再退到
+     「无异常」，只有真的零样本（unknown）才允许 —。 */
+   if(!ev)ev=(v.ok_streak?('连续 '+v.ok_streak+' 轮正常'):'');
+   /* 「无真实样本」只在真的没有真实账本时成立。演示页 + 真账本时，
+     这一行明明有几十次真实采样（实测同程 45 次、H5 明细 9 条），
+     再写「无真实样本」就是自相矛盾。 */
+   /* 演示模式的全渠道同一句证据不再逐行重复：结论行已经写过
+      「演示数据 · 无真实采集样本，跑一轮真实扫描后才可判断」，5 行再各写
+      一遍「无真实样本」只是同一句话占 5 行（390 档每行因此高 80px）。
+      行内留空，e1 由下面的公共兜底给「—」以外的措辞。 */
+   if(!ev&&adv.state==='ok'&&adv.hint&&!_demoAll){
+    const _h=String(adv.hint).split(/[，；。]/)[0];
+    ev=_h.length>28?(_h.slice(0,28)+'…'):_h;
+   }
+   /* 账本为真、advice 仍是演示（演示页接真库）：ok 行没有 hint 可用，
+     但账本里就有事实——报「近 24h 实测 N 次、出数 M 条」。
+     不能落破折号：— 在本面板专指「无样本」，而这几行有几十次采样。
+     出数明显少于尝试时要一起说清差额（实测去哪儿 24 次只出 3 条，
+     只写「出数 3 条」会让人以为基本正常）。 */
+   /* 演示行的 e1 不能落「—」（本面板专指零样本），也不能重复结论行整句：
+      给一个最短的如实措辞。真实账本行不会走到这里（上面分支已给数）。 */
+   if(!ev&&_demoAll&&_pthDemo)ev='合成 · 未实测';
+   if(!ev&&adv.state==='ok'&&!_pthDemo){
+    const _qa=_n(node.query_attempts), _qo=_n(node.query_ok);
+    if(_qa)ev='近 24h 实测 '+_qa+' 次、出数 '+_qo+' 条'
+      +(_qo*4<_qa*3?('（'+(100-Math.round(_qo/_qa*100))+'% 未出数）'):'');
+   }
+   /* 干预成效前置：这一行的核心用途是「告诉用户按哪个钮能提高成功率」，
+     而唯一能回答它的是「上次同类干预带来了什么」。只在两侧都有真实样本
+     且变化 ≥5 个百分点时出现，避免把噪音写成成效。
+     回落（regressed）照样要说——那是「别急着重按」的依据。 */
+   const _ef2=EFF[k];
+   if(_ef2&&_ef2.has&&_ef2.before!=null&&_ef2.after!=null
+      &&Math.abs(_ef2.after-_ef2.before)>=0.05){
+    const _act=({probe:'自检',warmup:'预热',reset:'解除',verify:'验证',
+     relogin:'重登'})[_ef2.action]||_ef2.action||'干预';
+    const _bp=Math.round(_ef2.before*100),_ap=Math.round(_ef2.after*100);
+    const _dir=_ap>_bp?'提升':'回落';
+    ev=(ev?ev+' · ':'')+('上次'+_act+' '+_bp+'%→'+_ap+'%'
+      +(_dir==='回落'?'（回落，先别急着重按）':'')
+      +' · '+_ef2.after_n+' 次样本');
+   }
+   const ac=[];
+   if(v.state==='cooldown')ac.push('<button type="button" data-pk="'+k+':reset" onclick="paceReset(\''+k+'\')">解除</button>');
+   /* 验证窗正开着（r482）：不再给「去验证/去登录」——再点也只会被后端
+     按渠道拒绝，而按钮还在就等于邀请用户做无效操作。改为一个不可点的
+     「验证中…」占位，与行内状态一致。 */
+   if(_vo){
+    ac.push('<button type="button" data-pk="'+k+':verifying" disabled aria-disabled="true"'
+      +' title="验证窗口已打开：完成验证后直接关窗，系统会自动保存会话并单查探测">验证中…</button>');
+   }else if(v.needs_login||adv.state==='login'||(v.state==='cooldown'&&(v.reason==='ip'||v.reason==='captcha'))){
+    /* 多会话厂商（飞猪 PC/H5）的验证窗口只能按厂商开，无法单独只开 H5。
+       这种情形下按钮写「去验证」会与「H5 会话已失效」对不上（点了开的
+       是 PC 窗）。改为直达该端的登录入口，动作与证据一致。 */
+    const _pay2=CHANNEL_STATE&&CHANNEL_STATE.payload;
+    const _own2=(_pay2&&_pay2.slots)?Object.keys(_pay2.slots)
+      .map(q=>Object.assign({key:q},_pay2.slots[q]||{}))
+      .filter(x=>x.plat===k):[];
+    if(_own2.length>1){
+     /* 选端顺序＝证据优先：路径账判来的登录会说清是哪条路（adv.path，
+       飞猪的「H5」/「PC」），照它选槽位；没有路径证据（运行时
+       needs_login）才退回坏槽位。此前只看 v.needs_login，账本说
+       「国际 H5 被拦 13/17」时按钮仍是「去验证」，点开的是 PC 窗——
+       用户登完 PC 依然进不去 H5，等于把人引去做无效操作。 */
+     const _want=String(adv.path||'').toUpperCase();
+     /* 路径名可能是「H5」「PC」，也可能是「国际 H5」「H5 日历」：先全等
+        再按包含判定（H5 端就是移动窗口，PC 端是桌面）。 */
+     const _byPath=_want?(_own2.find(x=>String(x.surface||'').toUpperCase()===_want)
+       ||_own2.find(x=>{
+         const sf=String(x.surface||'').toUpperCase();
+         return sf&&_want.indexOf(sf)>=0;})):null;
+     const _bad2=_own2.filter(x=>x.needs_login||x.status==='save_error');
+     /* 兜底只认「确实坏了的那一端」：运行时 needs_login 常常是厂商级
+        熔断，两端会话都还是「已存待验」，这时说「去登录 PC」等于凭空
+        指一端；退回厂商级验证窗口才对得上真实被拦的那份 profile。 */
+     const _pick=_byPath||(v.needs_login?(_bad2[0]||null):null);
+     const _slot=_pick&&_pick.key;
+     if(_slot){
+      const _lbl='去登录 '+(_pick.surface_label||_pick.surface||'');
+      ac.push('<button type="button" data-pk="'+k+':login" onclick="srxGoLogin(\''
+        +_slot+'\')">'+esc(_lbl.trim())+'</button>');
+     }else{
+      ac.push('<button type="button" data-pk="'+k+':verify" onclick="verifyNow(\''+k+'\')">去验证</button>');
+     }
+    }else{
+     ac.push('<button type="button" data-pk="'+k+':verify" onclick="verifyNow(\''+k+'\')">去验证</button>');
+    }
+   }
+   const _open=PACE.detail===k;
+   /* aria-controls 只在详情真的存在时才写：五行都挂同一个 id 会让
+     四行指向不存在的节点（无效 IDREF）。 */
+   ac.push('<button type="button" data-pk="'+k+':trace" aria-expanded="'+(_open?'true':'false')+'"'
+     +(_open?' aria-controls="paceDetail"':'')
+     +' onclick="paceTrace(\''+k+'\')">'+(_open?'收起溯源':'展开溯源')
+     +'<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>');
+   /* 溯源紧贴被点的那一行：详情与行在同一个 map 里拼装、详情在前，
+     旧实现渲染在工具行之后，点第二行却在面板底部才出现。 */
+   let pre='';
+   if(_open)pre='<div class="pace-detail" id="paceDetail">'
+    /* 标题不再重复渠道名：详情紧贴该行下方，行内「携程」就在上面 2px 处，
+       写「携程 · 最近尝试与干预」等于同一屏重复两次（390 档 3 行内出现两次）。 */
+    +'<div class="pace-dh"><b>最近尝试与干预</b><span class="sp"></span>'
+    +'<span class="pace-dhint">只读证据 · 不入账</span></div>'
+    +'<div id="traceOut">'+(PACE.detailHTML||'<div class="pace-kv">读取中…</div>')+'</div></div>';
+   return '<div class="pace-row" data-on="'+(_open?'1':'0')+'" title="'+esc(adv.hint||'')+'">'
+    +'<span class="nm">'+srxPlatIcon(k)+esc(nm)+'</span>'
+    +'<span class="st"><i class="dot '+tone+'" aria-hidden="true"></i><span class="glip '+tone+'">'+esc(lab)+'</span></span>'
+    +'<span class="ev"><span class="e1">'+esc(ev||'—')+'</span>'
+     +(pathTxt||_qbit?('<span class="e2">'+(pathTxt?esc(pathTxt):'')+(pathTxt&&_qbit?' · ':'')+_qbit+'</span>'):'')+'</span>'
+    +'<span class="ac">'+ac.join('')+'</span></div>'+pre;
   }).join('');
-  const urg=Object.keys(ch).map(k=>{
-   const a=(ch[k]||{}).advice||{};
-   if(a.severity!=='act'&&a.severity!=='wait')return '';
-   return '<span style="white-space:normal;overflow-wrap:anywhere">'+(CN[k]||k)+'：'+esc(a.hint)+(a.eta_s?('（'+_paceLeft(a.eta_s)+'）'):'')+'</span>';
-  }).filter(Boolean);
-  // 自动处理类（路径劣化/软拒/日历兜底）也要出现在建议行：
-  // 否则 chips 显示"路径劣化"、下面却写"各渠道正常"，同屏自相矛盾。
-  const auto=Object.keys(ch).map(k=>{
-   const a=(ch[k]||{}).advice||{};
-   if(a.severity!=='auto')return '';
-   return '<span style="white-space:normal;overflow-wrap:anywhere">'+(CN[k]||k)+'：'+esc(a.hint)+'</span>';
-  }).filter(Boolean);
-  const adviceRow=(urg.length||auto.length)
-   ?'<div style="margin:2px 0;color:#b07700">'
-     +(urg.length?('现在要做什么：'+urg.join(' · ')):'')
-     +((urg.length&&auto.length)?' · ':'')
-     +(auto.length?('已自动处理：'+auto.join(' · ')):'')
-     +'</div>'
-   :'<div style="margin:2px 0;color:#1a9e75">现在无需操作：各渠道近 24h 正常</div>';
-  const qs=(q.start&&q.end)?(esc(q.start)+'–'+esc(q.end)+' · 当前'+(q.active?'<b style="color:#b07700">窗内（不扫）</b>':'窗外')):'已关闭';
-  const plan=(parseInt(lr.fast)||0)+(parseInt(lr.slow)||0)+(parseInt(lr.skip)||0);
-  let pathRow='';
-  try{
-   const pj=await (await fetch('/api/paths?hours=24',{cache:'no-store'})).json();
-   const bits=Object.keys(pj.platforms||{}).map(k=>{
-    const node=pj.platforms[k]||{},ps=node.paths||{},sc=node.scopes||{};
-    const cell=(pp,v)=>{
-     v=v||{};const n=parseInt(v.attempts)||0;if(!n)return '';
-     const det=parseInt(v.detail_ok)||0,cal=parseInt(v.calendar_ok)||0;
-     const pct=_pacePct(v.rate),onlyCal=(det===0&&cal>0);
-     const val=onlyCal?('日历'+cal):(pct+'%');
-     const col=onlyCal?'#b07700':_paceColor(pct);
-     const tip=pp+'：尝试'+n+' · 明细'+det+' · 日历'+cal+' · 拦截'+(parseInt(v.blocked)||0)+' · 软拒'+(parseInt(v.soft)||0)+' · 空'+(parseInt(v.empty)||0)+' · 错误'+(parseInt(v.error)||0)+' · 最近成功'+(v.last_ok_at||'—');
-     return '<span style="white-space:nowrap" title="'+esc(tip)+'">'+esc(pp)+' <b style="color:'+col+'">'+val+'</b><span style="color:var(--mut)">('+n+')</span></span>';
-    };
-    const scoped=(name,label)=>{
-     const s=sc[name]||{},sp=s.paths||{};
-     const one=Object.keys(sp).map(pp=>cell(pp,sp[pp])).filter(Boolean).join(' ');
-     return one?(label+' '+one):'';
-    };
-    let one=[scoped('dom','国内'),scoped('intl','国际')].filter(Boolean).join(' · ');
-    if(!one)one=Object.keys(ps).map(pp=>cell(pp,ps[pp])).filter(Boolean).join(' ');
-    if(!one)return '';
-    const qn=parseInt(node.query_attempts)||0;
-    const q=qn?('查询'+_pacePct(node.query_rate)+'% · 明细'+(parseInt(node.query_detail_ok)||0)+'/日历'+(parseInt(node.query_calendar_only)||0)+' · '):'';
-    return '<span style="white-space:normal">'+esc(CN[k]||k)+' <span style="color:var(--mut)">'+q+'</span>'+one+'</span>';
-   }).filter(Boolean);
-   if(bits.length)pathRow='<div style="margin-top:2px">近 24h 路径 '+bits.join(' · ')+'</div>';
-  }catch(e){}
-  const WARM=['qunar','fliggy','tuniu'];
+  /* —— 本轮节流：量尺 + 配额轨 + 出处 —— */
+  const _fast=_n(lr.fast),_slow=_n(lr.slow),_skip=_n(lr.skip),_paced=_n(lr.paced);
+  const _plan=_fast+_slow+_skip;
+  const _covVal=(j.coverage&&(j.coverage.sent||[]).length)
+   ?(j.coverage.ratio==null?null:Math.round(Number(j.coverage.ratio)*100)+'%'):null;
+  const _st=(val,lab,tone,tip)=>'<div class="pace-stat'+(tone?(' '+tone):'')+'"'
+   +(tip?(' title="'+esc(tip)+'"'):'')+'><b>'+val+'</b><span>'+esc(lab)+'</span></div>';
+  /* 覆盖率在「一条没发」时给「—」而不是 0%（0% 会被读成发了全失败）。 */
+  const _stats='<div class="pace-stats">'
+   +_st(_covVal===null?'—':_covVal,'本轮覆盖率',_covVal===null?'na':(_covVal==='100%'?'':'warn'),
+       _covVal===null?'本轮还没有发出任何请求（都被下面三格节流掉了），所以没有覆盖率可言；'
+         +'给 0% 会被读成「发了但全失败」':('本轮计划发出的请求里，实际发出的占比 '+_covVal))
+   +_st(_fast+'<i>次</i>','快档')+_st(_slow+'<i>次</i>','慢档')
+   +_st(_skip+'<i>次</i>','TTL 内跳过')+'</div>';
+  /* 配额轨：快/慢/跳过按份额分段；三项全 0 时给一条空轨而不是消失
+     （消失会让「本轮还没排期」读成「没有这一块」）。 */
+  const _tot=Math.max(1,_fast+_slow+_skip);
+  const _w=v=>(v/_tot*100).toFixed(2)+'%';
+  const _rail='<div class="pace-rail" role="img" aria-label="本轮排期 '+_plan+' 次：快档 '+_fast+'、慢档 '+_slow+'、TTL 内跳过 '+_skip+'">'
+   +(_plan?('<i class="rf" style="width:'+_w(_fast)+'"></i><i class="rs" style="width:'+_w(_slow)+'"></i><i class="rk" style="width:'+_w(_skip)+'"></i>'):'')
+   +'</div><div class="pace-legend">'
+   +'<span><i class="rf"></i>快档 <b>'+_fast+'</b></span>'
+   +'<span><i class="rs"></i>慢档 <b>'+_slow+'</b></span>'
+   +'<span><i class="rk"></i>TTL 内跳过 <b>'+_skip+'</b></span>'
+   +(_paced?('<span>主动未发 <b>'+_paced+'</b></span>'):'')+'</div>';
+  /* 出处行：每个计数都能追到哪一分钟 / 哪一家，但它是旁证（11px） */
+  const _src=[];
+  if(lr.at)_src.push('轮次 '+esc(lr.at));
+  if(_covVal!==null)_src.push('覆盖率（家）<b>'+_covVal+'</b> · '+(j.coverage.ok||[]).length+'/'+(j.coverage.sent||[]).length+' 家出数');
+  if(lr.sent_by&&Object.keys(lr.sent_by).length)
+   _src.push('各渠道 <b>'+Object.keys(lr.sent_by).map(k=>_tk(k)+' '+_n(lr.sent_by[k])
+     +((lr.paced_by&&lr.paced_by[k])?('/未发'+_n(lr.paced_by[k])):'')).join(' · ')+'</b>');
+  if(lr.busy&&lr.busy.length)_src.push('会话让位 '+esc(lr.busy.map(_tk).join('、')));
+  const _bktObj=j.bucket||{};
+  _src.push('近一分钟用量 '+esc(Object.keys(_bktObj).map(k=>_tk(k)+' '+_n((_bktObj[k]||{}).per_min_used)).join(' · ')||'无')
+    +(cf.per_minute?('（上限 '+cf.per_minute+'）'):'（不限额）'));
+  const _kv='<div class="pace-kv">'+_src.join('<span class="eq">｜</span>')+'</div>';
+  /* —— 复发：可跟踪的问题 —— */
+  const recs=(j.recurrences||[]).slice(0,5);
+  const _recHtml=recs.length
+   ?('<div class="pace-sec">反复出现<span class="pace-sub">近 24h 同一渠道 × 通路 × 状态 ≥3 次</span>'
+      +'<span class="sp"></span></div><div class="pace-recs">'+recs.map((x,i)=>{
+      const k=x.kindLabel||x.kind||x.status;
+      const tone=x.recovered?'ok':((x.kind==='soft'||x.autoHeal)?'warn':'bad');
+      const tail=x.recovered?'已恢复':(x.autoHeal?'下一轮自动预热':'需人工处理');
+      const rt=(x.from_city&&x.to_city)?('<span class="r">'+esc(x.from_city)+'→'+esc(x.to_city)+'</span> '):'';
+      const ev2=x.evidence||{};
+      const _tailTxt=tail+(ev2.note?(' · '+String(ev2.note).slice(0,40)):'')
+        +((ev2.http_status)?(' · HTTP '+String(ev2.http_status)):'');
+      return '<div class="pace-rec"><span class="who"><span class="seq">'+(i+1)+'</span>'+esc(_tk(x.platform))+'</span>'
+       +'<span class="what">'+esc(x.path||'?')+' · '+rt+'<span class="st '+tone+'">'+esc(k)+'</span>'
+        /* 备注单行截断；全文放 title，截断不等于丢信息。 */
+        +'<span class="h" title="'+esc(_tailTxt+(ev2.note?(' ｜ '+String(ev2.note)):''))+'">'
+        +esc(_tailTxt)+'</span></span>'
+       +'<span class="cnt">'+_n(x.count)+'<i>次</i></span></div>';
+     }).join('')+'</div>')
+   :('<div class="pace-sec"><b>反复出现</b><span class="pace-sub">近 24h 无同一通路重复失败</span></div>');
+  /* —— 干预：预热与自检 —— */
+  /* 预热只对声明了 warmup_url 的渠道生效（ctrip / tongcheng 当前没有，
+     打首页也没意义）。旧实现把这两家直接从按钮行里删掉，用户只看到
+     「预热 3 个 / 自检 5 个」，会以为面板漏渲染或这两家没有入口记录。
+     现在五家全列，无入口的给不可用态 + 原因，可点与不可点一眼分清。 */
+  const WARM=cf.warmup_platforms||[];
   const PROBE=['qunar','fliggy','ctrip','tongcheng','tuniu'];
-  const warmRow='<div style="margin-top:2px">手动预热 '+WARM.map(p=>'<a href="javascript:void(0)" style="color:var(--blue);margin-right:8px" onclick="warmNow(\''+p+'\')">'+p+'</a>').join('')+'<span id="warmOut" style="margin-left:4px">'+_warmAllRes+'</span></div>';
-  const probeAll=' <a href="javascript:void(0)" style="color:var(--blue);margin-right:8px" onclick="probeAll()">全部自检</a>';
-  const warmAll=' <a href="javascript:void(0)" style="color:var(--blue);margin-right:8px" onclick="warmAll()">全部预热</a>';
-  const probeRow='<div style="margin-top:2px">渠道自检 '
-   +'<select id="probeScopeSel" onchange="setProbeScope(this.value)" style="margin-right:6px;font-size:12px;padding:1px 4px">'
+  const warmRow='<span class="g"><b>预热</b>'
+   +PROBE.map(p=>WARM.indexOf(p)>=0
+     ?('<button type="button" data-pk="warm:'+p+'" onclick="warmNow(\''+p+'\')">'+esc(_tk(p))+'</button>')
+     :('<button type="button" class="na" disabled aria-disabled="true" data-pk="warm:'+p+'"'
+       +' title="'+esc(_tk(p)+'：该渠道未配置预热入口，打首页不会下发可用会话')+'">'
+       +esc(_tk(p))+'</button>')).join('')
+   +'<button type="button" data-pk="warm:all" class="all" onclick="warmAll()">全部</button><span class="out" id="warmOut">'+esc(_warmAllRes)+'</span></span>';
+  const probeRow='<span class="g"><b>自检</b><select id="probeScopeSel" data-pk="probe:scope" aria-label="自检范围" onchange="setProbeScope(this.value)">'
    +'<option value=""'+(_probeScope===''?' selected':'')+'>自动</option>'
    +'<option value="dom"'+(_probeScope==='dom'?' selected':'')+'>国内</option>'
-   +'<option value="intl"'+(_probeScope==='intl'?' selected':'')+'>国际</option>'
-   +'</select>'
-   +PROBE.map(p=>'<a href="javascript:void(0)" style="color:var(--blue);margin-right:8px" onclick="probeNow(\''+p+'\')">'+p+'</a>').join('')+'<span id="probeOut" style="margin-left:4px">'+_probeAllRes+'</span></div>';
-  box.innerHTML='<div style="margin-bottom:4px"><b>节流状态</b> · 静默窗 '+qs
-   +' <a href="javascript:void(0)" onclick="loadPacing()" style="color:var(--blue);margin-left:6px">刷新</a></div>'
-   +adviceRow
-  +((j.recurrences||[]).length?('<div style="margin:2px 0;white-space:normal;overflow-wrap:anywhere;color:#b07700">反复出现：'
-      +esc((j.recurrences||[]).slice(0,5).map(x=>{
-        const k=x.kindLabel||x.kind||x.status;
-        const auto=x.autoHeal?'（自动）':'（需人工）';
-        const ev=x.evidence||{};
-        const tail=ev.note?(' · '+String(ev.note).slice(0,28)):'';
-        return (CN[x.platform]||x.platform)+' '+x.path+' '+k+'×'+x.count+auto+tail;
-      }).join(' · '))+'</div>'):'')
-   +'<div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:4px">'+chips+'</div>'
-   +'<div>本轮计划 '+plan+' 次（快 '+lr.fast+' / 慢 '+lr.slow+' / TTL 内 '+lr.skip+'） · 实发 '+(lr.sent||0)+' 次'
-   +(lr.paced?(' · 主动未发 '+(lr.paced||0)+' 次'):'')
-   +' · 熔断 '+(lr.trips||[]).length+' 次 · 会话让位 '+esc((lr.busy||[]).join('、')||'无')+'</div>'
-   +((j.coverage&&(j.coverage.sent||[]).length)?('<div>本轮覆盖率 <b style="color:'+((j.coverage.ratio>=0.8)?'#1a9e75':((j.coverage.ratio>0)?'#b07700':'var(--red)'))+'">'+Math.round((j.coverage.ratio||0)*100)+'%</b>（有数 '+esc((j.coverage.ok||[]).map(k=>CN[k]||k).join('、')||'无')+' / 实发 '+esc((j.coverage.sent||[]).map(k=>CN[k]||k).join('、'))+((j.coverage.soft||[]).length?(' · 软拒 '+esc((j.coverage.soft||[]).map(k=>CN[k]||k).join('、'))):'')+'）</div>'):'')
-   +((lr.sent_by&&Object.keys(lr.sent_by).length)?('<div style="white-space:normal;overflow-wrap:anywhere">各渠道：'+esc(Object.keys(lr.sent_by).map(k=>(CN[k]||k)+' 实发'+(lr.sent_by[k]||0)+((lr.paced_by&&lr.paced_by[k])?('/未发'+lr.paced_by[k]):'')).join(' · '))+'</div>'):'')
-   +'<div style="white-space:normal;overflow-wrap:anywhere">预算：最小间隔 '+esc(String((j.cfg&&j.cfg.min_gap_s)||0))+'s · 每分钟上限 '+esc(String((j.cfg&&j.cfg.per_minute)||0))+'（0=不限） · 近一分钟用量 '
-   +esc(Object.keys(j.bucket||{}).map(k=>(CN[k]||k)+' '+((j.bucket[k]||{}).per_min_used||0)).join(' · ')||'无')+'</div>'
-   +pathRow+warmRow+probeRow+'<div id="traceOut"></div>';
- }catch(e){box.innerHTML='<span style="color:var(--red)">'+esc(String(e))+'</span>';}
+   +'<option value="intl"'+(_probeScope==='intl'?' selected':'')+'>国际</option></select>'
+   +PROBE.map(p=>'<button type="button" data-pk="probe:'+p+'" onclick="probeNow(\''+p+'\')">'+esc(_tk(p))+'</button>').join('')
+   +'<button type="button" data-pk="probe:all" class="all" onclick="probeAll()">全部</button><span class="out" id="probeOut">'+esc(_probeAllRes)+'</span></span>';
+  /* 干预成功率（r484）：按动作给出「N 次里几次真救回来」——这是选按钮的
+     依据。样本 <3 只说次数不给百分比（1/1=100% 会把人带偏）；一个动作都
+     没有可判断样本时不出现，避免头部多一段空噪。
+     r506：**判不了 ≠ 没按过**。真实库 10-29 当天有 92 次重登、而当天零条
+     采集样本（采集自 10-28 14:34 起停摆），旧筛选（n>0）把 relogin 整条
+     抹掉，读者无从区分「没按过」与「按了还判不了」；现在后者列出次数，
+     与「样本不足」是两种不同的事实。 */
+  const _iv=j.iv_rate||{};
+  const _ivName={probe:'自检',warmup:'预热',reset:'解除',verify:'验证',relogin:'重登'};
+  /* 作用域中文（r511）：与溯源表同一套词，两处各写一份会漂移。 */
+  const _ivScope={dom:'国内',intl:'国际',pc:'PC',h5:'H5',fliggy_h5:'飞猪 H5'};
+  const _ivRate=(()=>{
+   const _all=Object.keys(_iv).filter(k=>_iv[k]&&(_iv[k].n>0||_iv[k].unjudged>0));
+   const judged=_all.filter(k=>_iv[k].n>0)
+     .sort((a,b)=>(_iv[b].rate||0)-(_iv[a].rate||0)).slice(0,4);
+   const pending=_all.filter(k=>!(_iv[k].n>0))
+     .sort((a,b)=>(_iv[b].unjudged||0)-(_iv[a].unjudged||0)).slice(0,3);
+   if(!judged.length&&!pending.length)return ['',''];
+   const parts=judged.map(k=>{
+    const d=_iv[k],nm=_ivName[k]||k;
+    /* 可靠性由后端标注（r486）：前端不再自己写 n>=3——两处各写一份，
+       迟早会漂移成「API 说不可靠、界面照样报百分比」。 */
+    const head=nm+(d.reliable?(Math.round((d.rate||0)*100)+'%（'+d.healed+'/'+d.n+'）')
+      :(' '+d.healed+'/'+d.n+' 次有效 · 样本不足'));
+    /* 分域拆分（r511）：自检按钮本身就是按域选的（自动/国内/国际），
+       合成一个 88% 答不出「该选哪一域」。只在该动作真的分过域时附注，
+       且只列判得了的那几域——判不了的域已在「待判」句里说过，不重复。 */
+    const _sc=Object.keys(d.scopes||{}).filter(x=>((d.scopes[x]||{}).n||0)>0);
+    if(!_sc.length)return head;
+    _sc.sort((a,b)=>((d.scopes[b]||{}).rate||0)-((d.scopes[a]||{}).rate||0));
+    return head+'（'+_sc.map(x=>{
+      const s=d.scopes[x];
+      return (_ivScope[x]||x)+' '+(s.reliable?(Math.round((s.rate||0)*100)+'%')
+        :(s.healed+'/'+s.n));
+    }).join(' · ')+'）';
+   });
+   /* 两段各自独立成句（r506）：拼成一句会读成「成功率含 92 次待判」。 */
+   const pend=pending.map(k=>(_ivName[k]||k)+' '+_iv[k].unjudged+' 次');
+   return [parts.length?('近 7 天成功率 '+parts.join(' · ')):'',
+           pend.length?(pend.join('、')+' 待判（窗口内无采集样本）'):''];
+  })();
+  const _t=_paceSnapAt?new Date(_paceSnapAt):null;
+  const _hms=_t?([_t.getHours(),_t.getMinutes(),_t.getSeconds()].map(x=>String(x).padStart(2,'0')).join(':')):'';
+  /* 10s 自动刷新会整块重建；停在某个按钮上的键盘用户不能因此坠回 body
+     （全站 chips/表行的既有契约）。重建前记下焦点所指的「哪一行 + 哪个
+     动作」，重建后按同一索引回焦——索引稳定，因为行与动作都由同一份
+     渠道顺序生成。 */
+  box.innerHTML=led
+   +_note
+   +'<div class="pace-sec"><b>逐渠道</b><span class="pace-sub" title="按轮判定 · 分域/分通路 · 在用查询率">按轮判定 · 分域/分通路 · 在用查询率</span>'
+    +'<span class="sp"></span><button type="button" data-pk="refresh" onclick="loadPacing(true)" title="立即重新读取">'
+    +(_hms?('刷新 · '+_hms):'刷新')+'</button></div>'
+   +'<div class="pace-ch">'+chips+'</div>'
+   +'<div class="pace-sec">本轮节流<span class="pace-sub">计划 ＝ 快档 ＋ 慢档 ＋ TTL 内跳过</span></div>'
+   +_stats+_rail+_kv
+   +_recHtml
+   +'<div class="pace-sec"><b>干预</b><span class="pace-sub" title="预热养会话 · 自检当场取数，都只读不改配置">预热养会话 · 自检当场取数，都只读不改配置</span>'
+    /* 全文进 title（r511）：分域拆分后这段在 420 档会被省略号截掉，
+       截掉的正是「国内/国际」——那恰好是选哪一域自检的依据。
+       与 .pace-rec 备注同一惯例：截断不等于丢信息。 */
+    +(_ivRate[0]?('<span class="pace-sub pace-ivr" title="'+esc(_ivRate[0])+'">'+esc(_ivRate[0])+'</span>'):'')
+    +(_ivRate[1]?('<span class="pace-sub pace-ivp" title="'+esc(_ivRate[1])+'">'+esc(_ivRate[1])+'</span>'):'')
+    +'</div>'
+   +'<div class="pace-tools">'+warmRow+probeRow+'</div>';
+  _paceRestoreFocus();
+ }catch(e){box.innerHTML='<div class="pace-empty">读取失败：'+esc(String(e&&e.message||e))+'</div>';}
 }
+/* 焦点陪跑：只认「哪个渠道的哪个动作」，不认 DOM 节点（节点每拍换新）。
+   刷新按钮与下拉各自有固定键；行内动作键含渠道名，换序也不丢。 */
+function _paceRestoreFocus(){
+ try{
+  const box=$('paceBox');if(!box)return;
+  const k=PACE.focusKey;if(!k)return;
+  const el=box.querySelector('[data-pk="'+String(k).replace(/"/g,'')+'"]');
+  if(el&&el!==document.activeElement)el.focus({preventScroll:true});
+ }catch(e){}
+}
+(function(){
+ /* 记录焦点键：捕获阶段监听，任何一次重建/轮询前都能记住用户停在哪 */
+ document.addEventListener('focusin',function(e){
+  const t=e.target;if(!t||!t.closest)return;
+  const pk=t.getAttribute&&t.getAttribute('data-pk');
+  if(pk)PACE.focusKey=pk;
+  else if(t.closest('#paceBox'))PACE.focusKey='';
+ },true);
+})();
 async function showTrace(p){
  const out=$('traceOut');if(!out)return;
  out.textContent='读取 '+p+' 最近尝试…';
@@ -15077,19 +17956,46 @@ async function showTrace(p){
   // 有没有恢复"，而不是只看当前状态（那可能是干预前的旧结论）。
   const ivs=(j.interventions||[]).map(x=>{
    const t=String(x.at||'').slice(5,16),act=String(x.action||'');
-   const col=x.ok?'#1a9e75':'var(--red)';
-   return '<div style="white-space:normal;overflow-wrap:anywhere">'+esc(t)+' · <b>'+esc(act)+'</b>'
-     +' · <span style="color:'+col+'">'+(x.ok?'成功':'失败')+'</span>'
+   /* auto_* 不是人工操作：ok=0 是其正常语义，别染红写成「失败」（同上） */
+   const _auto2=/^auto_/.test(act);
+   const col=_auto2?'var(--mut)':(x.ok?'#1a9e75':'var(--red)');
+   const _ver2=_auto2?'系统自动':(x.ok?'成功':'失败');
+   /* 动作名走中文：这里曾直出 relogin/auto_trip 这类英文枚举，
+     与面板上「上次重登 44%→100%」对不上号。 */
+   const _acn=({probe:'自检',warmup:'预热',reset:'解除',verify:'验证',
+     relogin:'重登',auto_trip:'自动熔断'})[act]||act;
+   /* 作用域（r510）：与节流面板同一套词——两处各写一份会漂移。 */
+   const _sc=String(x.scope||'').trim();
+   const _scn=({dom:'国内',intl:'国际',pc:'PC',h5:'H5',
+     fliggy_h5:'飞猪 H5'})[_sc]||_sc;
+   return '<div style="white-space:normal;overflow-wrap:anywhere">'+esc(t)+' · <b>'+esc(_acn)+'</b>'
+     +(_scn?(' <i style="font-style:normal;color:var(--mut)">'+esc(_scn)+'</i>'):'')
+     +' · <span style="color:'+col+'">'+_ver2+'</span>'
      +(x.rows?(' · '+esc(String(x.rows))+' 行'):'')
      +(x.ms?(' · '+esc((x.ms/1000).toFixed(1))+'s'):'')
      +(x.note?(' · '+esc(String(x.note).slice(0,48))):'')+'</div>';
   }).join('');
   const eff=j.effect||{};
+  /* 分域前后（r512）：与节流面板同一套读法，两处各写一份会漂移。 */
+  const _effSc=(eff.scope==='dom'||eff.scope==='intl')
+    ?(((eff.scope==='intl')?'国际':'国内')+'域 '
+      +(eff.scope_before==null?'无样本':(Math.round(eff.scope_before*100)+'%（'+eff.scope_before_n+'）'))
+      +' → '
+      +(eff.scope_after==null?'无样本':(Math.round(eff.scope_after*100)+'%（'+eff.scope_after_n+'）')))
+    :'';
   const effLine=(eff.has)?('<div style="margin-top:6px;font-size:11px">干预后对比：'
     +'<span style="color:var(--mut)">前 24h '+(eff.before==null?'无样本':(Math.round(eff.before*100)+'%（'+eff.before_n+'）'))+'</span>'
     +' → <b style="color:'+((eff.after==null)?'var(--mut)':((eff.after>=0.5)?'#1a9e75':'var(--red)'))+'">'
     +(eff.after==null?'无样本':(Math.round(eff.after*100)+'%（'+eff.after_n+'）'))+'</b>'
-    +(eff.after==null?' · <span style="color:var(--mut)">干预后还没有新样本</span>':'')+'</div>'):'';
+    +(eff.after==null
+      ?(eff.stalled
+        ?(' · <span style="color:var(--red)">采集已停 '+esc(String(eff.stalled_hours))
+          +' 小时（最后样本 '+esc(String(eff.last_sample_at).slice(5,16))
+          +'），这次干预还没被验证</span>')
+        :(' · <span style="color:var(--mut)">干预后还没有新样本</span>'))
+      :'')
+    +(_effSc?('<br><span style="color:var(--mut)">本次干预针对：'+esc(_effSc)+'</span>'):'')
+    +'</div>'):'';
   const tr=(eff.trend||[]).map(t=>((t.rate==null)?'—':(Math.round(t.rate*100)+'%'))).join(' · ');
   const trLine=tr?('<div style="margin-top:2px;font-size:11px;color:var(--mut)">干预后每 30 分钟：'+esc(tr)+(eff.regressed?' <span style="color:var(--red)">（最近回落）</span>':'')+'</div>'):'';
   out.innerHTML=effLine+trLine+'<div style="margin-top:6px;font-size:11px;color:var(--mut)">'+esc(p)+' 最近尝试（时间 · 入口 · 状态 · 证据）</div>'+(rows||'<div style="color:var(--mut)">无记录</div>')
@@ -15117,7 +18023,11 @@ function buildForm(){if(!CFG)return;let h='',gh='';
  try{document.querySelectorAll('#cfgform input[type=date]').forEach(el=>{
   if(!el.id)return;if(el.value)_DATEVAL[el.id]=el.value;else delete _DATEVAL[el.id];});}catch(e){}
  const _fae=document.activeElement,_fkid=(_fae&&_fae.id)?_fae.id:null;   /* 重建不丢键盘焦点：回车加日期等承诺通道连续录入不坠 body（render/table data-k 先例的 id 版） */
- const glab=(no,zh,en,sum)=>'<div class="grouplab" data-sec="'+no+'" role="button" onclick="foldSec(this)" title="点击收起/展开该分区">'
+ /* r439：初始态就带 aria-expanded——原来只有 `_setFold`（用户点过一次后）
+    才写这个属性，首屏的 grouplab 对读屏是「没有折叠状态」，而同样走
+    `_setFold` 的 uhead2/rhead/chhead 首屏就有。初始为展开，与 chevron 的
+    `open` 同态。 */
+ const glab=(no,zh,en,sum)=>'<div class="grouplab" data-sec="'+no+'" role="button" aria-expanded="true" onclick="foldSec(this)" title="点击收起/展开该分区">'
   +'<span class="no">'+no+'</span>'
   +'<span class="zh">'+zh+'</span>'+(en?'<span class="en">'+en+'</span>':'')
   +'<span class="gsum">'+(sum||'')+'</span><span class="chev open">▾</span></div>';
@@ -15141,6 +18051,14 @@ function buildForm(){if(!CFG)return;let h='',gh='';
      +((type!=='text'&&type!=='ro')?'<div class="verr" id="'+id+'Err"></div>':''))
   +'</div>';
  const glsec=t=>'<div class="subsec">'+t+'</div>';   /* P2-A：与 .subsec 归一（字面样式同源，原内联缺 hairline 且 margin ±1px） */
+ /* 只读参数说明块（r521）：列「只能改 config.yaml」的采集参数与当前生效值。
+    rows = [[名称, 当前值, 键路径, 作用], ...]。只读——这里不提供编辑控件，
+    因为这些键改动在采集端需要重载，网页热改会给人「已经生效」的错觉。 */
+ const glnote=(title, rows)=>'<div class="glnote"><div class="gn-t">'+title+'</div>'
+  +(rows||[]).map(r=>'<div class="gn-r"><span class="gn-k">'+r[0]+'</span>'
+    +'<b class="gn-v">'+r[1]+'</b>'
+    +'<code class="gn-p" title="'+he(r[2])+'">'+r[2]+'</code>'
+    +'<span class="gn-h">'+r[3]+'</span></div>').join('')+'</div>';
  gh+=glsec('调度 · 保存即热生效')
   +'<div class="glgrid">'
   +glcell('扫描周期','glbIv','GLB.interval_minutes=Math.min(10080,Math.max(5,parseInt(this.value)||30))',esc(GLB.interval_minutes),'5–10080 · 改动即重排下一轮',null,'分钟')
@@ -15164,6 +18082,7 @@ function buildForm(){if(!CFG)return;let h='',gh='';
   +'<div style="display:flex;align-items:center;gap:10px;margin:2px 0 4px;flex-wrap:wrap">'
   +'<button class="btn2" onclick="exitCheck(this)">出口自检 · 取公网 IP</button>'
   +'<span id="exitOut" style="font-size:12px;color:var(--mut)">换手机热点 / 重播宽带后点一下，确认出口 IP 真的变了（只发一次请求）</span></div>'
+  +'<div id="glThrottle" style="scroll-margin-top:calc(var(--hdh,54px) + 24px)"></div>'
   +glsec('🧯 节流 · 熔断（1–5 区 · 保存即热生效）')
   +'<div class="glgrid">'
   +glcell('静默起','glbQs','GLB.scan_quiet_start=(this.value||"").trim()',esc(GLB.scan_quiet_start||''),'凌晨停扫起点（HH:MM，留空=关闭）。只管抓取，不影响推送','text',null,'01:00')
@@ -15175,16 +18094,26 @@ function buildForm(){if(!CFG)return;let h='',gh='';
   +glcell('最小间隔','glbGap','GLB.min_gap_s=Math.max(0,Math.min(300,parseFloat(this.value)||0))',esc(GLB.min_gap_s||0),'同一渠道两次请求的最小间隔；0=不限（去哪儿内部另有 8s）',null,'秒')
   +glcell('每分钟上限','glbRpm','GLB.per_minute=Math.max(0,Math.min(600,parseInt(this.value)||0))',esc(GLB.per_minute||0),'同一渠道每分钟最多几次；0=不限（滑动窗口，不对齐整分钟）',null,'次')
   +glcell('熔断','glbBrk','GLB.breaker_enabled=this.checked',GLB.breaker_enabled!==false,'命中 429/风控/验证后停手冷却，而不是换姿势重试','check')
+  +glcell('成功率保护','glbHpen','GLB.health_penalty_enabled=this.checked',GLB.health_penalty_enabled!==false,'近 24h 成功率低于「合格线」时自动拉长该渠道 TTL。关掉后仍统计成功率、但不再自动降频——只在「宁可多打也不接受变慢」时才关','check')
+  +glcell('合格线','glbHok','GLB.health_ok_ratio=Math.max(0.05,Math.min(1,parseFloat(this.value)||0.7))',esc(GLB.health_ok_ratio==null?0.7:GLB.health_ok_ratio),'成功率 ≥ 此值不降频（默认 0.7）；低于它才拉长 TTL',null,'比率')
+  +glcell('降频线','glbHslow','GLB.health_slow_ratio=Math.min(GLB.health_ok_ratio||0.7,Math.max(0,parseFloat(this.value)||0.4))',esc(GLB.health_slow_ratio==null?0.4:GLB.health_slow_ratio),'成功率 ≥ 此值只轻降频，更低则重降频（默认 0.4）；自动钳到 ≤ 合格线',null,'比率')
+  +glcell('轻降频倍数','glbHsf','GLB.health_slow_factor=Math.max(1,Math.min(10,parseFloat(this.value)||1.5))',esc(GLB.health_slow_factor==null?1.5:GLB.health_slow_factor),'成功率落在降频线与合格线之间时的 TTL 倍数（默认 1.5）',null,'倍')
+  +glcell('重降频倍数','glbHslf','GLB.health_slowest_factor=Math.max(GLB.health_slow_factor||1.5,Math.min(20,parseFloat(this.value)||3))',esc(GLB.health_slowest_factor==null?3:GLB.health_slowest_factor),'成功率低于降频线时的 TTL 倍数（默认 3）；自动钳到 ≥ 轻降频倍数',null,'倍')
+  +glcell('判定样本下限','glbHms','GLB.health_min_samples=Math.max(1,Math.min(200,parseInt(this.value)||5))',esc(GLB.health_min_samples==null?5:GLB.health_min_samples),'近 24h 样本少于此次数不判定，避免首轮波动就被降频（默认 5）',null,'次')
   +glcell('熔断起步','glbBbs','GLB.breaker_base_s=Math.max(30,Math.min(3600,parseInt(this.value)||300))',esc(GLB.breaker_base_s||300),'首次冷却秒数；连续命中按 2 倍阶梯递增',null,'秒')
   +glcell('熔断封顶','glbBcs','GLB.breaker_cap_s=Math.max(120,Math.min(86400,parseInt(this.value)||3600))',esc(GLB.breaker_cap_s||3600),'单次冷却上限：封太死会掩盖渠道已经恢复的事实',null,'秒')
   +glcell('首页预热','glbWarm','GLB.warmup_enabled=this.checked',GLB.warmup_enabled!==false,'每轮每渠道先打一次首页再查深链：抹掉「无 referer / 无风控 cookie」这个最强机器指纹','check')
   +glcell('预热渠道','glbWarmP','GLB.warmup_platforms=(this.value||"").trim()',esc(GLB.warmup_platforms||''),'逗号分隔；只对声明了入口的渠道生效，留空=不预热','text',null,'qunar, fliggy, tuniu')
   +'</div>'
-  +'<div id="paceBox" role="status" aria-live="polite" style="margin:6px 0 2px;padding:10px 12px;border:0.5px solid rgba(0,0,0,.12);border-radius:var(--r10);font-size:12px;color:var(--mut);line-height:1.9">读取节流状态…</div>'
   +glsec('通用 · 保存即热生效')
   +'<div class="glgrid">'
   +glcell('浏览器 User-Agent（空=内置默认）','glbUa','GLB.user_agent=this.value',esc(GLB.user_agent||''),'全渠道共用的桌面 UA；风控策略变化时无需改码即可更换','text',null,'留空 = 内置桌面 UA')
   +'</div>'
+  +glnote('仅可在 config.yaml 中修改（保存网页配置不会覆盖它们）',
+    [['会话最长可用天数', (GLB.session_max_days>0?(GLB.session_max_days+' 天'):'不限'), 'crawler.session_max_days', '超过该天数即便不在预热名单也会强制续一次会话'],
+     ['并发上限', (GLB.max_concurrency>0?GLB.max_concurrency+' 个':'(自动)'), 'crawler.max_concurrency', '同时最多开几个采集任务；调低更稳、调高更快但更容易触发风控'],
+     ['TLS 指纹', (GLB.tls_impersonate||'(默认)'), 'crawler.tls_impersonate', '飞猪等走 curl_cffi 的渠道使用的浏览器指纹'],
+     ['登录窗口可见', (GLB.login_desktop?'桌面可见':'(无头)'), 'crawler.login_desktop', '弹登录窗时是否显示浏览器界面']])
   +glsec('♻ 启动级 · 运行与存储 · 路径可迁移 · 保存后重启生效 <button class="btn2 secrestart" title="打开重启与迁移中心：查看差量、迁移预案并重启" onclick="openRestartCenter()">'+ic('rotate')+' 重启中心</button>')
   +'<div class="storehead"><span class="sh-t">配置文件</span><span class="sh-path" title="'+esc((RUNTIME&&RUNTIME.config_path)||'')+'">'+esc((RUNTIME&&RUNTIME.config_path)||'config.yaml')+'</span>'
   +'<span class="sh-acts">'
@@ -15237,7 +18166,7 @@ function buildForm(){if(!CFG)return;let h='',gh='';
   if(!CFG.length){/* 空态引导：教新用户第一步怎么走 */
    h+='<div class="ucard" style="text-align:center;padding:46px 20px">'
     +'<div class="emptyico">'+ic('users')+'</div>'
-    +'<b style="font-size:15px">还没有监控用户</b>'
+    +'<b style="font-size:16px">还没有监控用户</b>'
     +'<div class="hint" style="margin:8px auto 16px;max-width:430px">每个用户是一套独立的航线与通知配置（给家人朋友各配一套互不打扰）。创建后填航线和心理价，保存即开始监控。</div>'
     +'<button class="btn2" onclick="addUser()">'+ic('plus')+' 创建第一个用户</button></div>';
   }
@@ -15265,16 +18194,18 @@ function buildForm(){if(!CFG)return;let h='',gh='';
         _spOn=!!(_sp0&&_sp0.enabled!==false&&(_sp0.from||_sp0.from_name)&&Number(_sp0.max_price)>0);   /* r339i 审计 P3：价位 0/缺=配置未完形，徽标不得报「开」 */
   const open=(OPEN_USER===i);
   const _uIssues=(u.routes||[]).filter(r=>_routeIssues(r).length);
-  h+='<div class="ucard" style="margin:10px 0;padding:0;overflow:hidden">'
+  h+='<div class="ucard" style="margin:12px 0;padding:0;overflow:hidden">'
    +'<div class="uhead2" role="button" data-u="'+i+'" aria-expanded="'+(open?'true':'false')+'" onclick="toggleUser(this)">'
    +'<span class="uava">'+esc((u.name||'?').slice(0,1))+'</span>'
    +'<b>'+esc(u.name)+'</b>'
+   +'<span class="upills">'
    +'<span class="upill">'+nR+' 关注航线</span>'
    +'<span class="upill'+(_spOn?' ok':'')+'" title="特价监控">'+ic('target')+'特价 '+(_spOn?'开':'关')+'</span>'
    +'<span class="upill'+((u.notifier||{}).win_toast!==false?' ok':'')+'" title="达标 Windows 弹窗">'+ic('bell')+'弹窗 '+((u.notifier||{}).win_toast!==false?'开':'关')+'</span>'
    +'<span class="upill push'+(_pushReady?' ok':'')+(_pushOn&&!_pushReady?' warn':'')+'">'+(_pushReady?'推送已就绪':(_pushOn?'推送待完善':'未配推送'))+'</span>'
    +(_uIssues.length?'<span class="upill warn" title="'+esc(_uIssues.map(r=>(r.from_name||r.from)+'→'+(r.to_name||r.to)+'：'+_routeIssues(r).join('、')).join('；'))+'">'+_uIssues.length+' 条待完善</span>':'')
    +'<span class="upill warn udirty" id="udirty-'+i+'">● 未保存</span>'
+   +'</span>'
    +'<span class="uhead-end">'
    +'<button type="button" class="uact danger" title="删除用户 '+esc(u.name)+'" aria-label="删除用户 '+esc(u.name)+'" onclick="delUser('+i+',this);event.stopPropagation()">'+ic('trash')+'</button>'
    +'<span class="chev'+(open?' open':'')+'">▾</span></span></div>'
@@ -15533,9 +18464,94 @@ function foldCh(ch){const hide=!_isFolded(ch);
  _setFold(ch,_foldSibs(ch),hide);
  FOLD.ch[ch.parentElement.dataset.ch]=hide;saveFold();
  ch.parentElement.classList.toggle('expanded',!hide);}
+/* 一键收齐：分组/航线/渠道三类折叠各自存档，逐层分散收起无法一眼看全局。 */
+function cfgFoldAll(){
+ /* r412：此前只收「当前可见分区」，切到别的 tab 仍各自敞着——用户实报
+    「各个 tab 展开状态没有办法一键全部收齐」。改成遍历所有分区：折叠态
+    一律写进 FOLD 存档，未渲染的分区在 applyFolds 重建时按存档收起。
+    r459：此前是单向的——收齐后按钮点第二次毫无反应（实测 open 0→0，
+    面板高度 300→300），文案还停在「已收齐 19」。用户对同类控件的原话
+    是「明显不是一个按钮多态的设计」，所以按「全部收齐 ⇄ 全部展开」做
+    真二态：已经全收着时再点就是全展开，按钮词面与 aria-expanded 同步。 */
+ const panels=[...document.querySelectorAll('.cfpanel')];
+ /* 只要还有一块敞着，本次就是「全部收齐」；已经全收着才转为「全部展开」
+    （否则首次点击会反着来：实测 7→19、面板 3250→12836）。 */
+ /* 判据看「正文是不是还敞着」，不能只看 aria：分组标题与用户卡头被
+    刻意排除在折叠之外（见 keepHead / uhead2 分支），它们的
+    aria-expanded 永远是 true，拿它判「还有敞着的」会把开关永久钉在
+    「收齐」档，第二击照样没反应。 */
+ let _anyOpen=false;
+ panels.forEach(panel=>{
+  panel.querySelectorAll('.grouplab[data-sec]').forEach(g=>{
+   if(_foldSibs(g).some(b=>!b.classList.contains('grouplab')&&
+      b.style.display!=='none'))_anyOpen=true;});
+  panel.querySelectorAll('.rline[data-rk]').forEach(rl=>{
+   const rh=rl.querySelector('.rhead');
+   if(rh&&_foldSibs(rh).some(b=>b.style.display!=='none'))_anyOpen=true;});
+  panel.querySelectorAll('.chcard[data-ch]').forEach(c=>{
+   const ch=c.querySelector('.chhead');
+   if(ch&&_foldSibs(ch).some(b=>b.style.display!=='none'))_anyOpen=true;});
+  panel.querySelectorAll('.uhead2[data-u]').forEach(h=>{
+   const b=h.nextElementSibling;
+   if(b&&!b.classList.contains('grouplab')&&!b.querySelector('.grouplab')&&
+      b.style.display!=='none')_anyOpen=true;});});
+ const hide=_anyOpen;
+ let n=0,_ufold=0;
+ /* r459b：分组标题本身必须留在屏幕上——实测「全部收齐」后 6 个
+    .grouplab 的高度全变 0（可视折叠头 6→0），再点一次也没有任何可点
+    的东西，用户读作「整页收空了」。标题是回到内容唯一的入口，
+    所以折叠体里永远剔除 .grouplab。 */
+ const keepHead=body=>body.filter(b=>!b.classList.contains('grouplab'));
+ panels.forEach(panel=>{
+  panel.querySelectorAll('.grouplab[data-sec]').forEach(g=>{
+   const body=keepHead(_foldSibs(g));if(!body.length)return;
+   _setFold(g,body,hide);FOLD.sec[g.dataset.sec]=hide;n++;});
+  panel.querySelectorAll('.rline[data-rk]').forEach(rl=>{
+   const rh=rl.querySelector('.rhead');if(!rh)return;
+   _setFold(rh,_foldSibs(rh),hide);FOLD.route[rl.dataset.rk]=hide;n++;});
+  panel.querySelectorAll('.chcard[data-ch]').forEach(c=>{
+   const ch=c.querySelector('.chhead');if(!ch)return;
+   _setFold(ch,_foldSibs(ch),hide);FOLD.ch[c.dataset.ch]=hide;n++;});
+  /* 用户卡头（uhead2）与 toggleUser 同源，必须一并收齐，否则会有卡敞着 */
+  panel.querySelectorAll('.uhead2[data-u]').forEach(h=>{
+   if(hide){
+    /* r467：卡体是一个**装着 .grouplab + 正文**的匿名 DIV（实测
+       .ucard 只有 2 个子元素：uhead2 与这个 DIV）。旧守卫见到
+       `body.querySelector('.grouplab')` 就整只 return，于是这张卡永远
+       收不起来——实测收齐后仍有 1 个 uhead2 挂着 aria-expanded=true、
+       卡高 60px。正确做法是**收正文、留标题**：把该 DIV 里除
+       .grouplab 段之外的块隐藏，分区标题与其正文交给各自的 foldSec。 */
+    const body=h.nextElementSibling;
+    if(!body)return;
+    if(body.classList.contains('grouplab'))return;
+    if(body.querySelector('.grouplab')){
+     const kids=[...body.children];
+     const heads=kids.filter(k=>k.classList.contains('grouplab'));
+     if(heads.length){
+      const first=heads[0],last=heads[heads.length-1];
+      const before=kids.slice(0,kids.indexOf(first));
+      const after=kids.slice(kids.indexOf(last)+1);
+      [...before,...after].forEach(k=>{k.style.display=hide?'none':'';});
+      h.setAttribute('aria-expanded',String(!hide));
+      const ch=h.querySelector('.chev');if(ch)ch.classList.toggle('open',!hide);
+      _ufold++;return;}}
+    _setFold(h,[body],true);_ufold++;}
+   else{h.setAttribute('aria-expanded','true');
+    const c=h.querySelector('.chev');if(c)c.classList.add('open');}});
+ });
+ if(hide){if(_ufold)setOpenUser(-1);n+=_ufold;}
+ saveFold();
+ const t=$('cfgFoldAllTxt');if(t)t.textContent=hide?(n?('已收齐 '+n):'无需收齐'):'已全部展开';
+ $('cfgFoldAll').setAttribute('aria-expanded',hide?'false':'true');
+ toast(hide?(n?('已收齐 '+n+' 个分区'):'当前分区没有可收起的区块'):'已全部展开','ok');
+ setTimeout(()=>{const x=$('cfgFoldAllTxt');if(x)x.textContent='全部收齐'},2200);
+}
 function applyFolds(){
+ /* r459b：与 cfgFoldAll 同律——分组标题不进折叠体，否则重建后整页
+    收空、没有任何返回内容的入口 */
  document.querySelectorAll('#cfgform .grouplab[data-sec]').forEach(g=>
-  _setFold(g,_foldSibs(g),!!FOLD.sec[g.dataset.sec]));
+  _setFold(g,_foldSibs(g).filter(b=>!b.classList.contains('grouplab')),
+   !!FOLD.sec[g.dataset.sec]));
  document.querySelectorAll('#cfgform .rline[data-rk]').forEach(rl=>
   _setFold(rl.querySelector('.rhead'),_foldSibs(rl.querySelector('.rhead')),
    FOLD.route[rl.dataset.rk]!==false));
@@ -16363,7 +19379,7 @@ function radarCfgRender(i,j){
   const b=d.best||{},hi=low.date===d.date;
   h+='<button type="button" class="chip" style="height:auto;min-height:52px;flex-direction:column;align-items:flex-start;justify-content:center;gap:2px;'+(hi?'border-color:var(--blue);color:var(--blue)':'')+'" onclick="radarCfgDetail(\''+esc(d.date)+'\','+i+')">'
    +'<span style="font-size:10px;color:var(--mut)">'+esc(d.date.slice(5))+'</span>'
-   +'<b style="font-size:15px">¥'+esc(b.price)+'</b>'
+   +'<b style="font-size:16px">¥'+esc(b.price)+'</b>'
    +'<span style="font-size:10px;color:var(--mut)">'+esc(SRX_PLATS[b.channel]?SRX_PLATS[b.channel][0]:b.channel)+' · '+(b.kind==='calendar'?'日历价':'榜单价')+(_radarBasis(b)?' · '+esc(_radarBasis(b)):'')+'</span></button>';
  });
  h+='</div><div class="muted" style="font-size:11px;padding-top:6px">'+esc(j.note||'日历/榜单价只作发现；点日期发起真实明细探针。')+((st.tuniu&&st.tuniu.rows)?' · 途牛日历为裸价（不含税）':'')+(low.basis_mixed?' · 最低价跨口径，已标注不可直接横比':'')+'</div>';
@@ -16989,6 +20005,9 @@ async function saveCfg(){
  if(_badLay){cfgErr('❌ '+_badLay);return;}
  if(!CFG.length){cfgErr('❌ 至少一个用户');return;}
  $('cfgmsg').textContent='保存中…';
+ /* 保存前的端口值（GitHub #9）：判断「这次是否真的改了端口」要用它，
+   而不是拿配置值和浏览器端口比——反代后面那两者本来就不相等。 */
+ const _portBefore=String(GLB.port||8765);
  try{const r=await fetch('/api/config',{method:'POST',
   headers:{'Content-Type':'application/json'},
   body:JSON.stringify({users:CFG,globals:GLB})});
@@ -17007,7 +20026,15 @@ async function saveCfg(){
    if(_schg.length)_restartArmed();
    if(RESTART&&RESTART.required)_restartArmed();   /* 刷新后仍可见：启动快照差量单源 */
    try{buildForm();}catch(e){}
-   if(String(GLB.port||8765)!==oldPort){
+   /* 端口跳转（GitHub #9）：原条件 `GLB.port !== location.port` 会把
+      **反向代理**用户赶走——用户在 443/8080 上访问，配置里写着 8765，
+      条件恒成立，保存后浏览器被强制跳到 host:8765（代理没这条路由），
+      表现为「保存失败 + 跳回 8765」。实测这就是 issue 描述的现象。
+      正确判据是「**这次保存真的改了端口**」：拿保存前的端口值与新值比，
+      只在两者不同、且浏览器当前就在旧端口上时才跳转；否则按普通
+      「需重启生效」处理，绝不把读者的地址栏改到他没访问过的地方。 */
+   const _portChanged=String(GLB.port||8765)!==String(_portBefore||GLB.port||8765);
+   if(_portChanged&&String(_portBefore)===oldPort){
     if(window.toast)toast('🎛 控制台端口已切换至 '+GLB.port+'，正在跳转…','ok');
     setTimeout(()=>{location.href=location.protocol+'//'+location.hostname
      +':'+GLB.port+location.pathname;},1600);
@@ -18375,7 +21402,20 @@ function srxRenderBand(){
      无数据航线永久渲染 14 个「未采」格，日期带收敛能力失效。 */
  const _bk=(SRX.pair||'')+'|'+(SRX.date||'');
  if(SRX._bandKey!==_bk){SRX._bandKey=_bk;SRX.bandExpand=false}
- if(!SRX.pair||!SRX.date){box.innerHTML='<div class="srx-band-empty"><span>选定出发日后显示真实价带；未采不补价。</span><button type="button" data-bandpick="1">选择出发日</button></div>';if(note)note.textContent='';if(sec)sec.classList.add('compact');return}
+ /* r434：空价带曾在概览里放一颗「选择出发日」，点击却把**下方另一块**
+    折叠的筛选区展开并把焦点丢过去。用户视角：我不过想在这个面板里挑个
+    日期，页面却多出一整块筛选器，再点收起概览就回不到原样（实测 ctx
+    46→142px，收起后整页仍比展开前高 96px）。
+    改法：日期候选直接长在价带空态里，选完就地出价带，全程不碰别处的
+    折叠态——展开收起各管各的，没有跨组件的连带副作用。 */
+ if(!SRX.pair||!SRX.date){
+  const da=srxDatesAvailable();
+  const msg=!SRX.pair?'先在检索控制台选定航线，这里才有真实价带。'
+   :(da.length?'选定出发日后显示真实价带；未采不补价。':'这条航线暂无真实落库的出发日，先在检索控制台发起查询。');
+  box.innerHTML='<div class="srx-band-empty"><span>'+msg+'</span>'
+   +(da.length?'<span class="srx-band-picks">'+da.map(d=>'<button type="button" class="srx-chip'+(SRX.date===d?' on':'')+'" data-date="'+he(d)+'" aria-pressed="'+(SRX.date===d)+'">'+he(d.slice(5))+'</button>').join('')+'</span>':'')
+   +'</div>';
+  if(note)note.textContent='';if(sec)sec.classList.add('compact');return}
  const anchor=SRX.bandAnchor||SRX.date;
  const key=srxCalKey();
  if(!SRX_CAL[key]&&!SRX_CAL_PEND[key]){
@@ -18487,11 +21527,16 @@ function srxGoLogin(p){
  try{switchView('cfg')}catch(e){}
  setTimeout(()=>{try{showCfgPanel('login');
   if(p){
-   const btn=[...document.querySelectorAll('#loginRows button')].find(x=>String(x.getAttribute('onclick')||'').includes("'"+p+"'"));
+   /* p 可以是厂商（ctrip）也可以是槽位（fliggy_h5）：按槽位定位时
+      命中「飞猪 H5」那一行的按钮，而不是整张飞猪卡。 */
+   const btn=[...document.querySelectorAll('#loginRows button')]
+    .find(x=>String(x.getAttribute('onclick')||'').includes("'"+p+"'"));
    const card=btn&&btn.closest('.lgcard');
    if(card){card.scrollIntoView({block:'center'});btn.focus({preventScroll:true});}
   }
-  toast(p?('在「渠道登录」点击 '+(LOGIN_CN[p]||p)+' 的「弹窗登录」，完成后回来即可'):'在「渠道登录」修复去哪儿/同程会话：点「弹窗登录」，完成后回来即可','ok');
+  const _nm=(typeof LOGIN_SLOT_CN!=='undefined'&&LOGIN_SLOT_CN[p])
+   ||(typeof LOGIN_CN!=='undefined'&&LOGIN_CN[p])||p;
+  toast(p?('在「渠道登录」点击 '+_nm+' 的「弹窗登录」，完成后回来即可'):'在「渠道登录」修复去哪儿/同程会话：点「弹窗登录」，完成后回来即可','ok');
  }catch(e){}},80);
 }
 /* 国际数据能力条：能力声明只写渠道事实（明细/日历/登录后明细），
@@ -18613,17 +21658,37 @@ function srxRenderOv(){
  const sub=(document.querySelector('#srxKpis .srx-kpi-sub')||{}).textContent||'';
  el.textContent='来源 '+src+'/'+total+' 渠道'+(kpis.length?' ｜ '+kpis.join(' · '):'')+(sub?' ｜ '+sub.trim():'');
 }
+/* 概览开合：唯一触发是标题行右侧的「展开概览/收起概览」。摘要条只是
+   只读状态（曾也是按钮，点开后自己消失=触发器跑了，且展开内容隔着一个
+   探针卡才出现，读作「展开在控制台下面」）。 */
 function srxToggleOverview(){
  const v=$('searchview');if(!v)return;
+ /* 开合只切「价带天数条 + 其后正文」；价带头是常驻标题行，
+    触发器（本函数唯一入口）在两态下都留在同一行同一位置。 */
  const on=v.classList.contains('srx-ov-collapsed');
  v.classList.toggle('srx-ov-collapsed',!on);
- const b=$('srxOvToggle');
- if(b){b.textContent=on?'收起概览':'展开概览';b.setAttribute('aria-expanded',on)}
- const hb=$('srxOvHero');if(hb)hb.setAttribute('aria-expanded',on?'true':'false');
- const bar=$('srxOvBar');if(bar)bar.setAttribute('aria-expanded',on?'true':'false');
- srxRenderCtx();
- try{localStorage.setItem('jpsrx_ovopen',on?'1':'0')}catch(e){}
- if(on)setTimeout(srxRenderOv,0);
+ const hb=$('srxOvHero');
+ if(hb){hb.textContent=on?'收起概览':'展开概览';hb.setAttribute('aria-expanded',on?'true':'false')}
+ /* 窄屏移动栏的「概览」与标题行按钮是同一状态的两个入口，不能各存一份 */
+ document.querySelectorAll('#srxMobilebar [data-mobile="overview"]').forEach(b=>{
+  b.setAttribute('aria-expanded',on?'true':'false');
+  b.textContent=on?'收起概览':'展开概览'});
+ /* r433：这里曾调 `srxRenderCtx()`——它按 `SRX.ctx` 重刷筛选区的
+    `ctx-collapsed` 类。于是**每次开合概览都会连带重算下方筛选区的
+    折叠态**：在概览里点过「选择出发日」把 ctx 置真之后，再点收起概览，
+    页面会先跳一下（筛选区展开/收起跟着动），用户读作「收不回去了、
+    非常割裂」。概览开合只该改自己的可见性；筛选区的折叠由它自己的
+    触发器（srxToggleCtx / srxPickDeparture）负责，互不越权。 */
+
+ if(on){
+  /* 展开后标题要重算一次横滑暗示（五源/价带的 scrollWidth 只有可见后
+     才可信）。这里同步补一次，保证调用方紧接着读取就是终态；下一帧
+     再补两次覆盖渲染未落位的首帧。 */
+  try{srxBriefHint();srxBandHint()}catch(e){}
+  setTimeout(srxRenderOv,0);
+  setTimeout(()=>{try{srxBriefHint();srxBandHint()}catch(e){}},60);
+  setTimeout(()=>{try{srxBriefHint();srxBandHint()}catch(e){}},200);
+ }
 }
 function srxRenderChips(){
  const pairs=$('srxPairs');if(pairs){
@@ -18708,7 +21773,7 @@ function srxUpdateHit(){
  const m=$('srxMoreBtn');
  if(m){
   const n=srxFilterCount(SRX.f)+(SRX.agg?1:0);
-  m.innerHTML=(SRX.more?'收起筛选':'更多筛选')+(n?'<span class="n">'+n+'</span>':'');
+  m.innerHTML=(SRX.more?'收起更多条件':'展开更多条件')+(n?'<span class="n">'+n+'</span>':'');
   m.setAttribute('aria-expanded',SRX.more?'true':'false');
  }
 }
@@ -18793,32 +21858,48 @@ function srxRenderMobileSummary(){
 }
 function srxCloseMobilePanels(){
  const v=$('searchview');if(!v)return false;let any=false;
- ['show-overview','show-filters'].forEach(k=>{if(v.classList.contains(k)){v.classList.remove(k);any=true}});
- document.querySelectorAll('#srxMobilebar [data-mobile]').forEach(b=>b.setAttribute('aria-expanded','false'));
+ ['show-filters'].forEach(k=>{if(v.classList.contains(k)){v.classList.remove(k);any=true}});
+ document.querySelectorAll('#srxMobilebar [data-mobile]').forEach(b=>{
+  b.setAttribute('aria-expanded','false');
+  const w=b.getAttribute('data-mobile');
+  if(w==='overview')b.textContent='展开概览';
+  else if(w==='filters')b.textContent='展开筛选';});
  return any;
 }
 /* Esc 收起移动概览/筛选：捕获相位先于输入框自身的 Esc 处理，
    避免焦点落在城市输入框时被局部 handler 吞掉。弹层/抽屉优先。 */
+/* Esc 收回移动端「筛选」与刚刚展开的「概览」：只在检索页可见时生效。
+   注意 srx-ov-collapsed 是默认态（概览默认收起），不能当作「有东西可收」
+   的判据——那会让检索页的 Esc 被无条件吞掉（弹层/抽屉/弹窗的 Esc 全废）。 */
 document.addEventListener('keydown',e=>{
  if(e.key!=='Escape')return;
  const v=$('searchview');
- if(!v||!(v.classList.contains('show-filters')||v.classList.contains('show-overview')))return;
+ if(!v||v.style.display==='none'||VIEW!=='search')return;
+ const ovOpen=!v.classList.contains('srx-ov-collapsed');
+ const fltOpen=v.classList.contains('show-filters');
+ if(!ovOpen&&!fltOpen)return;
  if($('srxModal').classList.contains('open')||$('srxGallery').classList.contains('open')||SRX.detailOpen)return;
  e.preventDefault();e.stopPropagation();
- const which=v.classList.contains('show-filters')?'filters':'overview';
+ const which=fltOpen?'filters':'overview';
+ if(which==='overview')srxToggleOverview();
  srxCloseMobilePanels();
  const b=document.querySelector('#srxMobilebar [data-mobile="'+which+'"]');if(b)try{b.focus({preventScroll:true})}catch(_){}
 },true);
 function srxToggleMobile(which){
- const v=$('searchview');const key=which==='overview'?'show-overview':'show-filters';
- const on=!v.classList.contains(key);
- v.classList.remove(which==='overview'?'show-filters':'show-overview');
- document.querySelectorAll('#srxMobilebar [data-mobile]').forEach(b=>b.setAttribute('aria-expanded','false'));
- v.classList.toggle(key,on);
- if(which==='filters'&&on){SRX.ctx=true;srxRenderCtx()}
- document.querySelectorAll('#srxMobilebar [data-mobile="'+which+'"]').forEach(b=>b.setAttribute('aria-expanded',on?'true':'false'));
- if(on){const target=which==='overview'?$('srxBand'):$('srxContext');if(target)try{target.scrollIntoView({behavior:'smooth',block:'nearest'})}catch(e){}}
- if(which==='overview')setTimeout(()=>{srxBriefHint();srxBandHint();},60);
+ const v=$('searchview');if(!v)return;
+ if(which==='overview'){srxToggleOverview();
+  const b=document.querySelector('#srxMobilebar [data-mobile="overview"]');
+  const open=!v.classList.contains('srx-ov-collapsed');
+  if(b)b.setAttribute('aria-expanded',open?'true':'false');
+  if(open)setTimeout(()=>{srxBriefHint();srxBandHint();},60);
+  return;}
+ const on=!v.classList.contains('show-filters');
+ v.classList.toggle('show-filters',on);
+ if(on){SRX.ctx=true;srxRenderCtx()}
+ document.querySelectorAll('#srxMobilebar [data-mobile="filters"]').forEach(b=>{
+  b.setAttribute('aria-expanded',on?'true':'false');
+  b.textContent=on?'收起筛选':'展开筛选'});
+ if(on){const target=$('srxContext');if(target)try{target.scrollIntoView({behavior:'smooth',block:'nearest'})}catch(e){}}
 }
 function srxRenderQuick(){
  const el=$('srxFacets');if(!el)return;
@@ -19112,7 +22193,12 @@ function srxFourHTML(){
    return '<div class="srx-mrow'+(srxKey(f)===SRX.sel?' sel':'')+(peer?' peer':'')+'" data-mkey="'+he(srxKey(f))+'" style="--pc:'+SRX_PLATS[ch][1]+'"><span class="p">'+srxPlatIcon(ch)+'</span><span class="m"><b>'+(srxIsCal(f)?'':srxAirIcon(f.code)+' ')+he(srxIsCal(f)?'日历价':(f.code||f.name||'—'))+'</b><span>'+he((f.depTime||'—')+' → '+(f.arrTime||'—'))+'</span></span><span class="pr"><b>¥'+he(f.price)+'</b></span></div>'}).join(''):'<div class="srx-mempty"><b>本态未供</b>不生成假页面</div>')+'</div></div>';
  }).join('')+'</div>';
 }
-function srxRenderMirror(){const el=$('srxMirror');if(el)el.innerHTML=srxMirrorHTML()}
+/* 重渲染不得丢掉用户的折叠态：整块 innerHTML 替换会重建外壳，折叠类在
+   容器上必须显式保留，否则「收起镜像」被下一次刷新顶开。 */
+function srxRenderMirror(){const el=$('srxMirror');if(!el)return;
+ const folded=el.classList.contains('srx-folded');
+ el.innerHTML=srxMirrorHTML();
+ if(folded)el.classList.add('srx-folded');}
 
 /* ---------- detail ---------- */
 function srxDetailHTML(f){
@@ -19301,7 +22387,9 @@ function srxOpenDetail(k){
  const d=$('srxDetail');d.classList.add('open');d.setAttribute('aria-hidden','false');d.setAttribute('aria-modal','true');
  $('srxDmask').classList.add('open');if(!_wasOpen)srxLockBody();
  srxRenderDetail(false);
- setTimeout(()=>{const b=d.querySelector('.srx-close');if(b)b.focus()},0);
+ /* 仅键盘打开才移交焦点：程序化 focus 同样命中 :focus-visible，
+   鼠标打开会让关闭钮全程亮一圈蓝环 */
+ if(_LASTKBD)setTimeout(()=>{const b=d.querySelector('.srx-close');if(b)b.focus()},0);
  srxRenderRows();srxRenderMirror();
 }
 function srxCloseDetail(){
@@ -19367,7 +22455,7 @@ async function srxOpenHealth(){
   srxOpenModal('字段健康 · raw 键可得率',h);
  }catch(e){srxOpenModal('字段健康 · raw 键可得率','<div class="srx-mempty"><b>统计失败</b>'+he(e.message||e)+'</div>')}
 }
-function srxOpenState(){srxOpenModal('页面状态 / 快照','<div class="srx-dlab"><span>状态串</span><em>复制/粘贴复现同一页面</em></div><textarea class="srx-statebox" id="srxStateBox">'+he(srxStateStr())+'</textarea><div class="srx-dacts" style="margin-top:6px"><button type="button" data-statecopy="1">复制状态串</button><button type="button" data-stateapply="1">应用文本框</button></div><div class="srx-dlab" style="margin-top:12px"><span>本机快照</span><em>最多 12 条</em></div><div class="srx-snaplist" id="srxSnapList"></div><div class="srx-dacts" style="margin-top:8px"><input id="srxSnapName" type="text" placeholder="快照名（如 复核-上海曼谷-11/16）" style="flex:1 1 180px;height:26px;border:1px solid var(--ctlbd);border-radius:4px;background:var(--card);color:var(--tx);padding:0 6px;font-size:9px"><button type="button" data-snapadd="1">存当前快照</button></div>')}
+function srxOpenState(){srxOpenModal('页面状态 / 快照','<div class="srx-dlab"><span>状态串</span><em>复制/粘贴复现同一页面</em></div><textarea class="srx-statebox" id="srxStateBox">'+he(srxStateStr())+'</textarea><div class="srx-dacts" style="margin-top:6px"><button type="button" data-statecopy="1">复制状态串</button><button type="button" data-stateapply="1">应用文本框</button></div><div class="srx-dlab" style="margin-top:12px"><span>本机快照</span><em>最多 12 条</em></div><div class="srx-snaplist" id="srxSnapList"></div><div class="srx-dacts" style="margin-top:8px"><input id="srxSnapName" type="text" placeholder="快照名（如 复核-上海曼谷-11/16）" style="flex:1 1 180px;height:26px;border:1px solid var(--ctlbd);border-radius:4px;background:var(--card);color:var(--tx);padding:0 6px;font-size:10px"><button type="button" data-snapadd="1">存当前快照</button></div>')}
 function srxOpenSnapshots(){srxOpenState();setTimeout(()=>{const n=$('srxSnapName');if(n)n.focus()},50)}
 function srxStateObj(){return {v:2,pair:SRX.pair,date:SRX.date,plats:SRX.plats,q:SRX.q,f:SRX.f,sort:SRX.sort,view:SRX.view,agg:SRX.agg,sel:SRX.sel,dtab:SRX.dtab,calAxis:SRX.calAxis,mch:SRX.mch,mview:SRX.mview,fieldFilter:SRX.fieldFilter}}
 function srxStateStr(){return 'probe://srx?d='+encodeURIComponent(JSON.stringify(srxStateObj()))}
@@ -19391,7 +22479,7 @@ function srxOpenModal(title,html){
  if(!m.classList.contains('open')){srxLockBody();['srxDetail','srxGallery'].forEach(id=>{const el=$(id);if(el&&el.classList.contains('open'))el.setAttribute('inert','')})}
  m.classList.add('open');$('srxModalmask').classList.add('open');
  if(title.indexOf('状态')>=0)srxRenderSnapList();
- setTimeout(()=>{const b=m.querySelector('[data-modalclose]');if(b)b.focus()},0);
+ if(_LASTKBD)setTimeout(()=>{const b=m.querySelector('[data-modalclose]');if(b)b.focus()},0);
 }
 function srxCloseModal(){const m=$('srxModal');if(!m)return;const was=m.classList.contains('open');m.classList.remove('open');$('srxModalmask').classList.remove('open');if(was)srxUnlockBody();['srxDetail','srxGallery'].forEach(id=>{const el=$(id);if(el)el.removeAttribute('inert')});SRX_WATCH.open=false;if(SRX_LASTFOCUS&&SRX_LASTFOCUS.focus)try{SRX_LASTFOCUS.focus()}catch(e){}}
 function srxRenderSnapList(){const el=$('srxSnapList');if(!el)return;const a=srxSnaps();el.innerHTML=a.length?a.map((s,i)=>'<div class="srx-snap"><div><b>'+he(s.name)+'</b><span>'+he(s.at||'')+' · '+he(s.state.pair||'')+' · '+he(s.state.date||'')+'</span></div><button type="button" data-snaprestore="'+i+'">恢复</button><button type="button" data-snapdel="'+i+'">删除</button></div>').join(''):'<div class="srx-mempty"><b>暂无快照</b>存快照会记录当前航线/日期/筛选/选中行。</div>'}
@@ -19571,8 +22659,14 @@ function srxPrefillProbe(){
  if(!SRX._probeInit){SRX._probeInit=true;
   let po='0';try{po=localStorage.getItem('jpsrx_probeopen2')||'0'}catch(e){}
   const p=$('srxProbe'),t=$('srxProbeToggle');
-  if(po==='0'){if(p)p.classList.remove('open');if(t){t.textContent='展开探针';t.setAttribute('aria-expanded','false')}}
-  else if(p&&!p.classList.contains('open')){p.classList.add('open');if(t){t.textContent='收起';t.setAttribute('aria-expanded','true')}}
+  /* r434：折叠钮内是「chevron + 文本」两颗子节点，chevron 用来把折叠开关与
+     同排动作钮区分开。这里曾直接 `t.textContent=...`，会把箭头整颗抹掉——
+     首次进页面箭头就没了，看不出是折叠开关。统一走 setProbeToggleTxt。 */
+  const setProbeToggleTxt=(on)=>{if(!t)return;const x=t.querySelector('.srx-tgl-txt');
+   if(x)x.textContent=on?'收起探针':'展开探针';else t.textContent=on?'收起探针':'展开探针';
+   t.setAttribute('aria-expanded',on?'true':'false')};
+  if(po==='0'){if(p)p.classList.remove('open');setProbeToggleTxt(false)}
+  else if(p&&!p.classList.contains('open')){p.classList.add('open');setProbeToggleTxt(true)}
   if(!SRX_TASK)srxTaskResume();
  }
  srxBatchRender();
@@ -19585,7 +22679,7 @@ function srxPrefillProbe(){
 }
  function srxBatchToggle(){
   SRX.batchOpen=!SRX.batchOpen;
-  if(SRX.batchOpen){const p=$('srxProbe');if(p&&!p.classList.contains('open')){p.classList.add('open');const b=$('srxProbeToggle');if(b){b.setAttribute('aria-expanded','true');b.textContent='收起探针'}}}
+  if(SRX.batchOpen){const p=$('srxProbe');if(p&&!p.classList.contains('open')){p.classList.add('open');const b=$('srxProbeToggle');if(b){b.setAttribute('aria-expanded','true');const t=b.querySelector('.srx-tgl-txt');if(t)t.textContent='收起探针';else b.textContent='收起探针'}}}
   srxBatchRender()}
 
 function srxBatchLegs(){if(!Array.isArray(SRX.batchLegs))SRX.batchLegs=[];return SRX.batchLegs}
@@ -19594,7 +22688,11 @@ function srxBatchRender(){
  const box=$('srxBatchList'),go=$('srxBatchGo'),clr=$('srxBatchClear');if(!box)return;
  const a=srxBatchLegs();
  const wrap=$('srxBatchWrap');if(wrap)wrap.style.display=SRX.batchOpen?'':'none';
- const tg=$('srxBatchToggle');if(tg){tg.textContent='组合 '+a.length+'/4';tg.classList.toggle('on',!!SRX.batchOpen);tg.setAttribute('aria-expanded',SRX.batchOpen?'true':'false')}
+ const tg=$('srxBatchToggle');if(tg){tg.textContent='组合 '+a.length+'/4';tg.classList.toggle('on',!!SRX.batchOpen);
+  tg.setAttribute('aria-expanded',SRX.batchOpen?'true':'false');
+  /* 计数是事实主文本，开合语义走 title/aria-label，不去挤掉数字 */
+  tg.title=(SRX.batchOpen?'收起':'展开')+'组合队列';
+  tg.setAttribute('aria-label',tg.title+'（'+a.length+'/4 条）');}
  box.innerHTML=a.map((x,i)=>'<span class="srx-blchip" role="listitem"><b>'+he(x.from_name||x.from)+'→'+he(x.to_name||x.to)+'</b><em>'+he(x.date)+'</em><button type="button" data-batchdel="'+i+'" aria-label="移除组合第 '+(i+1)+' 条" title="移除" onclick="srxProbeRemoveLeg('+i+')">×</button></span>').join('');
  if(go){go.style.display=a.length?'inline-flex':'none';go.disabled=!a.length;go.textContent='运行组合 ('+a.length+')'}
  if(clr)clr.style.display=a.length?'inline-flex':'none';
@@ -20051,7 +23149,7 @@ function srxExitProbe(){
 }
 
 /* ---------- actions ---------- */
-function srxToggleProbe(){const p=$('srxProbe');if(!p)return;const on=!p.classList.contains('open');p.classList.toggle('open',on);const b=$('srxProbeToggle');if(b){b.setAttribute('aria-expanded',on);b.textContent=on?'收起探针':'展开探针'}try{localStorage.setItem('jpsrx_probeopen2',on?'1':'0')}catch(e){}srxRenderProbeMini()}
+function srxToggleProbe(){const p=$('srxProbe');if(!p)return;const on=!p.classList.contains('open');p.classList.toggle('open',on);const b=$('srxProbeToggle');if(b){b.setAttribute('aria-expanded',on);const t=b.querySelector('.srx-tgl-txt');if(t)t.textContent=on?'收起探针':'展开探针';else b.textContent=on?'收起探针':'展开探针'}try{localStorage.setItem('jpsrx_probeopen2',on?'1':'0')}catch(e){}srxRenderProbeMini()}
 function srxRenderProbeMini(j){
  const el=$('srxProbeMini'),p=$('srxProbe');if(!el)return;
  if(!p||p.classList.contains('open')){el.hidden=true;el.textContent='';return}
@@ -20197,11 +23295,11 @@ function srxRenderCtx(){
 
  if(b){b.setAttribute('aria-expanded',SRX.ctx?'true':'false');
   const n=srxCtxCount();
-  b.innerHTML='筛选'+(n?'<span class="n">'+n+'</span>':'')+(SRX.ctx?' ▴':' ▾');}
+  b.innerHTML=(SRX.ctx?'收起筛选':'展开筛选')+(n?'<span class="n">'+n+'</span>':'');}
 }
 function srxToggleCtx(){SRX.ctx=!SRX.ctx;srxRenderCtx();
  if(SRX.ctx){const m=$('srxFmore');if(m&&SRX.more)m.classList.add('open')}}
-function srxToggleMore(){SRX.more=!SRX.more;if(SRX.more){SRX.ctx=true;srxRenderCtx()}const b=$('srxFmore');if(b)b.classList.toggle('open',SRX.more);const m=$('srxMoreBtn');if(m)m.setAttribute('aria-expanded',SRX.more);if(SRX.more){srxRenderFacets(true);setTimeout(()=>{try{window.scrollTo(0,window.scrollY+b.getBoundingClientRect().top-110)}catch(e){}},30)}srxUpdateHit()}
+function srxToggleMore(){SRX.more=!SRX.more;if(SRX.more)SRX.ctx=true;srxRenderCtx();const b=$('srxFmore');if(b)b.classList.toggle('open',SRX.more);if(SRX.more)srxRenderFacets(true);srxUpdateHit();if(SRX.more&&b)setTimeout(()=>{try{window.scrollTo(0,window.scrollY+b.getBoundingClientRect().top-110)}catch(e){}},30)}
 function srxAxis(a){SRX.calAxis=a==='observation'?'observation':'departure';srxSave();srxRenderBand()}
 function srxCalPick(ds){if(!ds)return;if(srxDateLock()&&ds!==SRX.date){toast('已提交任务只查询了 '+SRX.date+'；更换日期需发起新查询','err');return}const j=SRX_CAL[srxCalKey()];if(SRX.calAxis==='observation'){toast('采集日不是出发日，不能作为查询日','err');return}
  /* 保留当前 14 天窗口：点某天只换选中行，不把该天重置成窗口首日。 */
@@ -20219,7 +23317,11 @@ function srxMoreRows(){
  else SRX.limit+=SRX_PAGE;
  srxRenderRows();
 }
-function srxPickDeparture(){SRX.ctx=true;srxRenderCtx();const d=$('srxDates');if(!d)return;try{d.scrollIntoView({block:'nearest'})}catch(e){}const c=Array.from(d.querySelectorAll('.srx-chip')).find(x=>!x.classList.contains('on'))||d.querySelector('.srx-chip');if(c)try{c.focus({preventScroll:true})}catch(e){}}
+/* r434：`srxPickDeparture` 已随空价带的「选择出发日」按钮一并退场。
+   那颗按钮原本在概览面板里，却把焦点丢给下方筛选区里另一个 `#srxDates`，
+   必然改动另一块折叠态——「展开概览只是看，怎么会多出筛选器」。日期候选
+   现在直接渲染在价带空态内（data-date 走全局同一个选择分支），不需要这个
+   跨组件的搬运函数。 */
 function srxClearFilters(){SRX.f={...SRX_DEFAULT_F,airlines:[],depAs:[],arrAs:[],cabins:[],pss:[]};SRX.q='';SRX.plats=[];SRX.sel=null;SRX.agg=false;SRX.sort='price';SRX.detailOpen=false;const m=$('srxDmask');if(m)m.classList.remove('open');srxResetLocks();srxSave();SRX.limit=SRX_PAGE;srxRenderFacets(true);srxRenderQuick();renderSearch()}
 function srxClearAllFilters(){if(srxDateLock()){srxClearFilters();return}SRX.date='';SRX.bandAnchor='';srxClearFilters()}
 function srxFocusProbe(){const p=$('srxProbe');if(p&&!p.classList.contains('open'))srxToggleProbe();setTimeout(()=>{try{if(p)p.scrollIntoView({block:'nearest'});const f=$('srxFrom');if(f)f.focus({preventScroll:true})}catch(e){}},40)}
@@ -20343,7 +23445,6 @@ document.addEventListener('click',ev=>{
  if(t.closest('[data-restore]')){srxRestoreApply();return}
  if(t.closest('[data-bandcollapse]')){SRX.bandExpand=false;srxRenderBand();return}
  if(t.closest('[data-bandexpand]')){SRX.bandExpand=true;srxRenderBand();return}
- if(t.closest('[data-bandpick]')){srxPickDeparture();return}
  if(t.closest('[data-restoreoff]')){SRX.restore=null;SRX.restoreChip=null;SRX.autoDismissed=true;const rn=$('srxRestoreNote');if(rn)rn.hidden=true;srxSave();return}
  if(t.closest('[data-resetflt]')){srxClearAllFilters();SRX.autoDismissed=true;const rn=$('srxRestoreNote');if(rn)rn.hidden=true;toast('已重置筛选','ok');return}
  if(t.closest('[data-alldates]')){
@@ -20620,14 +23721,14 @@ NOTIFY_PAGE = r"""<!DOCTYPE html>
  *{box-sizing:border-box}
  html{color-scheme:light}
  :root[data-theme="dark"]{color-scheme:dark;--bg:#0a0f16;--card:#101823;--tx:#dbe4ee;
-   --mut:#7f92a6;--line:#1e2a3a;--line2:#2a3a50;--okbg:#12241a;--blue:#63a4f8;
+   --mut:#8497ab;--line:#1e2a3a;--line2:#2a3a50;--okbg:#12241a;--blue:#63a4f8;
    --green:#43c072;--ok-txt:#43c072;--okrgb:67,192,114;--blue-rgb:99,164,248;
    --pillbd:rgba(var(--blue-rgb),.5);--pillbg:rgba(var(--blue-rgb),.12);
    --pillbh:rgba(var(--blue-rgb),.22);--pillbd2:rgba(var(--blue-rgb),.75);
    --at-bg:rgba(255,210,77,.16);--at-fg:#ffd24d}   /* @手机高亮暗谱：降饱和暗底+原亮字（主站同值成对） */
  @media(prefers-color-scheme:dark){:root:not([data-theme=light]){color-scheme:dark;
    --bg:#0a0f16;--card:#101823;--tx:#dbe4ee;
-   --mut:#7f92a6;--line:#1e2a3a;--line2:#2a3a50;--okbg:#12241a;--blue:#63a4f8;
+   --mut:#8497ab;--line:#1e2a3a;--line2:#2a3a50;--okbg:#12241a;--blue:#63a4f8;
    --green:#43c072;--ok-txt:#43c072;--okrgb:67,192,114;--blue-rgb:99,164,248;
    --pillbd:rgba(var(--blue-rgb),.5);--pillbg:rgba(var(--blue-rgb),.12);
    --pillbh:rgba(var(--blue-rgb),.22);--pillbd2:rgba(var(--blue-rgb),.75);
@@ -20650,8 +23751,8 @@ NOTIFY_PAGE = r"""<!DOCTYPE html>
  @keyframes hitpulse{0%,100%{box-shadow:0 0 0 0 rgba(var(--okrgb),.4)}
       50%{box-shadow:0 0 0 5px rgba(var(--okrgb),0)}}
  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:18px 22px}
- .md h1{font-size:19px;margin:6px 0 14px;line-height:1.5}
- .md .h2{font-size:15px;color:var(--blue);margin:16px 0 8px;font-weight:700}
+ .md h1{font-size:18px;margin:6px 0 14px;line-height:1.5}
+ .md .h2{font-size:16px;color:var(--blue);margin:16px 0 8px;font-weight:700}
  .md .h3{font-size:13px;margin:12px 0 6px;font-weight:700}
  .md p{margin:7px 0;line-height:1.85;font-size:14px}
  .md .md-at{background:var(--at-bg);color:var(--at-fg);border-radius:4px;padding:0 5px;font-weight:700}   /* 与主站 .pvbody .md-at 同谱（双主题令牌消费） */
@@ -20669,7 +23770,7 @@ NOTIFY_PAGE = r"""<!DOCTYPE html>
  /* --- 分隔线：渐隐 hairline（默认裸 hr 极廉价） */
  .md hr{border:none;height:1px;margin:14px 0;
        background:linear-gradient(90deg,transparent,var(--line2) 18%,var(--line2) 82%,transparent)}
- .md .g{letter-spacing:var(--ls2);font-size:15px}
+ .md .g{letter-spacing:var(--ls2);font-size:16px}
  .md b{font-variant-numeric:tabular-nums}
  .md img{max-width:100%;border-radius:var(--r10);border:1px solid var(--line);display:block;margin:10px 0}
  .foot{margin-top:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
@@ -20970,6 +24071,12 @@ class _State:
     verify_cb = None  # 弹出验证窗口回调（main 挂接；人工过验证）
     scene = None      # 案发现场（main 挂接；被拦 URL/证据/验证后探测）
     probe_cb = None   # 渠道自检回调（main 挂接；单查询跑完整链路）
+    # 解除中的渠道（r480）：解除后会立刻单查探测，并发第二次请求会再跑
+    # 一次并覆盖结果。前端只挡同页连点，跨标签页必须在这里兜住。
+    reset_open = set()
+    # 闸门锁（r481）：判断与占位必须原子。Handler 是多线程并发的，
+    # 先判断再占位会让两个标签页同时通过（负控实测：插入让出点即双跑探测）。
+    reset_lock = threading.Lock()
     job = None
     report_push = None
     reload_cb = None
@@ -21021,7 +24128,17 @@ def _login_state_view() -> dict:
     cfg = _effective_crawler_config()
     root = cfg["user_data_dir"]
     try:
-        evidence = _health_state(24).get("evidence", {})
+        # 认证快照要的是「已接收的拒绝证据」，默认仍走 _health_state——
+        # 它是可注入点（测试 monkeypatch 它来喂证据）。
+        # 但 _health_state → _health_decorate → _login_state_view 会递归，
+        # 所以装饰层在调用本函数前会置 _IN_HEALTH_DECORATE：那种重入
+        # 情形下改走「直接解析日志」，绕开装饰层，不打断注入契约。
+        if _IN_HEALTH_DECORATE:
+            from core.health import parse_health
+            evidence = parse_health(_read_log_tail(max_age_h=26),
+                                    hours=24).get("evidence", {})
+        else:
+            evidence = _health_state(24).get("evidence", {})
     except Exception:
         evidence = {}
 
@@ -21227,6 +24344,21 @@ def _start_login(plat: str, slot: str = "") -> dict:
         if key in _State.login_sessions:
             return {"ok": False,
                     "err": "该登录槽位窗口已打开——请在窗口完成登录后点「我已登录完成」"}
+        # 有头浏览器可行性（GitHub #10）：这个接口只是「起线程」，真正的
+        # 开窗在后台发生——在没有图形环境的容器里（Docker / 无 X 的 Linux）
+        # 必然失败，而用户收到的是「登录窗口已弹出」，随后什么也没发生，
+        # 八个浏览器、两种系统都试过也没用（issue 原话）。这里同步判一次，
+        # 把「打不开」的原因直接回给点击者，而不是让他等一个不存在的窗口。
+        _no_gui = (os.name == "posix"
+                   and not os.environ.get("DISPLAY")
+                   and not os.environ.get("WAYLAND_DISPLAY"))
+        if _no_gui:
+            _msg = ("当前服务没有图形环境（未设置 DISPLAY / WAYLAND_DISPLAY），"
+                    "无法弹出有头浏览器窗口。Docker 部署请改用「导入会话」或"
+                    "在宿主机本机运行后用同一份 user_data；命令行可用 "
+                    "python main.py --login 在桌面环境完成登录。")
+            _State.login_errors[key] = _msg
+            return {"ok": False, "err": _msg, "kind": "no_gui"}
         evt = threading.Event()
         session = {"evt": evt, "done": threading.Event(), "saving": False,
                    "saved": False, "error": ""}
@@ -21263,6 +24395,53 @@ def _start_login(plat: str, slot: str = "") -> dict:
                     _State.logger.warning(
                         "[登录] %s 会话已保存，采集缓存刷新失败", key)
             _State.logger.info("[登录] %s 会话已保存（网页登录）", key)
+            # 重登入账（r478）：这是对成功率影响最大的一次干预（实测去哪儿
+            # 国际 H5 被登录墙拦 13/17 后重登即恢复出数），但原先只有
+            # warm/verify/probe/reset 写 interventions——重登过什么、之后
+            # 有没有真的恢复，账本与溯源都查不到，节流面板的「上次干预
+            # 44%→100%」也永远不会以重登为分界。槽位写进 scope，PC/H5
+            # 各自可分；after 留给后台采集去填，不在这里编造。
+            try:
+                _rls = PriceStorage(_anchored(
+                    ((_State.cfg or {}).get("output") or {}).get(
+                        "db_path"), "data/prices.db"))
+                # 幂等（r496）：实测账本里每次重登都**稳定写两条**（同秒同槽位，
+                # id 连号无间断，07:13→11:00 全部如此）。溯源里并排两条一模一样
+                # 的「重登」，用户会以为自己按了两次。
+                # 注意：重复行**不**放大 intervention_success_rate 的分母
+                # （同秒记录在按 (plat,i) 分组时会被合并，n 仍是 1，已用测试钉住）
+                # ——所以这里是可读性修复，不要据此去改指标逻辑。
+                # 同槽位 30 秒内已记过就不再写（一次登录动作 = 一条记录）。
+                # 用 30 秒而不是「同一分钟」：同一分钟内用户真的重试一次
+                # （第一次没通过、立刻再登）是**另一次干预**，按分钟去重会
+                # 把真实的重试吞掉，账本少一条。30 秒足够挡住同一次保存
+                # 尾部的重复写入（实测两条时间戳精确到秒完全一致）。
+                _dup = False
+                try:
+                    _now = time.time()
+                    for _r0 in _rls.interventions(meta["plat"], 8):
+                        if (str(_r0.get("action")) != "relogin"
+                                or str(_r0.get("scope")) != str(key)):
+                            continue
+                        try:
+                            _ts = time.mktime(time.strptime(
+                                str(_r0.get("at") or "")[:19],
+                                "%Y-%m-%d %H:%M:%S"))
+                        except Exception:
+                            continue
+                        if abs(_now - _ts) <= 30:
+                            _dup = True
+                            break
+                except Exception:
+                    _dup = False
+                if not _dup:
+                    _rls.save_intervention(
+                        meta["plat"], "relogin", ok=True, scope=str(key),
+                        before="login_wall",
+                        note=("网页登录保存会话（槽位 %s / %s）" % (
+                            key, meta.get("surface_label") or "全端")))
+            except Exception:
+                _State.logger.warning("[登录] %s 干预入账失败", key)
             if key == "fliggy_h5":
                 threading.Thread(target=_verify_login_slot,
                                  args=(key,), daemon=True,
@@ -23801,8 +26980,15 @@ def _user_state(u):
     except Exception:
         _iv = 30.0
     _win = int(min(180, max(40, _iv * 1.5 + 20)))
+    # prov 必须随行取出：下游 g["_prov"]=r["prov"] 直接喂给 /api/state
+    # 的 prov 字段；缺列时每行都落到 except 分支变成 {}，整页补位行
+    # 失去来源（用户实报「补位数据看着奇怪、无法核对」）。旧库/测试库
+    # 可能没有该列，按 PRAGMA 自适应，缺列时行为与旧版一致。
+    _has_prov = any(_r[1] == "prov" for _r in conn.execute(
+        "PRAGMA table_info(flight_prices)").fetchall())
     rows = conn.execute(
-        "SELECT rowid AS id, platform, from_city, to_city, depart_date, price, extra, fetched_at "
+        "SELECT rowid AS id, platform, from_city, to_city, depart_date, price, "
+        "extra, fetched_at" + (", prov" if _has_prov else "") + " "
         "FROM flight_prices "
         "WHERE extra != '' AND fetched_at >= "
         "datetime('now', 'localtime', ?) "
@@ -23911,10 +27097,7 @@ def _user_state(u):
                     g["_row_id"] = r["id"]
                     g["_fetched_at"] = r["fetched_at"]
                     g["_raw_idx"] = _ri
-                    try:
-                        g["_prov"] = r["prov"]
-                    except (KeyError, IndexError):
-                        g["_prov"] = ""
+                    g["_prov"] = (r["prov"] if _has_prov else "") or ""
                     _fnorm(g, r["depart_date"] or "")
                     if g.get("_dep_mismatch"):
                         continue   # 渠道滚动行不入列表池（与推送/曲线同滤）
@@ -24016,6 +27199,11 @@ def _user_state(u):
                     g["_stale_h"] = max(0.1, round(age, 1))
                     g["_fetched_at"] = g.get("_fetched_at") or f.get(
                         "_fetched_at") or ""
+                    # 补位行溯源必须随行进入列表池：recent_platform_flights
+                    # 已把 DB 的 prov 挂到 _prov，合并时若只拷 fetched_at，
+                    # /api/state 里所有补位行的 prov 都会退化成 {}。
+                    if not g.get("_prov"):
+                        g["_prov"] = f.get("_prov") or ""
                     g["_pair"] = _k3
                     g["depDate"] = g.get("depDate") or _d0
                     _is_cal = not (str(g.get("depTime") or "").strip()
@@ -25036,12 +28224,219 @@ def _cookie_states() -> dict:
     return out
 
 
+# 装饰层重入标志：_health_decorate → _attach_diag_slots → _login_state_view
+# 若再调 _health_state(24) 会绕回 _health_decorate 无限递归（实测把
+# /api/health 挂死）。置位后 _login_state_view 改走「直接解析日志」。
+_IN_HEALTH_DECORATE = False
+
+
+def _attach_diag_slots(out: dict) -> None:
+    """给诊断卡补会话维度（只读 /api/login-state，不碰数据库）。
+
+    飞猪 PC/H5 两套 cookie，诊断卡只写「登录态失效」+「打开登录」时，
+    用户会去核错那一端。这里把失效端与目标槽位挂到卡片上。
+    单独成函数是为了让演示路径也能用，而不必走 _health_decorate 的
+    PriceStorage 分支（那会把 demo 的 /api/health 拖到 25s 以上）。
+    """
+    try:
+        _lv = _login_state_view() or {}
+        _slots = _lv.get("slots") or {}
+        if not _slots:
+            return
+        _by_plat = {}
+        for _sk, _sv in _slots.items():
+            _by_plat.setdefault((_sv or {}).get("plat") or _sk, []).append(
+                dict(_sv or {}, key=_sk))
+        for _c in out.get("diag") or []:
+            _own = _by_plat.get(_c.get("plat")) or []
+            if len(_own) < 2:
+                continue
+            _c["slots"] = [{
+                "slot": _x.get("slot") or _x.get("key"),
+                "surface": _x.get("surface_label") or _x.get("surface") or "全端",
+                "needs_login": bool(_x.get("needs_login")),
+                "status": _x.get("status") or "",
+            } for _x in _own]
+            _dead = [x for x in _c["slots"]
+                     if x["needs_login"] or x["status"] == "save_error"]
+            if _dead:
+                _c["dead_surfaces"] = [x["surface"] for x in _dead]
+                _c["slot_action"] = _dead[0]["slot"]
+    except Exception:
+        pass
+
+
+def _demo_paths_from_rounds(rounds):
+    """演示载荷的分通路账：只用轮次里已有的字段聚合，不编造数据。
+
+    演示的 /api/health 走的是轻路径（不能进 _health_decorate，那里会开
+    PriceStorage 把接口挂死），于是 j.paths 永远是空的，分域小标与分通路
+    行在演示里从不出现——「健康只有厂商一个数」在演示环境尤其明显。
+    健康卡与节流面板必须读同一份聚合，否则同一页会一边显示分通路、
+    一边写「按轮判定」自相矛盾。
+    """
+    try:
+        rounds = rounds or []
+        if not rounds:
+            return {}
+        agg = {}
+        for r in rounds:
+            for p, c in (r.get("plats") or {}).items():
+                # qdet/qcal 是「查询级」拆分（一行轮次 ≈ 一次查询），
+                # 与生产 path_stats 同名同义；缺了它节流行会写出
+                # 「查询 93% · 明细 0 / 日历 0」自相矛盾的一串。
+                a = agg.setdefault(p, {"att": 0, "ok": 0, "det": 0, "cal": 0,
+                                       "part": 0, "fail": 0, "qdet": 0,
+                                       "qcal": 0})
+                s = str(c.get("s") or "")
+                det, cal = int(c.get("detail") or 0), int(c.get("cal") or 0)
+                # 维护轮既不算成功也不算失败（与健康徽标「维护轮不计分母」
+                # 同口径），否则飞猪会出现查询 15% 而同通路 100% 的打架。
+                if s == "maint":
+                    continue
+                if det > 0:
+                    a["qdet"] += 1
+                elif cal > 0:
+                    a["qcal"] += 1
+                a["att"] += 1
+                if s == "ok":
+                    a["ok"] += 1
+                    if det > 0:
+                        a["det"] += 1
+                    elif cal > 0:
+                        a["cal"] += 1
+                elif s == "part":
+                    a["part"] += 1
+                else:
+                    a["fail"] += 1
+                # 通路维度：失败轮也算该渠道的尝试——否则通路率的分母只剩
+                # 成功轮，会写出「明细 100%」而同一行徽标是 93%（实测），
+                # 两个数字打架。通路名取自「出数形态」，失败轮沿用该渠道
+                # 已知的那条通路；一条都没有时不臆造通路（避免「无出数 0%」）。
+                if det > 0:
+                    course = "明细"
+                elif cal > 0:
+                    course = "日历"
+                else:
+                    course = a.get("_course") or ""
+                    if not course:
+                        continue
+                a["_course"] = a.get("_course") or course
+                node = a.setdefault("paths", {}).setdefault(
+                    course, {"attempts": 0, "ok": 0, "detail_ok": 0, "calendar_ok": 0})
+                node["attempts"] += 1
+                if s in ("ok", "part") and (det > 0 or cal > 0):
+                    node["ok"] += 1
+                    node["detail_ok"] += 1 if det > 0 else 0
+                    node["calendar_ok"] += 1 if cal > 0 else 0
+        paths = {}
+        for p, a in agg.items():
+            if not a["att"]:
+                continue
+            pp = {}
+            for name, nd in (a.get("paths") or {}).items():
+                if not nd["attempts"]:
+                    continue
+                pp[name] = dict(nd, rate=round(nd["ok"] / nd["attempts"], 4))
+            if not pp:
+                continue
+            paths[p] = {"paths": pp, "retired": [],
+                        "query_attempts": a["att"],
+                        "query_ok": a["ok"],
+                        "query_detail_ok": a["qdet"],
+                        "query_calendar_only": a["qcal"],
+                        "query_rate": round(a["ok"] / a["att"], 4)}
+        return paths
+    except Exception:
+        return {}
+
+
+def _attach_demo_paths(out: dict) -> None:
+    """把分通路账挂到演示 /api/health 载荷上（与 /api/paths 同源）。"""
+    try:
+        paths = _demo_paths_from_rounds(out.get("rounds") or [])
+        if paths:
+            out["paths"] = paths
+    except Exception:
+        pass
+
+
 def _health_decorate(out: dict) -> dict:
     from core.health_diag import classify_round
     rounds = out.get("rounds") or []
     plats = (rounds[-1].get("plats") if rounds else {}) or {}
     out["diag"] = classify_round(plats, cookie=_cookie_states())
     out["diag_at"] = rounds[-1].get("ts", "") if rounds else ""
+    # 诊断卡也要多会话维度（r430）。此处在 _health_state 调用栈内，
+    # 必须置重入标志，否则 _login_state_view 再调 _health_state 会递归。
+    global _IN_HEALTH_DECORATE
+    _prev = _IN_HEALTH_DECORATE
+    _IN_HEALTH_DECORATE = True
+    try:
+        _attach_diag_slots(out)
+    finally:
+        _IN_HEALTH_DECORATE = _prev
+    # 通路维度（r416）：同一厂商内 PC/H5/日历/窗历是不同通路，成功率与
+    # 退役状态本就分开记在 path_stats 里，只是健康面板拿不到。补在这里，
+    # 前端就能在徽标下显示「PC 100% · 窗历 100%（旧日历已退役）」这类
+    # 事实，而不是一个笼统的厂商数。
+    try:
+        from core.storage import PriceStorage
+        dbp = _anchored(((_State.cfg or {}).get("output") or {}).get(
+            "db_path"), "data/prices.db")
+        if os.path.isfile(dbp):
+            ps = PriceStorage(dbp).path_stats(hours=24)
+            paths = {}
+            for _p, _node in (ps or {}).items():
+                _pp = {}
+                for _pn, _pv in (_node.get("paths") or {}).items():
+                    _pp[_pn] = {
+                        "rate": _pv.get("rate"),
+                        "attempts": _pv.get("attempts"),
+                        "last_ok_at": _pv.get("last_ok_at"),
+                    }
+                if _pp:
+                    # 分域也用**查询口径**（与 advice 同源）：健康时间线按
+                    # 轮次统计，两者天然不同；同一面板里若混用两套口径，
+                    # 用户会以为数据打架（国际 13% vs 73%）。
+                    _sc = {}
+                    for _sn, _sv in (_node.get("scopes") or {}).items():
+                        if not isinstance(_sv, dict):
+                            continue
+                        _q = _sv.get("query_attempts") or 0
+                        if _q:
+                            # 字段名必须与前端一致（r490）：前端分域读的是
+                            # `query_attempts[_live]` / `query_rate[_live]`，
+                            # 这里曾经只发 {rate, attempts}——两侧不同名，
+                            # 于是「分域」这一维在真实页面上**从未渲染过**
+                            # （字符串守卫 test_goal_d 只查 scoped('dom','国内')
+                            # 在场，看不见这类字段名错配）。
+                            # 同时带上 *_live（剔除退役通路后的查询口径）：
+                            # 前端优先用它，否则退役通路的历史成败会把
+                            # 分域读数拖低，与徽标口径打架。
+                            _sc[_sn] = {
+                                "rate": _sv.get("query_rate"),
+                                "attempts": _q,
+                                "query_rate": _sv.get("query_rate"),
+                                "query_attempts": _q,
+                                "query_rate_live": _sv.get("query_rate_live"),
+                                "query_attempts_live": _sv.get(
+                                    "query_attempts_live"),
+                            }
+                    paths[_p] = {
+                        "paths": _pp,
+                        "retired": list(_node.get("retired_paths") or []),
+                        "scopes": _sc,
+                        # 在用口径：剔除退役通路后的查询成功率（与 advice
+                        # 同源）。同程「76%」里含旧日历的历史成败，而在用的
+                        # 窗历/H5 都是 100%——徽标该说在用口径。
+                        "query_rate_live": _node.get("query_rate_live"),
+                        "query_attempts_live": _node.get("query_attempts_live"),
+                    }
+            if paths:
+                out["paths"] = paths
+    except Exception:
+        pass
     return out
 
 
@@ -25798,12 +29193,45 @@ class _Handler(BaseHTTPRequestHandler):
                             for _p0 in (_State.cfg and ["ctrip", "fliggy",
                                         "qunar", "tongcheng", "tuniu"] or []):
                                 _eff[_p0] = _pst.intervention_effect(_p0, 24)
+                            # 干预成功率（r484）：按动作回答「按哪个钮真有用」。
+                            # 原始需求点名要这个指标；此前只有「上一次干预前后
+                            # 对比」，答不了「这类干预一共 12 次、几次真救回来」。
+                            data["iv_rate"] = _pst.intervention_success_rate()
                     except Exception:
                         _eff = {}
                     for _p, _ch in (data.get("channels") or {}).items():
+                        # 全窗口无记录时 `path_stats` 可能整个不含该渠道，
+                        # `node` 就是空 dict，`advise` 只能判「待首轮」。补齐
+                        # 该渠道**全表**最近样本时刻，才能说出「采集停了」
+                        # （r516，用户反馈「登录都配好了但渠道全红」）。
+                        _nd = dict(_ps.get(_p) or {})
+                        if not _nd.get("last_seen_at"):
+                            try:
+                                _nd["last_seen_at"] = _last_seen_of(
+                                    _p) or ""
+                            except Exception:
+                                pass
                         _ch["advice"] = advise(
                             _p, _ch, _ps.get(_p, {}).get("paths") or {},
-                            node=_ps.get(_p) or {})
+                            node=_nd,
+                            quiet=data.get("quiet") or {})
+                        # 通路维度回传（r416）：同一厂商内 PC/H5/日历/窗历
+                        # 是不同通路，各自成功率与退役状态本来就是分开记的
+                        # （path_stats），此前只在 hint 文本里露一角，面板
+                        # 看不到。这里只挑面板用得上的字段，避免把整个
+                        # path_stats 塞进每 10s 的轮询响应。
+                        _node = _ps.get(_p) or {}
+                        _paths = {}
+                        for _pn, _pv in (_node.get("paths") or {}).items():
+                            _paths[_pn] = {
+                                "rate": _pv.get("rate"),
+                                "attempts": _pv.get("attempts"),
+                                "last_ok_at": _pv.get("last_ok_at"),
+                            }
+                        if _paths:
+                            _ch["paths"] = _paths
+                            _ch["retired_paths"] = list(
+                                _node.get("retired_paths") or [])
                         _ch["scene"] = _scene.get(_p) or {}
                         _e = _eff.get(_p) or {}
                         if _e.get("has"):
@@ -25896,9 +29324,41 @@ class _Handler(BaseHTTPRequestHandler):
                     plats = (rounds[-1].get("plats") if rounds else {}) or {}
                     out["diag"] = classify_round(plats)
                     out["diag_at"] = rounds[-1].get("ts", "") if rounds else ""
+                    # 演示也要会话维度，但只能走「只查 slots」这条轻路径：
+                    # 复用 _health_decorate 会打开 PriceStorage 连接，在
+                    # demo 下把 /api/health 挂到 25s 以上（实测），页面
+                    # networkidle 永不达成，整批 UI 用例连锁超时。
+                    global _IN_HEALTH_DECORATE
+                    _prevd = _IN_HEALTH_DECORATE
+                    _IN_HEALTH_DECORATE = True
+                    try:
+                        _attach_demo_paths(out)
+                        _attach_diag_slots(out)
+                    finally:
+                        _IN_HEALTH_DECORATE = _prevd
                     self._json(out)
                 else:
-                    self._json(_health_state())
+                    _hp = _health_state()
+                    # 健康卡空态的「停摆」判断（r517）：`rounds` 为空时前端
+                    # 分不出「从未采集」和「采集停了」，会一律写
+                    # 「完成一轮采集后会出现时间线」——而节流行此时可能已经
+                    # 写着「采集停了」。补一个整库最近采集时刻给它。
+                    try:
+                        _hdb = _anchored(
+                            ((_State.cfg or {}).get("output") or {}).get(
+                                "db_path"), "data/prices.db")
+                        if os.path.isfile(_hdb):
+                            with sqlite3.connect(_hdb) as _hc:
+                                _hr = _hc.execute(
+                                    "SELECT MAX(fetched_at) FROM fetch_paths"
+                                ).fetchone()
+                            _hp["last_seen_at"] = str(
+                                (_hr or [""])[0] or "")
+                        else:
+                            _hp["last_seen_at"] = ""
+                    except Exception:
+                        _hp["last_seen_at"] = ""
+                    self._json(_hp)
             except Exception as e:
                 self._json({"err": str(e)}, 500)
         elif self.path == "/api/pulse":
@@ -26064,10 +29524,33 @@ class _Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/login-state":
             try:
                 if DEMO["on"]:
-                    self._json({"ok": True, "demo": True, "plats": {
-                        p: {"saved": False, "active": False,
-                            "stale": False, "pending": False}
-                        for p in _LOGIN_PLATS}})
+                    # 演示模式也必须给出 6 个会话槽位：登录卡与健康卡的
+                    # 「会话维度」都按 slots 渲染，只给 plats 会静默回落到
+                    # 旧的「按厂商一行」结构，把飞猪 PC/H5 双端藏掉。
+                    _demo_slots = {}
+                    for _k in LOGIN_SLOT_ORDER:
+                        _m = LOGIN_SLOTS[_k]
+                        _demo_slots[_k] = {
+                            "slot": _k, "plat": _m["plat"],
+                            "surface": _m["surface"],
+                            "surface_label": _m["surface_label"],
+                            "name": _m["name"], "account": _m["account"],
+                            "requirement": _m["requirement"],
+                            "profile": _m["profile"],
+                            "login_url": _m["login_url"],
+                            "saved": False, "saved_at": 0, "active": False,
+                            "saving": False, "status": "missing", "pending": False,
+                            "needs_login": False, "health_need_login": False,
+                            "stale": False, "error": "", "detail": "",
+                            "verified_at": "", "page_ok": False,
+                            "session_verified": False, "detail_ok": False,
+                        }
+                    self._json({"ok": True, "demo": True,
+                                "plats": {
+                                    p: {"saved": False, "active": False,
+                                        "stale": False, "pending": False}
+                                    for p in _LOGIN_PLATS},
+                                "slots": _demo_slots})
                 else:
                     self._json(_login_state_view())
             except Exception as e:
@@ -26434,12 +29917,51 @@ class _Handler(BaseHTTPRequestHandler):
                                 "breaker_enabled": bool(
                                     ((cfg.get("crawler") or {}).get("breaker")
                                      or {}).get("enabled", True)),
+                                "health_penalty_enabled": bool(
+                                    (cfg.get("crawler") or {}).get(
+                                        "health_penalty_enabled", True)),
+                                # 成功率保护阈值（r487）：**必须回读**。
+                                # 只写不回读时，配置页渲染的是默认值——
+                                # 用户改完阈值再打开，看到的是 0.7/0.4/5；
+                                # 随手再保存一次就把自己设的值覆盖回默认。
+                                "health_min_samples": int(
+                                    (cfg.get("crawler") or {}).get(
+                                        "health_min_samples", 5) or 5),
+                                "health_ok_ratio": float(
+                                    (cfg.get("crawler") or {}).get(
+                                        "health_ok_ratio", 0.7)),
+                                "health_slow_ratio": float(
+                                    (cfg.get("crawler") or {}).get(
+                                        "health_slow_ratio", 0.4)),
+                                "health_slow_factor": float(
+                                    (cfg.get("crawler") or {}).get(
+                                        "health_slow_factor", 1.5)),
+                                "health_slowest_factor": float(
+                                    (cfg.get("crawler") or {}).get(
+                                        "health_slowest_factor", 3.0)),
                                 "breaker_base_s": int(
                                     ((cfg.get("crawler") or {}).get("breaker")
                                      or {}).get("base_s", 300) or 300),
                                 "breaker_cap_s": int(
                                     ((cfg.get("crawler") or {}).get("breaker")
                                      or {}).get("cap_s", 3600) or 3600),
+                                # 仅文件可改的采集参数（r521）：这些键在采集端
+                                # 真实生效（会话到期强制续期 / 并发上限 / 浏览器
+                                # 指纹 / 登录窗是否可见），但配置页没有编辑控件。
+                                # 只回读、不提供编辑：网页热改这些键会给人「已
+                                # 生效」的错觉，实际要采集端重载。
+                                "session_max_days": int(
+                                    (cfg.get("crawler") or {}).get(
+                                        "session_max_days", 0) or 0),
+                                "max_concurrency": int(
+                                    (cfg.get("crawler") or {}).get(
+                                        "max_concurrency", 0) or 0),
+                                "tls_impersonate": str(
+                                    (cfg.get("crawler") or {}).get(
+                                        "tls_impersonate", "") or ""),
+                                "login_desktop": bool(
+                                    (cfg.get("crawler") or {}).get(
+                                        "login_desktop", False)),
                                 "run_on_start": bool(
                                     (cfg.get("schedule") or {}).get(
                                         "run_on_start", True)),
@@ -26729,6 +30251,20 @@ class _Handler(BaseHTTPRequestHandler):
                 _brk0 = _crw.setdefault("breaker", {})
                 if glb.get("breaker_enabled") is not None:
                     _brk0["enabled"] = bool(glb["breaker_enabled"])
+                if glb.get("health_penalty_enabled") is not None:
+                    _crw["health_penalty_enabled"] = bool(
+                        glb["health_penalty_enabled"])
+                # 成功率保护阈值（r485）：四档数字可调，不再写死
+                for _hk, _hc in (("health_min_samples", int),
+                                 ("health_ok_ratio", float),
+                                 ("health_slow_ratio", float),
+                                 ("health_slow_factor", float),
+                                 ("health_slowest_factor", float)):
+                    if glb.get(_hk) is not None:
+                        try:
+                            _crw[_hk] = _hc(glb[_hk])
+                        except (TypeError, ValueError):
+                            pass
                 if glb.get("breaker_base_s") is not None:
                     try:
                         _bb = int(glb["breaker_base_s"])
@@ -27436,50 +30972,73 @@ class _Handler(BaseHTTPRequestHandler):
                     return
                 before = ((pac.snapshot().get("channels") or {})
                           .get(plat) or {})
-                pac.reset(plat)
-                _State.logger.info(
-                    "[干预] 手动解除 %s 熔断（原剩余 %ss · 原因 %s）",
-                    plat, before.get("remain_s", 0),
-                    before.get("reason") or "-")
-                after = ((pac.snapshot().get("channels") or {})
-                         .get(plat) or {})
-                # 解除只是"允许再试"，不等于"已经恢复"。立刻单查一次，
-                # 用真实结果落账；未通就重新熔断，避免把"解除了"显示成
-                # "好了"（这是干预后一致性最容易被破坏的一处）。
-                _probe = None
-                _cb = getattr(_State, "probe_cb", None)
-                if _cb is not None:
+                # 幂等（r480）：解除后面紧跟一次真实单查（10–60 秒）。第二个
+                # 请求并发进来会再跑一次探测，两次结果互相覆盖——用户看到
+                # 的可能不是最后一次。前端 PACE_BUSY 只挡同一页连点，第二个
+                # 标签页/直接调接口必须由这里兜住。
+                _rsg = _State.reset_open
+                with _State.reset_lock:
+                    if plat in _rsg:
+                        self._json({"ok": False, "dup": True,
+                                    "platform": plat,
+                                    "err": "正在解除并单查探测该渠道，"
+                                           "等这次结果出来再看"}, 409)
+                        return
+                    _rsg.add(plat)
+                try:
+                    pac.reset(plat)
+                except Exception:
+                    with _State.reset_lock:
+                        _rsg.discard(plat)
+                    raise
+                try:
+                    _State.logger.info(
+                        "[干预] 手动解除 %s 熔断（原剩余 %ss · 原因 %s）",
+                        plat, before.get("remain_s", 0),
+                        before.get("reason") or "-")
+                    after = ((pac.snapshot().get("channels") or {})
+                             .get(plat) or {})
+                    # 解除只是"允许再试"，不等于"已经恢复"。立刻单查一次，
+                    # 用真实结果落账；未通就重新熔断，避免把"解除了"显示成
+                    # "好了"（这是干预后一致性最容易被破坏的一处）。
+                    _probe = None
+                    _cb = getattr(_State, "probe_cb", None)
+                    if _cb is not None:
+                        try:
+                            _probe = _cb(plat, scope="")
+                        except Exception as _pe:
+                            _probe = {"ok": False, "err": str(_pe)[:120]}
+                    _ok = bool((_probe or {}).get("rows"))
+                    _rows = int((_probe or {}).get("rows") or 0)
+                    if _probe is not None and not _ok:
+                        try:
+                            pac.observe(plat, ["blocked"], "手动解除后探测未出数")
+                        except Exception:
+                            pass
+                    after2 = ((pac.snapshot().get("channels") or {})
+                              .get(plat) or {})
                     try:
-                        _probe = _cb(plat, scope="")
-                    except Exception as _pe:
-                        _probe = {"ok": False, "err": str(_pe)[:120]}
-                _ok = bool((_probe or {}).get("rows"))
-                _rows = int((_probe or {}).get("rows") or 0)
-                if _probe is not None and not _ok:
-                    try:
-                        pac.observe(plat, ["blocked"], "手动解除后探测未出数")
+                        from core.storage import PriceStorage as _PS
+                        _dbp = _anchored(
+                            ((_State.cfg or {}).get("output") or {}).get(
+                                "db_path"), "data/prices.db")
+                        _PS(_dbp).save_intervention(
+                            plat, "reset", ok=_ok,
+                            rows=_rows,
+                            before="%s/%s" % (before.get("state"),
+                                              before.get("reason")),
+                            after="%s/%s" % (after2.get("state"),
+                                             after2.get("reason")),
+                            note=("手动解除后单查：%s" % (
+                                ("出数 %d 条" % _rows) if _ok
+                                else ((_probe or {}).get("err") or "未出数"))),
+                            ms=int((_probe or {}).get("ms") or 0))
                     except Exception:
                         pass
-                after2 = ((pac.snapshot().get("channels") or {})
-                          .get(plat) or {})
-                try:
-                    from core.storage import PriceStorage as _PS
-                    _dbp = _anchored(
-                        ((_State.cfg or {}).get("output") or {}).get(
-                            "db_path"), "data/prices.db")
-                    _PS(_dbp).save_intervention(
-                        plat, "reset", ok=_ok,
-                        rows=_rows,
-                        before="%s/%s" % (before.get("state"),
-                                          before.get("reason")),
-                        after="%s/%s" % (after2.get("state"),
-                                         after2.get("reason")),
-                        note=("手动解除后单查：%s" % (
-                            ("出数 %d 条" % _rows) if _ok
-                            else ((_probe or {}).get("err") or "未出数"))),
-                        ms=int((_probe or {}).get("ms") or 0))
-                except Exception:
-                    pass
+
+                finally:
+                    with _State.reset_lock:
+                        _rsg.discard(plat)
                 self._json({"ok": True, "platform": plat,
                             "before": before, "after": after2,
                             "probe": _probe})
@@ -27806,6 +31365,50 @@ def _demo_seed_watches(db, state=None):
         pass
 
 
+def _demo_db_path(port):
+    """demo 合成库按端口分文件：全体实例共用单一 %TEMP%/ticket_demo_prices.db
+    时，并发启动会各自重建同一文件，写锁让后者卡在「进程活、不监听」
+    （r318 fixture 实测；并发全量下每个 webui 测试模块都会起一个 demo）。"""
+    return os.path.join(tempfile.gettempdir(),
+                        "ticket_demo_prices_%d.db" % int(port))
+
+
+def _demo_db_sweep(keep_port, max_age_s=3600):
+    """清掉历史遗留的 demo 库（r498）。实测临时目录里堆了 37 个、
+    合计 182MB——每个测试/演示进程按端口建一个，从不回收，长跑会占满
+    临时盘。
+
+    只删**同时满足**两个条件的：① 不是本次端口；② 超过 1 小时没被写过。
+    活跃实例会持续写它自己的库，mtime 很新，不会被误删；正在被别的实例
+    占用的旧文件删不掉（Windows 会抛 OSError），静默跳过即可。
+    """
+    now = time.time()
+    removed = 0
+    try:
+        # 整个函数体都在 try 内：gettempdir() 可能因环境异常抛错，而清理
+        # 是尽力而为——绝不能让启动路径因此崩掉。keep 的计算也走它，
+        # 所以同样放进 try。
+        keep = os.path.basename(_demo_db_path(keep_port))
+        base = tempfile.gettempdir()
+        for name in os.listdir(base):
+            if not (name.startswith("ticket_demo_prices_")
+                    and name.endswith(".db")):
+                continue
+            if name == keep:
+                continue
+            p = os.path.join(base, name)
+            try:
+                if now - os.path.getmtime(p) < max_age_s:
+                    continue
+                os.remove(p)
+                removed += 1
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return removed
+
+
 def _demo_main():
     """`python webui.py --demo`：零配置演示控制台（开源访客一键体验）。
 
@@ -27823,7 +31426,25 @@ def _demo_main():
         return
     from core.demo import build_demo_db, demo_cfg, demo_routes
     from core.models import Route
-    db = os.path.join(tempfile.gettempdir(), "ticket_demo_prices.db")
+    # 先回收历史遗留库再建本次的（r498，见 _demo_db_sweep 注释）
+    try:
+        _swept = _demo_db_sweep(args.port)
+        if _swept:
+            print("已清理 %d 个历史演示库（临时目录）" % _swept)
+    except Exception:
+        pass
+    # 先占端口再建库（r499）：顺序反了会毁数据。实测链路——同一端口起第二个
+    # demo 时，旧代码先 build_demo_db（executescript 重建整库），再绑定端口；
+    # Windows 下 allow_reuse_address=False，绑定必然失败退出，但那时第一个
+    # 实例正在用的库**已经被清空重建**，且没有任何提示。
+    # 先绑定：占不到端口就在动数据之前退出。
+    try:
+        srv = _Srv(("127.0.0.1", args.port), _Handler)
+    except OSError as e:
+        print(f"⚠ 端口 {args.port} 已被占用，本次演示未启动"
+              f"（若是另一个演示实例，直接用它即可）：{e}")
+        return
+    db = _demo_db_path(args.port)
     build_demo_db(db)
     DEMO["on"] = True
     _State.cfg = demo_cfg(db, port=args.port)
@@ -27850,7 +31471,7 @@ def _demo_main():
     _DEMO_WATCH_PATH = os.path.join(
         tempfile.gettempdir(), "ticket_demo_watch_%d.json" % args.port)
     _demo_seed_watches(db)
-    srv = _Srv(("127.0.0.1", args.port), _Handler)
+    # srv 已在建库之前绑定好（r499）：这里不能再建一次，否则二次绑定必失败
     _State.listen = "127.0.0.1:{}".format(args.port)
     _State.started_at = time.strftime("%Y-%m-%d %H:%M:%S")
     # 控制台可能跑在 GBK 终端（Windows 默认）：emoji 直出会
@@ -27860,6 +31481,12 @@ def _demo_main():
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
+    finally:
+        # 合成库每次启动按需重建，退出即删：批量起 demo 时不在 %TEMP% 留库
+        try:
+            os.remove(db)
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":

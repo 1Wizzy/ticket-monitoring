@@ -2,6 +2,7 @@
 import json
 import os
 import sqlite3
+import time
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 from typing import List, Optional
@@ -248,14 +249,29 @@ class PriceStorage:
         以该渠道最近一次干预时间为分界：
           前 24h：干预前同窗口的路径成功率
           后 24h：干预后到现在的路径成功率（样本不足如实返回 None）
+
+        分域对比（r512）：渠道级数字答不出「国际自检之后**国际通路**
+        恢复没有」——国内正常、国际全挂时，渠道级 before/after 都接近
+        1.0，看起来这次干预毫无意义。而自检按钮本来就是按域点的。
+        因此当这次干预的 `scope` 是 dom/intl 时，额外给出该域的
+        `scope_before/scope_after`（同一分界、同一窗口）。判别口径与
+        `path_stats` 完全一致（`is_intl_route`），不另造一套。
+        scope 不是域（如 relogin 的槽位名）时不返回该组字段——不猜。
         """
         with self._conn() as c:
+            # 只用**人工干预**当分界：auto_trip 等自动事件现在也入账，
+            # 拿它当分界会把用户上一次手动干预的前后对比冲掉——而
+            # 「我手动救过之后好了没有」正是这个接口要回答的。
             iv = c.execute(
-                "SELECT at, action, ok FROM interventions WHERE platform=? "
+                "SELECT at, action, ok, scope FROM interventions "
+                "WHERE platform=? "
+                "AND substr(action,1,5) <> 'auto_' "
                 "ORDER BY id DESC LIMIT 1", (str(platform),)).fetchone()
             if not iv:
                 return {"ok": True, "platform": platform, "has": False}
             at = str(iv["at"] or "")
+            sc = str(iv["scope"] or "").strip().lower()
+
             def _rate(where, params):
                 row = c.execute(
                     "SELECT SUM(CASE WHEN path_status IN ('ok','calendar') "
@@ -297,12 +313,194 @@ class PriceStorage:
                 _last = trend[-1]["rate"]
                 regressed = bool(_seen_ok and _last is not None
                                  and _last < 0.4)
-            return {"ok": True, "platform": platform, "has": True,
-                    "at": at, "action": str(iv["action"] or ""),
-                    "iv_ok": bool(iv["ok"]),
-                    "before": before, "before_n": bn,
-                    "after": after, "after_n": an,
-                    "trend": trend, "regressed": regressed}
+            out = {"ok": True, "platform": platform, "has": True,
+                   "at": at, "action": str(iv["action"] or ""),
+                   "iv_ok": bool(iv["ok"]),
+                   "before": before, "before_n": bn,
+                   "after": after, "after_n": an,
+                   "trend": trend, "regressed": regressed}
+            # 采集是否已经停了（r514）：`after is None` 有两种完全不同的原因——
+            # 「刚干预完，还没轮到采集」和「采集压根没在跑」。真实库 10-29
+            # fliggy 重登 103 次、`after_n` 恒为 0，而当天 fetch_paths 一条
+            # 都没有（最后一条停在 10-28 14:34）。面板只写「干预后还没有新
+            # 样本」，读者会一直等一个不会来的样本，而不是去看采集为什么停。
+            # 判据用**该渠道**最近一条样本的时间：整库暂停与单渠道停摆是
+            # 两件事，只有前者才说明「整个采集挂了」。
+            try:
+                _last = c.execute(
+                    "SELECT MAX(fetched_at) AS m FROM fetch_paths "
+                    "WHERE platform=?", (str(platform),)).fetchone()
+                _last_at = str((_last or {})["m"] or "") if _last else ""
+            except Exception:
+                _last_at = ""
+            out["last_sample_at"] = _last_at
+            # 时间解析复用 pacing 的那一份（同一格式、同一异常口径），
+            # 不在这里再造一套 strptime。**不要在这里吞异常**（r514 踩过）：
+            # 本模块原先没有 `import time`，`except Exception` 把 NameError
+            # 一起吞掉，`_age_h` 恒为 0，`stalled` 永远是 False——功能上线
+            # 即静默失效，而测试只看「字段存在」时会全绿。
+            from core.pacing import _age_min as _am
+            _age_h = ((_am(_last_at, time.time()) or 0.0) / 60.0
+                      if _last_at else 0.0)
+            # 「停摆」= 该渠道最近一条样本**早于这次干预**且已经过去 2 小时以上。
+            # 用 `_last_at < at` 而不是 `after_n == 0`：后者在「干预后还没轮到
+            # 采集」时也是 0，而那只是正常等待，不该报警。
+            out["stalled"] = bool(
+                _last_at and _last_at < at and _age_h >= 2)
+            out["stalled_hours"] = (round(_age_h, 1)
+                                    if out["stalled"] else None)
+            # 分域前后对比（r512）：只在这次干预的 scope 确实是域时才给。
+            # 判定用 is_intl_route —— 与 path_stats 的分域口径同源。
+            if sc in ("dom", "intl"):
+                try:
+                    from core.intl import is_intl_route as _is_intl
+                except Exception:
+                    _is_intl = lambda _a, _b: False
+                want = (sc == "intl")
+                # 取前窗下界到现在：一条查询覆盖 before/after 两段，
+                # 再在 Python 里按 at 切分——与渠道级 _rate 的窗口一致。
+                try:
+                    from datetime import datetime as _dt
+                    from datetime import timedelta as _td
+                    _floor = (_dt.strptime(at, "%Y-%m-%d %H:%M:%S")
+                              - _td(hours=max(1, int(hours)))
+                              ).strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    _floor = ""
+                _rows = c.execute(
+                    "SELECT from_city, to_city, fetched_at, path_status "
+                    "FROM fetch_paths WHERE platform=? AND fetched_at >= ?",
+                    (str(platform), _floor)).fetchall()
+                _pairs = []
+                for r in _rows:
+                    try:
+                        if bool(_is_intl(r["from_city"], r["to_city"])) != want:
+                            continue
+                    except Exception:
+                        continue
+                    _pairs.append((str(r["fetched_at"] or ""),
+                                   str(r["path_status"] or "")))
+                _fb = [(ts, st) for ts, st in _pairs if ts < at]
+                _fa = [(ts, st) for ts, st in _pairs if ts >= at]
+                _bok = sum(1 for _t2, s2 in _fb
+                           if s2 in ("ok", "calendar"))
+                _aok = sum(1 for _t2, s2 in _fa
+                           if s2 in ("ok", "calendar"))
+                out["scope"] = sc
+                out["scope_before"] = (round(_bok / len(_fb), 4)
+                                       if _fb else None)
+                out["scope_before_n"] = len(_fb)
+                out["scope_after"] = (round(_aok / len(_fa), 4)
+                                      if _fa else None)
+                out["scope_after_n"] = len(_fa)
+            return out
+
+    def intervention_success_rate(self, hours=24 * 7):
+        """干预成功率：按动作统计「按了之后真的恢复出数」的比例。
+
+        回答的是**选哪个按钮**，而不是「上一次干预效果如何」
+        （后者由 intervention_effect 回答）。实测缺口：面板能说
+        「上次自检 44%→100%」，但说不清「自检类干预一共 12 次，
+        几次真的把渠道救回来了」——这正是决定优先按哪个钮的依据。
+
+        判据（只用时间先后，不做语义猜测）：
+          对每次人工干预 I（排除 auto_*），生效窗口为
+          [I.at, 同渠道下一次人工干预) ∩ [I.at, now]。窗口内出现
+          ok/calendar 路径样本即记为有效（healed）。
+        窗口内**一条路径样本都没有**时不计入分母：干预刚做完还没采集，
+        不是失败，只是还不能判断——算成失败会把成功率压成噪声。
+
+        但**也不能整条丢掉**（r506）：真实库 10-29 有 92 次重登、当天
+        零条采集样本，旧实现直接把 relogin 从结果里抹掉——面板只剩
+        「自检 / 解除」，用户无法区分「没按过重登」与「按了但还判不了」。
+        这类窗口单独计入 `unjudged`，由界面明说「尚无采集样本」。
+
+        作用域维度（r511）：账本早就分域记了 `scope`（实测 probe 有
+        **intl 7 次 / dom 2 次**），但这里只按动作聚合，于是答不出
+        「国际自检救回几次、国内自检救回几次」——而面板上的自检按钮
+        恰恰是按域选的（自动/国内/国际），操作者需要知道该选哪一域。
+        现在每个动作额外带 `scopes` 子表（**只收非空 scope**；空 scope
+        只进总数，不编一个「全端」桶出来）。动作级字段口径**一字不变**，
+        老消费方（脚本/推送）不受影响。
+        """
+        hours = max(1, min(24 * 90, int(hours or 24 * 7)))
+        with self._conn() as c:
+            ivs = c.execute(
+                "SELECT id, at, platform, action, scope FROM interventions "
+                "WHERE substr(action,1,5) <> 'auto_' "
+                "AND at >= datetime('now','localtime', ?) "
+                "ORDER BY platform, id", ("-%d hours" % hours,)).fetchall()
+            if not ivs:
+                return {}
+            oldest = min(str(r["at"] or "") for r in ivs)
+            samples = c.execute(
+                "SELECT platform, fetched_at, path_status FROM fetch_paths "
+                "WHERE fetched_at >= ? ORDER BY platform, fetched_at",
+                (oldest,)).fetchall()
+        by_plat = {}
+        for s in samples:
+            by_plat.setdefault(str(s["platform"] or ""), []).append(
+                (str(s["fetched_at"] or ""),
+                 str(s["path_status"] or "")))
+
+        # 每个渠道的下一次人工干预时刻，作为窗口右边界（不含）。
+        # 不按 scope 拆边界：任何一次人工干预都会改动会话状态，前一窗
+        # 必须在那一刻结束，否则「重登后的成功」会算到更早的自检头上。
+        nxt = {}
+        plat_ivs = {}
+        for r in ivs:
+            plat_ivs.setdefault(str(r["platform"] or ""), []).append(
+                (str(r["at"] or ""), str(r["action"] or ""),
+                 str(r["scope"] or "").strip()))
+        for plat, seq in plat_ivs.items():
+            for i, (at, _act, _sc) in enumerate(seq):
+                nxt[(plat, i)] = seq[i + 1][0] if i + 1 < len(seq) else ""
+
+        def _new():
+            return {"n": 0, "healed": 0, "unhealed": 0, "unjudged": 0}
+
+        def _new_with_scopes():
+            d = _new()
+            d["scopes"] = {}
+            return d
+
+        out = {}
+        for plat, seq in plat_ivs.items():
+            rows = by_plat.get(plat) or []
+            for i, (at, act, scope) in enumerate(seq):
+                end = nxt[(plat, i)]
+                win = [(ts, st) for ts, st in rows
+                       if ts >= at and (not end or ts < end)]
+                d = out.setdefault(act, _new_with_scopes())
+                # 作用域子表：只收非空 scope（空 scope 只进动作级总数）
+                sd = (d["scopes"].setdefault(scope, _new())
+                      if scope else None)
+                if not win:
+                    # 判不了 ≠ 没发生：只累加 unjudged，不进 n 的分母。
+                    d["unjudged"] += 1
+                    if sd is not None:
+                        sd["unjudged"] += 1
+                    continue
+                healed = any(st in ("ok", "calendar") for _ts, st in win)
+                d["n"] += 1
+                d["healed" if healed else "unhealed"] += 1
+                if sd is not None:
+                    sd["n"] += 1
+                    sd["healed" if healed else "unhealed"] += 1
+
+        def _finish(x):
+            x["rate"] = (round(x["healed"] / x["n"], 4) if x["n"] else None)
+            # 可靠性标记（r486）：n=1 时的 1.0 与 n=12 时的 1.0 不是一回事。
+            # 面板已按 n<3 只说「样本不足」，但 API 直接吐 1.0 会让任何
+            # 别的消费方（脚本/推送/二次开发）当真。这里显式标注，
+            # 让「能不能引用这个比率」成为数据自带的事实，而不是调用方的约定。
+            x["reliable"] = x["n"] >= 3
+
+        for d in out.values():
+            for sd in (d.get("scopes") or {}).values():
+                _finish(sd)
+            _finish(d)
+        return out
 
     def interventions(self, platform="", limit=20):
         """最近 N 条干预，按时间倒序（可观测：干预是否真的有效）。"""
@@ -433,19 +631,23 @@ class PriceStorage:
                     "rate": 0.0, "detail_rate": 0.0, "rate_excl_empty": 0.0,
                     "query_attempts": 0, "query_ok": 0,
                     "query_detail_ok": 0, "query_calendar_only": 0,
-                    "query_rate": 0.0, "last_at": "", "last_ok_at": ""}
+                    "query_rate": 0.0, "last_at": "", "last_ok_at": "",
+                    "last_login_at": "", "login_since_ok": 0}
 
         def new_path():
             return {"attempts": 0, "ok": 0, "detail_ok": 0, "calendar_ok": 0,
                     "blocked": 0, "soft": 0, "empty": 0, "unsupported": 0,
                     "login": 0, "error": 0,
                     "rate": 0.0, "rate_excl_empty": 0.0,
-                    "detail_rate": 0.0, "last_at": "", "last_ok_at": ""}
+                    "detail_rate": 0.0, "last_at": "", "last_ok_at": "",
+                    "last_login_at": "", "login_since_ok": 0}
 
         def bump(node, status, last):
             node["attempts"] += 1
             if status in ("ok", "calendar"):
                 node["ok"] += 1
+                # 出数即清零：之后若再被登录墙拦，才是「重登后又不通了」
+                node["login_since_ok"] = 0
                 if status == "ok":
                     node["detail_ok"] += 1
                 else:
@@ -471,6 +673,13 @@ class PriceStorage:
                 # 重试不能。实测同程 24h 53 条 444 历史 login 行让渠道
                 # 错误率显示成 40%，而它根本没有网络故障。
                 node["login"] = int(node.get("login") or 0) + 1
+                node["login_since_ok"] = int(
+                    node.get("login_since_ok") or 0) + 1
+                # 最近一次登录墙时间（r479）：重登后要判断「这次墙是不是
+                # 重登之前的旧账」。只按计数会永远停在 login（24h 窗口里
+                # 的旧行不会消失），用户刚登完又被要求再登一次。
+                if last > str(node.get("last_login_at") or ""):
+                    node["last_login_at"] = last
             else:
                 node["error"] += 1
             if last > node["last_at"]:
@@ -630,6 +839,24 @@ class PriceStorage:
                 target["query_attempts_live"] = (
                     (live or {}).get("query_attempts")
                     if live else target.get("query_attempts"))
+        # 不限窗口的最近样本时刻（r516）：`last_at` 只统计窗口内的记录，
+        # 当整个窗口为空（采集停了很久）时 out 甚至是**空 dict**——于是
+        # 「采集停了」会被误判成「新装、还没有第一轮」。这里单独查一次
+        # 全表 MAX，并**同时覆盖窗口内没有记录的渠道**（全红场景）。
+        try:
+            with self._conn() as c2:
+                rows = c2.execute(
+                    "SELECT platform, MAX(fetched_at) AS m FROM fetch_paths "
+                    "GROUP BY platform").fetchall()
+                seen = {str(r["platform"] or ""): str(r["m"] or "")
+                        for r in rows}
+            for plat in set(list(out.keys()) + list(seen.keys())):
+                if plat not in out:
+                    continue                 # 不认识的历史渠道不凭空造节点
+                out[plat]["last_seen_at"] = seen.get(plat, "")
+        except Exception:
+            for plat in out.keys():
+                out[plat].setdefault("last_seen_at", "")
         return out
 
     def failure_recurrence(self, hours=24, min_count=3):
