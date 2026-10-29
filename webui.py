@@ -277,6 +277,42 @@ def _demo_neutral_path(meta: dict) -> dict:
     return meta
 
 
+def _demo_pacing_globals():
+    """演示载荷里的节流开关（r628）：与真实分支同源、同默认值。
+
+    只读 `_State.cfg`，不碰磁盘；解析失败时退回与 DEFAULTS 一致的值，
+    保证「演示站看到的开关态」与「进程实际行为」一致。
+    """
+    cfg = _State.cfg or {}
+    crw = cfg.get("crawler") or {}
+    warm = crw.get("warmup") or {}
+    brk = crw.get("breaker") or {}
+    try:
+        from core.pacing import parse_pacing as _pp
+        p = _pp(cfg)
+    except Exception:
+        p = {}
+    return {
+        "warmup_enabled": bool(warm.get("enabled", True)),
+        "warmup_platforms": ", ".join(
+            [x for x in (warm.get("platforms") or p.get("warmup_platforms")
+                         or ("qunar", "fliggy", "tuniu"))
+             if x in _warmable()]),
+        "warmup_ignored": [
+            x for x in (warm.get("platforms") or [])
+            if x not in _warmable()],
+        "warmable": list(_warmable()),
+        "breaker_enabled": bool(brk.get("enabled", True)),
+        "health_penalty_enabled": bool(
+            crw.get("health_penalty_enabled", True)),
+        "health_ok_ratio": p.get("health_ok_ratio", 0.7),
+        "health_slow_ratio": p.get("health_slow_ratio", 0.4),
+        "health_slow_factor": p.get("health_slow_factor", 1.5),
+        "health_slowest_factor": p.get("health_slowest_factor", 3.0),
+        "health_min_samples": p.get("health_min_samples", 5),
+    }
+
+
 def _demo_config_payload() -> dict:
     """演示 /api/config 与静态演示站共用的单一载荷源。
 
@@ -311,6 +347,11 @@ def _demo_config_payload() -> dict:
         "globals": {"interval_minutes": 15, "jitter_minutes": 5,
                     "port": int(((_State.cfg or {}).get("web") or {})
                                 .get("port", 8765) or 8765),
+                    # 节流六项（r628）：演示分支原先一项都不回读，配置页的
+                    # 「首页预热 / 熔断 / 成功率保护」读 GLB.x !== false，
+                    # undefined 一律当「开」——哪怕实际配置里是关的。
+                    # 演示站是官方预览面，不能展示与真实行为不符的开关态。
+                    **_demo_pacing_globals(),
                     "run_on_start": True, "headless": True,
                     "timeout_seconds": 45, "delay_min": 5, "delay_max": 15,
                     "user_agent": "", "debug": False, "browser_dir": "",
@@ -18288,24 +18329,50 @@ function buildForm(){if(!CFG)return;let h='',gh='';
   +glcell('熔断','glbBrk','GLB.breaker_enabled=this.checked',GLB.breaker_enabled!==false,'命中 429/风控/验证后停手冷却，而不是换姿势重试','check')
   +glcell('成功率保护','glbHpen','GLB.health_penalty_enabled=this.checked',GLB.health_penalty_enabled!==false,'近 24h 成功率低于「合格线」时自动拉长该渠道 TTL。关掉后仍统计成功率、但不再自动降频——只在「宁可多打也不接受变慢」时才关','check')
   +glcell('合格线','glbHok','GLB.health_ok_ratio=Math.max(0.05,Math.min(1,parseFloat(this.value)||0.7))',esc(GLB.health_ok_ratio==null?0.7:GLB.health_ok_ratio),'成功率 ≥ 此值不降频（默认 0.7）；低于它才拉长 TTL',null,'比率')
-  +glcell('降频线','glbHslow','GLB.health_slow_ratio=Math.min(GLB.health_ok_ratio||0.7,Math.max(0,parseFloat(this.value)||0.4))',esc(GLB.health_slow_ratio==null?0.4:GLB.health_slow_ratio),'成功率 ≥ 此值只轻降频，更低则重降频（默认 0.4）；自动钳到 ≤ 合格线',null,'比率')
+  +glcell('降频线','glbHslow','GLB.health_slow_ratio=Math.min(GLB.health_ok_ratio||0.7,Math.max(0,parseFloat(this.value)||0.4));glbClamp(this,\'glbHslow\',GLB.health_slow_ratio,\'降频线不能高于合格线（\'+GLB.health_ok_ratio+\'），已按合格线生效\')',esc(GLB.health_slow_ratio==null?0.4:GLB.health_slow_ratio),'成功率 ≥ 此值只轻降频，更低则重降频（默认 0.4）；自动钳到 ≤ 合格线',null,'比率')
   +glcell('轻降频倍数','glbHsf','GLB.health_slow_factor=Math.max(1,Math.min(10,parseFloat(this.value)||1.5))',esc(GLB.health_slow_factor==null?1.5:GLB.health_slow_factor),'成功率落在降频线与合格线之间时的 TTL 倍数（默认 1.5）',null,'倍')
-  +glcell('重降频倍数','glbHslf','GLB.health_slowest_factor=Math.max(GLB.health_slow_factor||1.5,Math.min(20,parseFloat(this.value)||3))',esc(GLB.health_slowest_factor==null?3:GLB.health_slowest_factor),'成功率低于降频线时的 TTL 倍数（默认 3）；自动钳到 ≥ 轻降频倍数',null,'倍')
+  +glcell('重降频倍数','glbHslf','GLB.health_slowest_factor=Math.max(GLB.health_slow_factor||1.5,Math.min(20,parseFloat(this.value)||3));glbClamp(this,\'glbHslf\',GLB.health_slowest_factor,\'重降频倍数不能低于轻降频倍数（\'+GLB.health_slow_factor+\'），已按轻降频倍数生效\')',esc(GLB.health_slowest_factor==null?3:GLB.health_slowest_factor),'成功率低于降频线时的 TTL 倍数（默认 3）；自动钳到 ≥ 轻降频倍数',null,'倍')
   +glcell('判定样本下限','glbHms','GLB.health_min_samples=Math.max(1,Math.min(200,parseInt(this.value)||5))',esc(GLB.health_min_samples==null?5:GLB.health_min_samples),'近 24h 样本少于此次数不判定，避免首轮波动就被降频（默认 5）',null,'次')
   +glcell('熔断起步','glbBbs','GLB.breaker_base_s=Math.max(30,Math.min(3600,parseInt(this.value)||300))',esc(GLB.breaker_base_s||300),'首次冷却秒数；连续命中按 2 倍阶梯递增',null,'秒')
-  +glcell('熔断封顶','glbBcs','GLB.breaker_cap_s=Math.max(120,Math.min(86400,parseInt(this.value)||3600))',esc(GLB.breaker_cap_s||3600),'单次冷却上限：封太死会掩盖渠道已经恢复的事实',null,'秒')
+  +glcell('熔断封顶','glbBcs','GLB.breaker_cap_s=Math.max(120,Math.min(86400,parseInt(this.value)||3600));glbClamp(this,\'glbBcs\',GLB.breaker_cap_s,\'熔断封顶低于起步值（\'+GLB.breaker_base_s+\' 秒）时会先撞封顶，请调高封顶\')',esc(GLB.breaker_cap_s||3600),'单次冷却上限：封太死会掩盖渠道已经恢复的事实',null,'秒')
   +glcell('首页预热','glbWarm','GLB.warmup_enabled=this.checked',GLB.warmup_enabled!==false,'每轮每渠道先打一次首页再查深链：抹掉「无 referer / 无风控 cookie」这个最强机器指纹','check')
-  +glcell('预热渠道','glbWarmP','GLB.warmup_platforms=(this.value||"").trim()',esc(GLB.warmup_platforms||''),'逗号分隔；只对声明了入口的渠道生效，留空=不预热','text',null,'qunar, fliggy, tuniu')
+  /* 能预热的渠道由后端按「真的声明了入口」派生（r627）：原先提示只说
+     「只对声明了入口的渠道生效」，用户填 ctrip 后按钮可点却什么也不做。
+     现在直接列出可填的几家，并把已填但会被忽略的点名。 */
+  +glcell('预热渠道','glbWarmP','GLB.warmup_platforms=(this.value||"").trim()',esc(GLB.warmup_platforms||''),
+    (GLB.warmup_ignored&&GLB.warmup_ignored.length
+      ?('⚠ '+GLB.warmup_ignored.join('、')+' 没有预热入口（打首页下不发可用会话），保存时会被忽略；可填：'+(GLB.warmable||[]).join('、'))
+      :('逗号分隔，可填：'+((GLB.warmable||[]).join('、')||'（无）')+'；留空=不预热')),
+    'text',null,'qunar, fliggy, tuniu')
   +'</div>'
   +glsec('通用 · 保存即热生效')
   +'<div class="glgrid">'
   +glcell('浏览器 User-Agent（空=内置默认）','glbUa','GLB.user_agent=this.value',esc(GLB.user_agent||''),'全渠道共用的桌面 UA；风控策略变化时无需改码即可更换','text',null,'留空 = 内置桌面 UA')
+  /* 采集细节（r523）：这四项原先「只能在 config.yaml 里改」——配置页
+     连值都不显示。用户的要求是**配置页不允许存在无法配置的项**，
+     所以改成真正的编辑控件；它们都由采集端按轮读取，保存即热生效。 */
+  +glcell('会话最长可用天数','glbSessMax','GLB.session_max_days=Math.max(0,Math.min(365,parseInt(this.value)||0))',esc(GLB.session_max_days||0),'超过该天数即便不在预热名单也会强制续一次会话；0 = 不限','number',null,'0 = 不限')
+  +glcell('并发上限','glbMaxConc','GLB.max_concurrency=Math.max(0,Math.min(16,parseInt(this.value)||0))',esc(GLB.max_concurrency||0),'同时最多开几个采集任务；调低更稳，调高更快但更容易触发风控；0 = 自动','number',null,'0 = 自动')
+  +glcell('移动端 User-Agent（空=内置默认）','glbMua','GLB.mobile_user_agent=this.value',esc(GLB.mobile_user_agent||''),'H5/移动入口使用的 UA；留空用内置值','text',null,'留空 = 内置移动 UA')
+  +glcell('TLS 指纹（空=默认）','glbTls','GLB.tls_impersonate=this.value',esc(GLB.tls_impersonate||''),'飞猪等走 curl_cffi 的渠道使用的浏览器指纹标识','text',null,'留空 = 库默认')
+  +glcell('调试目录','glbDbgDir','GLB.debug_dir=this.value',esc(GLB.debug_dir||''),'抓取失败时的现场快照落盘位置；相对路径按程序根解析','text',null,'留空 = debug')
+  /* 熔断登录冷却 / 近邻天数 / 渠道节奏（r523 补齐）：原先也只能改文件。 */
+  +glcell('登录墙冷却','glbLcd','GLB.login_cooldown_s=Math.max(60,Math.min(86400,parseInt(this.value)||900))',esc(GLB.login_cooldown_s||900),'命中登录墙后该渠道固定冷却秒数（不随命中次数增长）','number',null,'900')
+  +glcell('邻近天数','glbNearD','GLB.near_days=Math.max(0,Math.min(30,parseInt(this.value)||3))',esc(GLB.near_days==null?3:GLB.near_days),'「邻近日期」比价窗口（前后各 N 天）','number',null,'3')
+  +glcell('登录窗口可见','glbLgd','GLB.login_desktop=this.checked',GLB.login_desktop!==false,'弹登录窗时显示浏览器界面（容器内无图形环境时应关闭）','check')
   +'</div>'
-  +glnote('仅可在 config.yaml 中修改（保存网页配置不会覆盖它们）',
-    [['会话最长可用天数', (GLB.session_max_days>0?(GLB.session_max_days+' 天'):'不限'), 'crawler.session_max_days', '超过该天数即便不在预热名单也会强制续一次会话'],
-     ['并发上限', (GLB.max_concurrency>0?GLB.max_concurrency+' 个':'(自动)'), 'crawler.max_concurrency', '同时最多开几个采集任务；调低更稳、调高更快但更容易触发风控'],
-     ['TLS 指纹', (GLB.tls_impersonate||'(默认)'), 'crawler.tls_impersonate', '飞猪等走 curl_cffi 的渠道使用的浏览器指纹'],
-     ['登录窗口可见', (GLB.login_desktop?'桌面可见':'(无头)'), 'crawler.login_desktop', '弹登录窗时是否显示浏览器界面']])
+  +glsec('渠道出口 · 按渠道绑代理 · 保存即热生效')
+  +'<div class="glgrid">'
+  /* 按渠道绑出口（r600）：`crawler.proxy_map[渠道]` 原先只能改 config.yaml
+     ——配置页连值都不显示，用户无法给单渠道换节点。它优先于上面的全局
+     「采集代理」，一家被限流不牵连另一家。留空 = 跟随全局。 */
+  +['qunar','fliggy','ctrip','tongcheng','tuniu'].map(p=>
+    glcell(({qunar:'去哪儿',fliggy:'飞猪',ctrip:'携程',tongcheng:'同程',tuniu:'途牛'}[p])+' 出口代理',
+      'glbPm_'+p,
+      'GLB.proxy_map=Object.assign({},GLB.proxy_map||{},{'+p+':(this.value||"").trim()})',
+      esc(((GLB.proxy_map||{})[p])||''),
+      '该渠道单独走的出口；留空 = 跟随全局「采集代理」', 'text', null, '留空 = 跟随全局')).join('')
+  +'</div>'
   +glsec('Android 真机通道 · 保存即热生效')
   +'<div class="glgrid">'
   /* Android 真机（r603）：智行/美团 App 没有可用的 Web 入口，只能走真机。
@@ -28718,6 +28785,36 @@ def _append_channel_evidence(card: dict, user: str = "") -> None:
             pass
 
 
+def _warmable():
+    """能预热的渠道 = REGISTRY 里 warmup_url 非空的那些（r627）。
+
+    以前这里是一份手写白名单，含 ctrip/tongcheng —— 两家都没有入口，
+    用户填进「预热渠道」后按钮可点、点了没反应。判据要跟着真实能力走。
+    """
+    try:
+        from crawlers import REGISTRY as _R
+        return tuple(sorted(k for k, cls in _R.items()
+                            if str(getattr(cls, "warmup_url", "") or "").strip()))
+    except Exception:
+        return ("fliggy", "qunar", "tuniu")
+
+
+def _enabled_platforms():
+    """用户配置里勾选过的渠道并集（r604）。
+
+    健康卡的行来自日志里**出现过**的渠道，配了却没被扫的渠道整行不渲染，
+    用户读作「这个渠道不存在」。后端把「勾了哪些」一并下发，前端才能说
+    「已勾选，但近 24h 无扫描记录」——而不是让人去配置页反复确认。
+    """
+    out = []
+    for u in ((_State.cfg or {}).get("users") or []):
+        for p in (u.get("platforms") or []):
+            p = str(p or "").strip()
+            if p and p not in out:
+                out.append(p)
+    return out
+
+
 def _health_state(hours: int = 24) -> dict:
     """渠道健康时间线：解析 monitor.log（尾部 2MB 封顶，防长日志拖慢）。
 
@@ -30256,9 +30353,20 @@ class _Handler(BaseHTTPRequestHandler):
                                     ((cfg.get("crawler") or {}).get("warmup")
                                      or {}).get("enabled", True)),
                                 "warmup_platforms": ", ".join(
-                                    ((cfg.get("crawler") or {}).get("warmup")
-                                     or {}).get("platforms")
-                                    or ["qunar", "fliggy", "tuniu"]),
+                                    [x for x in (
+                                        ((cfg.get("crawler") or {}).get(
+                                            "warmup") or {}).get("platforms")
+                                        or ["qunar", "fliggy", "tuniu"])
+                                     if x in _warmable()]),
+                                # 没有预热入口、被忽略的项（r627）：界面要能
+                                # 说「这几家填了也不会预热」，而不是静默丢弃。
+                                "warmup_ignored": [
+                                    x for x in (
+                                        ((cfg.get("crawler") or {}).get(
+                                            "warmup") or {}).get("platforms")
+                                        or [])
+                                    if x not in _warmable()],
+                                "warmable": list(_warmable()),
                                 # 2 区 · 熔断
                                 "breaker_enabled": bool(
                                     ((cfg.get("crawler") or {}).get("breaker")
@@ -30616,11 +30724,15 @@ class _Handler(BaseHTTPRequestHandler):
                 if glb.get("warmup_enabled") is not None:
                     _warm0["enabled"] = bool(glb["warmup_enabled"])
                 if glb.get("warmup_platforms") is not None:
-                    _valid = ("qunar", "fliggy", "ctrip",
-                              "tongcheng", "tuniu")
+                    # 可预热 = **真的声明了入口**（warmup_url 非空）的渠道。
+                    # 曾用手写白名单，里面含 ctrip/tongcheng —— 这两家没有
+                    # 入口，填进去后按钮可点但点了什么也不做（r627）。
                     _wl = [x.strip() for x in
                            str(glb["warmup_platforms"]).split(",") if x.strip()]
-                    _warm0["platforms"] = [x for x in _wl if x in _valid]
+                    _warm0["platforms"] = [x for x in _wl if x in _warmable()]
+                    _ignored = [x for x in _wl if x not in _warmable()]
+                    if _ignored:
+                        _warm0["ignored"] = _ignored
                 _brk0 = _crw.setdefault("breaker", {})
                 if glb.get("breaker_enabled") is not None:
                     _brk0["enabled"] = bool(glb["breaker_enabled"])
