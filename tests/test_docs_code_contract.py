@@ -255,7 +255,10 @@ def test_spec_and_handoff_called_functions_exist():
     """
     THIRD = {"scroll_into_view_if_needed", "wait_for_timeout", "set_viewport_size",
              "evaluate", "add_init_script", "storage_state", "is_closed",
-             "query_selector", "inner_html", "dispatch_event"}
+             "query_selector", "inner_html", "dispatch_event",
+             # 浏览器标准 API：文档里写「程序化 focus() 不触发 :focus-visible」
+             # 指的是 DOM 方法，不是仓库里的函数（r619 实测误报）
+             "focus", "blur", "closest", "matches", "getBoundingClientRect"}
     src = []
     for rel in ("main.py", "webui.py", "report.py", "wizard.py"):
         q = ROOT / rel

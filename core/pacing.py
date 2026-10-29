@@ -603,40 +603,57 @@ def effect_verdict(effect):
 
     effect: storage.intervention_effect() 的返回。
     返回 (state, hint, severity)；无干预或样本不足时如实说"还不能判断"。
+
+    分域口径（r619）：这次干预的 scope 是 dom/intl 时，结论必须按**该域**
+    的 before/after 判。原先只读渠道级数字，实测形态是：
+    国际自检后国际仍 0%，但渠道级因国内一直很好而 100% → 判「干预有效」
+    → 调用方（webui）据此把「路径劣化」的 advice 改写成「恢复中」，
+    用户于是不再处理一个仍然全红的域。数字难看只是表象，这里关掉的是
+    「可判断 + 可干预」。
     """
     e = effect or {}
     if not e.get("has"):
         return "none", "", "ok"
     b, a = e.get("before"), e.get("after")
+    # 该域口径优先。非域名 scope（重登槽位等）没有 scope_* 字段，走渠道级。
+    _sc = str(e.get("scope") or "").strip().lower()
+    _domain = ""
+    if _sc in ("dom", "intl") and ("scope_after" in e
+                                   or "scope_before" in e):
+        _domain = ("国际" if _sc == "intl" else "国内")
+        b, a = e.get("scope_before"), e.get("scope_after")
+        _an = int(e.get("scope_after_n") or 0)
+    else:
+        _an = int(e.get("after_n") or 0)
+    _lead = (_domain + "域：") if _domain else ""
     # 回落优先于一切：干预后先好后坏，一致性已不成立，不该被
     # "干预前无样本"或"样本不足"掩盖。
     if e.get("regressed"):
-        return "regressed", ("干预后出现过恢复但最近一个窗口回落到 %.0f%%："
+        return "regressed", ("%s干预后出现过恢复但最近一个窗口回落到 %.0f%%："
                             "一致性不成立，建议复查会话/入口"
-                            % ((a or 0) * 100)), "act"
+                            % (_lead, (a or 0) * 100)), "act"
     if a is None:
-        return "pending", ("干预后还没有新样本（%s）：等下一轮采集再判断"
-                           % (e.get("action") or "干预")), "wait"
+        # 该域零样本时说清是「这个域还没有」，不拿渠道级的数字顶替
+        return "pending", ("%s干预后还没有新样本（%s）：等下一轮采集再判断"
+                           % (_lead, e.get("action") or "干预")), "wait"
     # 样本护栏：干预后只有 1-2 次就宣布"已恢复"是过度自信。
-    if int(e.get("after_n") or 0) < 3:
-        return "provisional", ("干预后仅 %d 个样本（成功率 %.0f%%）："
-                               "再观察一轮再定论"
-                               % (int(e.get("after_n") or 0), a * 100)), "wait"
+    if _an < 3:
+        return "provisional", ("%s干预后仅 %d 个样本（成功率 %.0f%%）："
+                               "再观察一轮再定论" % (_lead, _an, a * 100)), "wait"
     if b is None:
-        return "unknown_before", ("干预后成功率 %.0f%%（%d 次）；干预前窗口"
-                                  "无样本，无法对比" % (a * 100,
-                                                     int(e.get("after_n") or 0))), "ok"
+        return "unknown_before", ("%s干预后成功率 %.0f%%（%d 次）；干预前窗口"
+                                  "无样本，无法对比" % (_lead, a * 100, _an)), "ok"
     if a >= 0.7 and a > b:
-        return "improved", ("干预有效：%.0f%% → %.0f%%"
-                            % (b * 100, a * 100)), "ok"
+        return "improved", ("%s干预有效：%.0f%% → %.0f%%"
+                            % (_lead, b * 100, a * 100)), "ok"
     if a >= 0.7:
-        return "recovered", ("干预后已回到 %.0f%%（干预前 %.0f%%）"
-                             % (a * 100, b * 100)), "ok"
+        return "recovered", ("%s干预后已回到 %.0f%%（干预前 %.0f%%）"
+                             % (_lead, a * 100, b * 100)), "ok"
     if a > b:
-        return "partial", ("有改善但仍偏低：%.0f%% → %.0f%%，建议再自检一次"
-                           % (b * 100, a * 100)), "wait"
-    return "no_effect", ("干预未见改善：%.0f%% → %.0f%%，换路径/重登后再试"
-                         % (b * 100, a * 100)), "act"
+        return "partial", ("%s有改善但仍偏低：%.0f%% → %.0f%%，建议再自检一次"
+                           % (_lead, b * 100, a * 100)), "wait"
+    return "no_effect", ("%s干预未见改善：%.0f%% → %.0f%%，换路径/重登后再试"
+                         % (_lead, b * 100, a * 100)), "act"
 
 
 def advise(plat, ch=None, paths=None, now=None, node=None,
