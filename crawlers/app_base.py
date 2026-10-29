@@ -31,10 +31,12 @@ class AppCrawler:
 
     name: str = "app_base"
     package: str = ""          # Android 包名
-    # 与 BaseCrawler 保持一致（另有 calendar 表达"只出每日最低价"）
+    # 与 BaseCrawler 保持一致（另有 calendar 表达"只出每日最低价"），
+    # 并补 App 特有的三类拦路物：广告弹层 / 验证码 / 人脸核验。
+    # 它们必须能独立入账——把"被挡住"记成 empty 或 error，等于让账本说谎。
     PATH_STATUS = ("ok", "empty", "login", "blocked", "timeout",
                    "error", "parse_error", "unsupported", "calendar",
-                   "soft_reject")
+                   "soft_reject", "ad", "captcha", "face")
     # 会话是否可疑（webui 登录卡分层用），实例级每轮复位
     login_suspect: bool = False
 
@@ -47,6 +49,11 @@ class AppCrawler:
         self.last_status = ""
         self.last_error = ""
         self._runtime = None
+        # 与浏览器渠道同一条约定：资料目录按仓库根解析，不随 cwd 漂移
+        # （登录态快照要落在这里，chdir 后写错位置用户会找不到自己的凭证）。
+        root = str(self.config.get("user_data_dir") or "user_data").strip() \
+            or "user_data"
+        self.user_data_root = os.path.abspath(os.path.join(_REPO_ROOT, root))
 
     # ---------- 账本（与 BaseCrawler 同形）----------
     def path_reset(self):

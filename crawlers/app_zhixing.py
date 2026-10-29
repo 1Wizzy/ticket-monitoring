@@ -20,6 +20,8 @@ from .app_base import AppCrawler
 from .app_zhixing_parse import (detect_state, parse_calendar,
                                 parse_flight_rows)
 
+import time
+
 # 日历条上的日期是 MM-DD；换算年需要上下文（跨年时 12-31 → 01-01）
 _APP_PKG = "cn.suanya.zhixing"
 _APP_LABEL = "智行旅行"
@@ -76,6 +78,9 @@ class AppZhixingCrawler(AppCrawler):
                            detail="device unavailable")
             return []
 
+        # 异常逃逸不在这里写：调用方统一走 `AppBaseCrawler.safe_fetch()`，
+        # 它已 try/except 并记 `app-error`（含本段抛出的一切）。此处再包一层
+        # 只是重复防御，且会抢在 safe_fetch 的去重判断之前多记一条。
         with rt.device_lock():
             return self._fetch_locked(dev, from_city, to_city, dates)
 
@@ -100,6 +105,15 @@ class AppZhixingCrawler(AppCrawler):
             self.path_note("app-dump", "timeout",
                            detail="empty ui hierarchy",
                            ms=int((time.time() - started) * 1000))
+            return []
+
+        # 拦路物优先于数据解析：广告可自动关一次再读；验证码/人脸只能人工，
+        # 记独立状态并留下现场，绝不当成"没票"或"没数据"。
+        xml, block = self._clear_blockers(dev, xml)
+        if block.blocking:
+            self.path_note("app-blocker", block.kind, detail=block.detail)
+            self.logger.warning("[%s] 页面被拦截：%s（%s）",
+                                self.name, block.kind, block.detail)
             return []
 
         state = detect_state(xml)
@@ -164,6 +178,34 @@ class AppZhixingCrawler(AppCrawler):
             # 有日历但目标日期都没价：这是"没拿到价"，不是"无票"
             self.logger.info("[%s] 日历条命中 0 条（目标日期无价）", self.name)
         return out
+
+    def _clear_blockers(self, dev, xml: str):
+        """处理页面拦路物。返回 (xml, Block)。
+
+        策略分级（与 PC/H5 渠道的处置规范一致）：
+          * **广告**：只是遮挡 → 自动点关闭，最多两次；关不掉就上报 `ad`，
+            让用户看到"被广告挡住"，而不是记成没数据。
+          * **验证码**（含滑块/图形点选）：风控已触发，**不自动破解**，
+            记 `captcha`；这对应 CAPTCHA_SOLUTION 的人工接管边界。
+          * **人脸识别**：生物特征核验，自动化无法也不应伪造 → 记 `face`，
+            明确告知用户必须本人操作，且不会被重试掩盖。
+          * **登录**：记 `login`，由内嵌登录画面处理。
+        """
+        from .app_blockers import Block, detect_block
+
+        for _ in range(2):
+            block = detect_block(xml)
+            if block.kind != "ad" or not block.close_xy:
+                return xml, block
+            # 广告可关：点掉后重取一次页面
+            self.logger.info("[%s] 关闭广告弹层 %s", self.name, block.close_xy)
+            dev.tap(*block.close_xy)
+            time.sleep(1.5)
+            xml = dev.dump()
+            if not xml:
+                return "", Block("", "no-ui")
+        # 关两次还在：当作关不掉的广告上报，不再纠缠
+        return xml, detect_block(xml)
 
     def _boot_wait(self) -> float:
         """冷启动后等待首页的时间；测试里会被压到 0。"""
