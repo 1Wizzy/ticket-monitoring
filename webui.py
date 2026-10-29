@@ -10245,7 +10245,7 @@ function buildChips(){if(!S||!S.users.length)return;const u=S.users[U];
  chipsRefocus('platchips',()=>{
  $('platchips').innerHTML='<span class="chiplab">渠道：</span>'+ps.map(p=>{
   const b=badge(p);
-  return `<span class="chip${FLT.plats.has(p)?' on':''}" aria-pressed="${FLT.plats.has(p)?'true':'false'}" data-p="${he(p)}" onclick="togChip(this)">${srxPlatIcon(PK[p]||'')}${he(p)}${b?' '+b:''}</span>`;}).join('');});}
+  return `<span class="chip${FLT.plats.has(p)?' on':''}" aria-pressed="${FLT.plats.has(p)?'true':'false'}" data-p="${he(p)}" onclick="togChip(this)">${srxPlatIcon(PK[p]||'')}${he((typeof CN!=='undefined'&&CN[p])||p)}${b?' '+b:''}</span>`;}).join('');});}
 function togChip(el){const p=el.dataset.p;if(FLT.plats.has(p))FLT.plats.delete(p);else FLT.plats.add(p);
  el.classList.toggle('on');el.setAttribute('aria-pressed',el.classList.contains('on')?'true':'false');saveUI();table();}
 /* ===== 筛选/排序状态持久化（刷新不丢） ===== */
@@ -18501,6 +18501,11 @@ function buildForm(){if(!CFG)return;let h='',gh='';
    `+glab('B','监控渠道','',(u.platforms||[]).length+' / 5 渠道')+`
    <div class="srow"><div class="slab"><b>监控渠道</b><div class="shint">点击切换采集渠道；携程/去哪儿需本机已建立登录态，其余开箱即用</div></div><div class="sctl" style="flex-wrap:wrap;justify-content:flex-end">`+
    Object.keys(PLATS).map(p=>`<span class="chip pch p-${p}${(u.platforms||[]).includes(p)?' on':''}" title="${(p==='ctrip'||p==='qunar')?'需本机已建立登录态':'开箱即用'}" onclick="togPlat(${i},'${p}',this)">${srxPlatIcon(p)}${PLATS[p]}</span>`).join('')+
+  /* App 渠道（r613）：`app_zhixing` 早已在 REGISTRY / 健康正则 / 告警映射里，
+     只要写进用户 `platforms:` 就会被实例化——但配置页没有任何入口，用户只能
+     改 yaml。这里补一个勾选，并在 title 里点明它依赖「Android 真机通道」总开关
+     （那是另一组配置，别让人以为勾了就会跑）。 */
+   `<span class="chip pch p-app_zhixing${(u.platforms||[]).includes('app_zhixing')?' on':''}" title="真机采集（智行 App）：需先在「全局参数 · Android 真机通道」启用；不开总开关时勾了也不会跑" onclick="togPlat(${i},'app_zhixing',this)">${srxPlatIcon('app_zhixing')}智行 App</span>`+
    `</div></div>`;
   const _en=(u.routes||[]).filter(r=>r.enabled!==false).length,
         _dis=(u.routes||[]).length-_en;
