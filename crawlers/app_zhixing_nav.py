@@ -73,6 +73,9 @@ def open_date_dialog(dev, log=None) -> tuple:
     配置来说这是唯一能拿到价的入口。
 
     返回 (ok, detail)。失败不算致命——调用方可以退回首页日历条。
+
+    刻意每次自己 dump：调用方手上的页面可能是"设航线之前"的旧帧，
+    拿它定位日期入口会点到错的地方（省 5s 不如不错）。
     """
     xml = dev.dump()
     if not xml:
@@ -89,16 +92,21 @@ def open_date_dialog(dev, log=None) -> tuple:
         return False, "找不到日期入口"
     if not dev.tap(trigger.cx, trigger.cy):
         return False, "点击日期失败"
-    time.sleep(3)
-    xml = dev.dump()
-    if "Search_Calendar_Dialog_Title" not in xml:
-        return False, "日期弹层未出现"
-    if log:
-        try:
-            log.info("[nav] 已打开长窗口日历")
-        except Exception:
-            pass
-    return True, "已打开"
+
+    # 轮询代替固定 sleep(3)+单次 dump：弹层通常在 1–2s 出现，
+    # 固定等 3s 只是保底；轮询能在出现后立刻继续，失败时也不早退。
+    deadline = time.time() + 12
+    while time.time() < deadline:
+        time.sleep(0.8)
+        xml = dev.dump()
+        if "Search_Calendar_Dialog_Title" in xml:
+            if log:
+                try:
+                    log.info("[nav] 已打开长窗口日历")
+                except Exception:
+                    pass
+            return True, "已打开"
+    return False, "日期弹层未出现"
 
 
 def close_date_dialog(dev) -> bool:

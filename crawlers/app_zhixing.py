@@ -124,6 +124,10 @@ class AppZhixingCrawler(AppCrawler):
         # 长窗口日历的入口在**首页的日期行**，一旦点了「机票查询」进了
         # 列表页就没有日历图标了（实测：列表页只有 8 天日期条、无日历
         # 入口）。所以必须在导航完成后、任何进一步跳转之前读弹层。
+        #
+        # 这里刻意**不**复用上面那次 dump：那次在设航线之前取的，页面
+        # 可能还是旧航线/旧弹层，拿它定位日期入口会点到错的地方。
+        # 省 5s 不如不错——宁可多取一次页面。
         long_xml = self._try_long_calendar(dev)
         if long_xml:
             out = self._emit_from_dialog_by_xml(
@@ -221,7 +225,6 @@ class AppZhixingCrawler(AppCrawler):
                 return ""
             xml = dev.dump()
             close_date_dialog(dev)   # 关掉，别把状态留给下一轮
-            time.sleep(1)
             return xml
         except Exception as e:
             self.logger.info("[%s] 长窗口日历异常：%s", self.name,

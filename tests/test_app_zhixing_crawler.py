@@ -188,7 +188,31 @@ def test_out_of_window_date_is_explained_not_silent():
     assert "窗口外" in rec["detail"], rec["detail"]
 
 
-def test_calendar_path_is_in_cal_family():
+def test_try_long_calendar_signature_matches_callsite():
+    """_try_long_calendar 的调用不能带它已不接受的参数。
+
+    实测踩过：撤销"复用旧帧"的优化时只改了注释、没改调用，结果
+    open_date_dialog 收到未知 kwarg → TypeError 被 `except` 咽成
+    "长窗口日历异常" → 静默回落到首页 → 三轮全 0 条，日志里只有
+    一行 TypeError 看不出根因。
+    """
+    import inspect
+
+    sig = inspect.signature(AppZhixingCrawler._try_long_calendar)
+    assert list(sig.parameters) == ["self", "dev"], list(sig.parameters)
+
+    from crawlers.app_zhixing_nav import open_date_dialog
+    sig2 = inspect.signature(open_date_dialog)
+    assert list(sig2.parameters) == ["dev", "log"], list(sig2.parameters)
+
+
+def test_long_calendar_failure_is_logged_not_silent():
+    """长窗口失败要留痕，且回落路径仍能产出（首页条）。"""
+    c, _, _ = _make(dumps=[_real_fixture()])
+    c.safe_fetch("SHA", "CAN", ["2026-10-30"])
+    # 不论长窗口成不成，路径账里必须有可读结论
+    assert c.paths, "没有任何路径记录 = 静默失败"
+    assert all(p["detail"] for p in c.paths), c.paths
     """App 的日历通路必须落在 CAL_PATH_FAMILY 里。
 
     日历族是按**中文通路名**匹配的（`startswith(("日历","窗历"))`），
