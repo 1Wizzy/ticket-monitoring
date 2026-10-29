@@ -25688,6 +25688,10 @@ def _probe_search(frm, to, date, plats, legs=None, task=None, cancel=None,
     globals()["_PROBE_LAST"] = _now0
     cfg = (_State.cfg or {})
     crawler_cfg = dict(cfg.get("crawler") or {})
+    # 探测与定时采集必须拿到同一份 android 段（r630）：这里自建爬虫实例，
+    # 少了这一段时 App 渠道一律报 runtime not ready: disabled——
+    # 「渠道自检」点了永远失败，而定时采集其实正常。
+    crawler_cfg["android"] = cfg.get("android") or {}
     t0 = _time.time()
     batch = raw_legs is not None
 
