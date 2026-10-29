@@ -110,7 +110,11 @@ def test_face_page_recorded_as_face():
 
 
 def test_ad_with_close_is_dismissed_then_data_read():
-    """广告可自动关闭：点掉之后照常出数据，不牺牲这一轮。"""
+    """广告可自动关闭：点掉之后照常出数据，不牺牲这一轮。
+
+    点击序列取决于流程（现在先读长窗口日历再解析），所以断言"点过
+    关闭按钮"而不是"第一个动作是它"——判据是行为发生，不是先后。
+    """
     ad = _xml(("新人专享", 0, 0, 900, 40),
               ("限时活动", 0, 60, 900, 100),
               ("关闭", 840, 20, 890, 60))
@@ -118,6 +122,8 @@ def test_ad_with_close_is_dismissed_then_data_read():
     rows = c.safe_fetch("SHA", "CAN", ["2026-10-30"])
     assert (865, 40) in dev.taps, dev.taps
     assert rows, "关掉广告后应能正常解析"
+    assert not any(p["status"] == "ad" for p in c.paths), \
+        "广告已关掉，不该再记成 ad 拦路"
 
 
 def test_real_page_not_blocked_by_login_banner():

@@ -90,6 +90,19 @@ class AppZhixingCrawler(AppCrawler):
         import time
 
         started = time.time()
+        # 拦路物必须最先处理：广告弹层会盖住首页，后面所有点击都落在
+        # 广告上（实测：不先关广告，设航线会点到弹层里的空白）。
+        # 验证码/人脸在这里直接返回，不做任何后续操作。
+        warm = dev.dump()
+        if warm:
+            warm, block = self._clear_blockers(dev, warm)
+            if block.blocking:
+                self.path_note("app-blocker", block.kind,
+                               detail=block.detail)
+                self.logger.warning("[%s] 页面被拦截：%s（%s）",
+                                    self.name, block.kind, block.detail)
+                return []
+
         # 必须先按配置设航线：App 会停在上次的查询页，不设就会把
         # 「上一次的航线」当成这次的结果（实机踩过：配置 SHA→BJS，
         # App 还停在上海→北京，数据看起来"正常"但根本不是这一条）。
