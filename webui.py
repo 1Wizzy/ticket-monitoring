@@ -15846,6 +15846,7 @@ function appLoginOpen(plat){
   +'<button class="btn2" onclick="appLoginFinish(this)">我已登录完成</button></div>'
   +'</div>';
  m.classList.add('open');k.classList.add('open');
+ m.dataset.kind='app';
  if(typeof srxLockBody==='function')srxLockBody();
  appLoginStart(plat);
 }
@@ -15947,11 +15948,18 @@ function appLoginFinish(btn){
 document.addEventListener('click',e=>{
  const hit=e.target&&e.target.id==='appHit';if(hit)appLoginTap(e);
 },true);
-function lgRefreshFliggy(){const m=$('lgModal');if(!m||!m.classList.contains('open'))return;m.innerHTML=lgFliggyModalHTML()}
+function lgRefreshFliggy(){const m=$('lgModal');if(!m||!m.classList.contains('open'))return;
+ /* 只刷新自己的弹窗：轮询每次都会调用这里，若无条件写 innerHTML，
+    会把同时打开的 App 登录画面整块覆盖成飞猪内容（实测截图：
+    点「智行 App 登录」两秒后变成「飞猪双端登录」）。
+    弹窗归属用 data-kind 标记，谁开谁写。 */
+ if((m.dataset.kind||'fliggy')!=='fliggy')return;
+ m.innerHTML=lgFliggyModalHTML()}
 function lgOpenFliggy(){
  const m=$('lgModal'),k=$('lgMask');if(!m||!k)return;
  LG_LASTFOCUS=document.activeElement;m.innerHTML=lgFliggyModalHTML();
  m.classList.add('open');k.classList.add('open');
+ m.dataset.kind='fliggy';
  if(typeof srxLockBody==='function')srxLockBody();
  const x=_LASTKBD?m.querySelector('.x'):null;if(x)try{x.focus()}catch(e){}
 }
@@ -29153,6 +29161,73 @@ class _Srv(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
+# ── App 渠道登录（r604）──────────────────────────────────────────
+# 包一层，把 webui 的配置/日志接到 core.android.login_api 上；
+# login_api 本身不 import webui，避免循环依赖。
+APP_LOGIN_PACKAGES = {"app_zhixing": "cn.suanya.zhixing"}
+
+
+def _app_login_registry():
+    from core.android.login_session import AppLoginRegistry
+    if _State.app_login is None:
+        with _State.lock:
+            if _State.app_login is None:
+                _State.app_login = AppLoginRegistry()
+    return _State.app_login
+
+
+def _app_login_ctx():
+    """构造 login_api 需要的上下文：运行时工厂 + 校验 + 快照。"""
+    from core.android.runtime import get_runtime
+
+    cfg = _State.cfg or {}
+
+    def _runtime():
+        if not (cfg.get("android") or {}).get("enabled"):
+            return None
+        return get_runtime(cfg, _State.logger)
+
+    def _verify():
+        """dump 首页判断是否真的登录了（只认明确的登录墙文案）。"""
+        rt = _runtime()
+        dev = rt.device() if rt else None
+        if dev is None:
+            return True, "无法校验（设备不可用）"
+        xml = dev.dump()
+        if not xml:
+            return True, "无法校验（未取到页面）"
+        try:
+            from crawlers.app_zhixing_parse import detect_state
+            st = detect_state(xml)
+        except Exception:
+            st = "unknown"
+        if st == "login":
+            return False, "页面仍是登录墙，请完成登录后再试"
+        return True, "已离开登录墙"
+
+    def _snapshot():
+        rt = _runtime()
+        dev = rt.device() if rt else None
+        if dev is None:
+            return False, "设备不可用"
+        try:
+            from core.android.snapshot import SnapshotManager, SnapshotStore
+            # 快照与浏览器登录态同放 user_data 下：同为本地凭证，
+            # 同受「资料目录整体搬迁」那套启动级逻辑管理。
+            udir = str((cfg.get("crawler") or {}).get("user_data_dir")
+                       or "user_data")
+            store = SnapshotStore(os.path.join(udir, "android_snapshots"))
+            mgr = SnapshotManager(dev, store, "cn.suanya.zhixing")
+            return mgr.export("app_zhixing")
+        except Exception as e:
+            return False, f"快照失败：{type(e).__name__}"
+
+    return {"packages": APP_LOGIN_PACKAGES,
+            "runtime_factory": _runtime,
+            "verify": _verify,
+            "snapshot": _snapshot}
+
+
 class _Handler(BaseHTTPRequestHandler):
     # HTTP/1.1 才走 keep-alive/条件请求：HTTP/1.0（默认）下 Chromium
     # 不缓存 /api/state，也不会发 If-None-Match，304 分支形同虚设
@@ -29901,6 +29976,37 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(_watch_list(_watch_user(_q.get("user", [""])[0])))
             except ValueError as e:
                 self._json({"ok": False, "err": str(e)}, 400)
+            except Exception as e:
+                self._json({"ok": False, "err": str(e)}, 500)
+        elif self.path.startswith("/api/app-login"):
+            # App 渠道登录（r604）：帧是二进制 PNG，不能走 _json。
+            # 复用 login_api 的路由分发，保持与测试同一套实现。
+            try:
+                from urllib.parse import urlparse as _up, parse_qs as _pq
+                from core.android import login_api as _la
+                _u = _up(self.path)
+                _q = _pq(_u.query)
+                _r = _la.dispatch(_app_login_registry(), "GET", _u.path,
+                                  _q, None, _app_login_ctx())
+                if isinstance(_r, tuple) and len(_r) == 3 and \
+                        isinstance(_r[0], bytes):
+                    _body, _code, _hdr = _r
+                    if not _body:
+                        self.send_response(_code)
+                        for _k, _v in _hdr.items():
+                            self.send_header(_k, _v)
+                        self.send_header("Content-Length", "0")
+                        self.end_headers()
+                    else:
+                        self.send_response(_code)
+                        for _k, _v in _hdr.items():
+                            self.send_header(_k, _v)
+                        self.send_header("Content-Length", str(len(_body)))
+                        self.end_headers()
+                        self.wfile.write(_body)
+                else:
+                    _obj, _code = _r
+                    self._json(_obj, _code)
             except Exception as e:
                 self._json({"ok": False, "err": str(e)}, 500)
         elif self.path.startswith("/api/srx/calendar"):
@@ -30802,6 +30908,45 @@ class _Handler(BaseHTTPRequestHandler):
                         os.remove(_png.name)
                     except OSError:
                         pass
+            except Exception as e:
+                self._json({"ok": False, "err": str(e)}, 500)
+        elif self.path.startswith("/api/app-login"):
+            # App 渠道登录（r604）：与 /api/login 完全同一套安全边界
+            # ——Content-Type 必须是 json、Origin 必须同源、体积 ≤32KB。
+            try:
+                _ct = (self.headers.get("Content-Type") or "").lower()
+                if "application/json" not in _ct:
+                    self._json({"ok": False,
+                                "err": "Content-Type 必须为 application/json"},
+                               415)
+                    return
+                _origin = self.headers.get("Origin") or ""
+                if _origin:
+                    from urllib.parse import urlparse as _up0
+                    if (_up0(_origin).netloc or "") != (
+                            self.headers.get("Host") or ""):
+                        self._json({"ok": False,
+                                    "err": "跨站登录请求已拒绝"}, 403)
+                        return
+                from urllib.parse import urlparse as _up, parse_qs as _pq
+                from core.android import login_api as _la
+                _u = _up(self.path)
+                # 与 /api/login 同源：body 从 self.rfile 读（_do_POST 上方
+                # 已把原始字节塞回 rfile），体积上限 32KB 由 parse_body 守。
+                try:
+                    _n = int(self.headers.get("Content-Length", 0) or 0)
+                except (TypeError, ValueError):
+                    _n = 0
+                if _n > 32768:
+                    self._json({"ok": False, "err": "请求体过大"}, 413)
+                    return
+                _body = _la.parse_body(self.rfile.read(_n) if _n > 0 else b"")
+                _r = _la.dispatch(_app_login_registry(), "POST", _u.path,
+                                  _pq(_u.query), _body, _app_login_ctx())
+                _obj, _code = _r
+                self._json(_obj, _code)
+            except ValueError as e:
+                self._json({"ok": False, "err": str(e)}, 413)
             except Exception as e:
                 self._json({"ok": False, "err": str(e)}, 500)
         elif self.path == "/api/special-radar":
