@@ -16211,7 +16211,18 @@ async function loginVerify(slot,b){
 async function loginStart(p,b,slot){
  if(b&&b.classList.contains('busy'))return;   /* busy 守卫（同步双调曾 2 次 POST） */
  b.classList.add('busy');
+ /* 可见的进行中（r624）：r620 起接口要等窗口真的开成才返回（最长 45 秒，
+   含排队等渠道锁）。状态记在槽位上，卡片重建后仍然可见；直接改节点文案
+   会被下一次 renderLoginCards 抹掉（实测 200ms 内就丢）。 */
+ /* 可见的进行中（r624）：r620 起接口要等窗口真的开成才返回（最长 45 秒，
+   含排队等渠道锁）；这段时间界面必须有变化，否则读作卡死并诱发重复点击。
+   只改当前按钮节点，不触发列表重建（重建会立刻把中间态换掉）。 */
  const key=slot||p;
+ const _lb=b?b.textContent:'';
+ if(b){b.textContent='正在打开窗口…';b.setAttribute('aria-busy','true');b.disabled=true;
+  b.classList.add('busy');}
+ const _restore=()=>{if(!b||!b.isConnected)return;
+  b.textContent=_lb;b.removeAttribute('aria-busy');b.disabled=false;b.classList.remove('busy');};
  try{const r=await fetch('/api/login',{method:'POST',
   headers:{'Content-Type':'application/json'},
   body:JSON.stringify({platform:p,slot:key})});
