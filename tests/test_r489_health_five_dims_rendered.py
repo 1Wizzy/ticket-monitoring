@@ -126,7 +126,13 @@ def test_health_card_renders_all_five_dimensions(browser):
             return {
               rate: /83%/.test(rt),
               dom: /国内 95%/.test(rt), intl: /国际 70%/.test(rt),
-              pc: /PC 92%/.test(rt), h5: /H5 43%/.test(rt),
+              /* 通路小标格式：`PC 单次 92%（12 次）`。中间允许夹一个口径词
+                 （r636 加的），但仍要求「名称 → 口径词 → 百分比」按序相邻，
+                 不能把 92% 挂到别的通路名下。 */
+              pc: /PC (?:单次 )?92%/.test(rt),
+              h5: /H5 (?:单次 )?43%/.test(rt),
+              pcCaliber: /PC 单次 92%/.test(rt),
+              h5Caliber: /H5 单次 43%/.test(rt),
               retired: /日历 退役/.test(rt),
               slotPc: /PC 已存待验/.test(rt), slotH5: /H5 需重登/.test(rt),
               diag: document.querySelectorAll(
@@ -143,6 +149,13 @@ def test_health_card_renders_all_five_dimensions(browser):
     assert got["rate"], "① 厂商级在用口径未渲染：%r" % got["rowText"]
     assert got["dom"] and got["intl"], "② 分域未分别渲染：%r" % got["rowText"]
     assert got["pc"] and got["h5"], "③ 分通路未分别渲染：%r" % got["rowText"]
+    # ③b 通路小标必须自带口径词（r636）：同一行里徽标/分域是**查询**口径，
+    #     通路节点只有**尝试**口径。实测智行 App 渲染成「100% 国内 100% ·
+    #     国际 100% android 33%」——三个 100% 与 33% 指两个不同分母，读者
+    #     只会认为界面算错（真实库：查询 40/40=100%，尝试 40/121=33%）。
+    assert got["pcCaliber"] and got["h5Caliber"], (
+        "③b 分通路未标注口径（会被读成与徽标同一个分母）：%r"
+        % got["rowText"])
     assert got["retired"], "③ 退役通路未标「退役」：%r" % got["rowText"]
     assert got["slotPc"] and got["slotH5"], \
         "④ 分会话未逐端渲染：%r" % got["rowText"]

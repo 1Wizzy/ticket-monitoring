@@ -135,7 +135,11 @@ def test_health_badge_matches_pacing_row():
     for tok in ("国内 90%", "国际 44%"):
         assert tok in h, "健康卡缺分域 %r：%r" % (tok, h)
         assert tok in p, "节流行缺分域 %r：%r" % (tok, p)
-    # 3) 分通路必须一致
+    # 3) 分通路必须一致。健康卡的通路小标自 r636 起带口径词与样本数
+    #    （`PC 单次 60%（12 次）`），节流面板仍是 `PC 60%`；两者数值必须
+    #    相同，但允许健康卡在名称与百分比之间夹一个口径词。
     for tok in ("PC 60%", "H5 42%"):
-        assert tok in h, "健康卡缺分通路 %r：%r" % (tok, h)
+        name, pct = tok.split(" ")
+        pat = r"%s (?:单次 )?%s" % (re.escape(name), re.escape(pct))
+        assert re.search(pat, h), "健康卡缺分通路 %r：%r" % (tok, h)
         assert tok in p, "节流行缺分通路 %r：%r" % (tok, p)

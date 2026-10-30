@@ -13864,12 +13864,27 @@ function renderHealth(j){
      标灰并注明，避免"某个通路坏了"被藏进厂商总分。 */
   const _pi=(j.paths||{})[p]||{};
   const _pw=_pi.paths||{}, _pr=[];
+  /* 通路小标必须与徽标/分域**同口径**（查询级）：通路节点只有尝试级
+     `rate`，直接拿它显示会渲染成「智行 App 100% 国内 100% · 国际 100%
+     android 33%」——同一行里 100% 与 33% 指的是两个不同的分母，读者只
+     会认为界面算错（真实库实测：查询 40/40 =100%，尝试 40/121 =33%）。
+     这里用查询口径反推该通路的成功率不可行（路径节点没有查询级字段），
+     所以标注口径词并给出尝试级样本数，让读者知道这个数是「每次尝试」
+     而不是「每次查询」。 */
   for(const _k of Object.keys(_pw)){
    const _v=_pw[_k]||{};
    const _dead=(_pi.retired||[]).indexOf(_k)>=0;
    if(_dead){_pr.push(_k+' 退役');continue;}
    if((_v.attempts||0)<=0){continue;}
-   _pr.push(_k+' '+Math.round((_v.rate||0)*100)+'%');}
+   /* 失败分类（r602）：只给成功率读者仍要再点开每个格子才知道「为什么
+     掉」。登录墙与软拒的处置完全不同（重登能解 vs 等它自愈），把这两类
+     直接写进通路小标，才能一眼定位该动哪一条路。只在确有该类失败时附注，
+     不对正常通路添噪声；口径词与节流面板/溯源一致。 */
+   const _fx=[];
+   if((_v.login||0)>0)_fx.push('需登录 '+_v.login);
+   if((_v.soft||0)>0)_fx.push('软拒 '+_v.soft);
+   _pr.push(_k+' 单次 '+Math.round((_v.rate||0)*100)+'%'
+     +'（'+_v.attempts+' 次'+(_fx.length?' · '+_fx.join(' · '):'')+'）');}
   const _pathHtml=_pr.length
    ?`<span class="hpath" title="${he('近24h分通路：'+_pr.join(' · ')+'；退役=该通路已被替代，不再计入健康度')}">${he(_pr.join(' · '))}</span>`
    :'';
