@@ -66,7 +66,8 @@ def test_goal_d_health_has_five_dimensions():
     w = _w()
     assert "shownRate" in w, "缺厂商级徽标（在用口径）"
     assert "scoped('dom','国内')" in w, "缺分域"
-    assert "dead.forEach(pp=>pws.push(pp+' 退役'))" in w, "缺分通路（含退役）"
+    assert "dead.forEach(pp=>pws.push(pathCN(pp)+' 退役'))" in w, \
+        "缺分通路（含退役；r659 起名字走 pathCN）"
     assert "function healthSlotNote(" in w, "缺分会话"
     assert "_attach_diag_slots" in w and "dead_surfaces" in w, "缺诊断卡同维"
 
