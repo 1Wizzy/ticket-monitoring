@@ -14,18 +14,24 @@
 import re
 from datetime import datetime, timedelta
 
-PLATFORMS = ("qunar", "fliggy", "ctrip", "tongcheng", "tuniu")
+# 从单一事实源派生：新增 App 渠道时这里不必再改一次
+# （写死清单会让新渠道的日志行被 _PLAT 静默丢弃，
+# 表现为「采到了但健康卡整条渠道不存在」）。
+from core.channels import APP_CHANNELS, BROWSER_CHANNELS  # noqa: E402
+
+PLATFORMS = BROWSER_CHANNELS
+_PLAT_ALT = "|".join(BROWSER_CHANNELS + APP_CHANNELS)
 
 _LINE = re.compile(
     r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \[([A-Z]+)\] [\w.\-]+: (.*)$")
 _PLAT = re.compile(
-    r"^\[(qunar|fliggy|ctrip|tongcheng|tuniu|app_zhixing)\]\s*(.*)$")
+    r"^\[(" + _PLAT_ALT + r")\]\s*(.*)$")
 # 哨兵告警行（可见性）：「[解析哨兵] qunar 字段 …」/「[解析哨兵]
 # [连续N日] qunar …」——不匹配 _PLAT 的话控制台 01 PULSE/04 HEALTH
 # 对哨兵告警零可见（仅日志里存在），故须单独收录
 _SENT = re.compile(
     r"^\[解析哨兵\](?:\[[^\]]+\])?\s*"
-    r"(qunar|fliggy|ctrip|tongcheng|tuniu|app_zhixing)\s*(.*)$")
+    r"(" + _PLAT_ALT + r")\s*(.*)$")
 _DATE = re.compile(r"(20\d{2}-\d{2}-\d{2})")
 
 # 真实出价三族同权：国内列表「最低价」、国际明细「最低含税价」、

@@ -188,9 +188,10 @@ def test_login_copy_and_nav_count_match_the_real_cards():
                 got = pg.evaluate(r"""()=>{
                   const t=(sel)=>{const e=document.querySelector(sel);
                                   return e?e.textContent.trim():'';};
+                  const cards=[...document.querySelectorAll('#loginRows .lgcard')];
                   return {nav:t('#navN-login'),
-                          cards:document.querySelectorAll(
-                            '#loginRows .lgcard').length,
+                          cards:cards.length,
+                          channels:cards.map(c=>c.dataset.channel||''),
                           sec:t('#sec-login .secnote'),
                           foot:t('#sec-login .muted')};}""")
             finally:
@@ -203,13 +204,27 @@ def test_login_copy_and_nav_count_match_the_real_cards():
             srv.kill()
 
     n = got["cards"]
-    assert n == 6, "登录卡片数异常：%s" % n
+    # 卡片数 = 「5 张浏览器卡（飞猪 PC/H5 合成一张）+ App 渠道数」。
+    # 写死数字会让「接入新 App 渠道」本身变成红灯，判据改为跟随实际渠道。
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))
+    from core.channels import APP_CHANNELS, CHANNEL_CN
+    want = 5 + len(APP_CHANNELS)
+    assert n == want, "登录卡片数异常：%d（期望 %d = 5 张浏览器卡 + %d App）" % (
+        n, want, len(APP_CHANNELS))
+    # 每个 App 渠道都要真的有一张卡（不能只是数字凑巧对上）
+    for p in APP_CHANNELS:
+        assert p in got["channels"], (
+            "%s 没有登录卡，实际卡片：%s" % (p, got["channels"]))
     assert got["nav"].strip().startswith(str(n)), (
         "导航计数 %r 与真实卡片数 %d 不一致（写死的数字会漂）"
         % (got["nav"], n))
     for name, txt in (("卡头", got["sec"]), ("底部说明", got["foot"])):
         assert "五个渠道" not in txt, (
             "%s 仍写「五个渠道」，而实际有 %d 张卡：%r" % (name, n, txt[:80]))
-        assert "智行 App" in txt, (
-            "%s 没提到智行 App（统一登录要求未落地到文案）：%r"
-            % (name, txt[:80]))
+        # 每个 App 渠道都要在文案里被点名（统一登录要求要落到文案）
+        for p in APP_CHANNELS:
+            assert CHANNEL_CN[p] in txt, (
+                "%s 没提到 %s（统一登录要求未落地到文案）：%r"
+                % (name, CHANNEL_CN[p], txt[:80]))

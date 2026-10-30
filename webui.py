@@ -9835,11 +9835,11 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
  <div class="cfgmain" id="cfgmain">
  <div class="cfpanel" id="panel-login">
  <div class="ucard" id="sec-login"><div class="uhead"><span class="seclab inline"><span class="secicon"><svg class="ic" aria-hidden="true"><use href="#i-lock"></use></svg></span><span class="zh">渠道登录</span></span>
-  <span class="secnote">五个浏览器渠道 + 智行 App（真机）各自独立登录 · 飞猪 PC/H5 分别登录（同一淘宝账号，会话不共享） · 点「我已登录完成」即保存并生效（无需重启）</span></div>
+  <span class="secnote">五个浏览器渠道 + <b id="lgAppNames">App</b> 各自独立登录 · 飞猪 PC/H5 分别登录（同一淘宝账号，会话不共享） · 点「我已登录完成」即保存并生效（无需重启）</span></div>
  <div id="loginRows"><span class="muted">加载中…</span></div>
  <div class="row" style="margin-top:6px">
   <button class="btn2" onclick="loadLogin(this)"><svg class="ic" aria-hidden="true"><use href="#i-rotate"></use></svg> 刷新状态</button>
-  <span class="muted">五个浏览器渠道 + 智行 App 都必须登录（入口页可匿名浏览，出价与明细要登录后才有） · 飞猪 PC 与 H5 是两套独立会话，需分别登录 · App 走真机内嵌画面，不是浏览器弹窗 · 采集进行中时窗口可能被占用，稍后再试</span></div>
+  <span class="muted">五个浏览器渠道 + <b id="lgAppNames2">App</b> 都必须登录（入口页可匿名浏览，出价与明细要登录后才有） · 飞猪 PC 与 H5 是两套独立会话，需分别登录 · App 走真机内嵌画面，不是浏览器弹窗 · 采集进行中时窗口可能被占用，稍后再试</span></div>
  </div>
  <div class="ucard" id="sec-chlinks" style="margin-top:10px">
   <div class="uhead"><span class="seclab inline"><span class="secicon"><svg class="ic" aria-hidden="true"><use href="#i-open"></use></svg></span><span class="zh">渠道入口</span></span>
@@ -16773,6 +16773,21 @@ async function srxSpLoad(force){
 function srxSpOpen(){try{switchView('mon');showMonTab('specials');setTimeout(function(){const c=$('spRadarMonitor');if(c)try{c.scrollIntoView({block:'start'})}catch(_){}},80)}catch(e){}}
 /* App 渠道登录状态（r644）：登录分区要给智行 App 一张卡，状态必须真读。
    逐个拉 /api/app-login/state（目前只有一家），失败保持空态而不是谎报。 */
+/* 登录分区文案里的 App 渠道名：按 APP_PLAT_NAME 派生。
+   写死「智行 App」时新增去哪儿 App 会让卡头说法与实际卡片数不一致。 */
+function lgAppNamesText(){
+ const M=(typeof APP_PLAT_NAME!=='undefined')?APP_PLAT_NAME:{};
+ const n=Object.keys(M).map(p=>M[p]);
+ if(!n.length)return '';
+ return n.slice(0,-1).join('、')+(n.length>1?'、':'')+n[n.length-1];
+}
+function lgAppNamesFill(){
+ const t=lgAppNamesText();
+ for(const id of ('lgAppNames lgAppNames2').split(' ')){
+  const e=document.getElementById(id);
+  if(e)e.textContent=t||'App';
+ }
+}
 async function loadAppLoginState(){
  const M=(typeof APP_PLAT_NAME!=='undefined')?APP_PLAT_NAME:{};
  const out={};
@@ -16797,7 +16812,7 @@ async function loadAppLoginState(){
 async function loadLogin(b,force){
  if(b&&b.classList.contains('busy'))return;
  if(b)b.classList.add('busy');
- try{await loadAppLoginState();
+ try{lgAppNamesFill();await loadAppLoginState();
   const j=await loadChannelState(!!force||!!b);if(force||b){renderLoginCards(true);CHLINK_CFG_LOADED=false;}if(!CHLINK_CFG_LOADED)srxChLinksLoad('cfg');return j;}
  finally{if(b)b.classList.remove('busy');}
 }
@@ -25297,7 +25312,7 @@ def _app_login_ctx():
             return None
         return get_runtime(cfg, _State.logger)
 
-    def _verify():
+    def _verify(plat: str = ""):
         """dump 首页判断是否真的登录了（只认明确的登录墙文案）。"""
         rt = _runtime()
         dev = rt.device() if rt else None
@@ -25306,6 +25321,11 @@ def _app_login_ctx():
         xml = dev.dump()
         if not xml:
             return True, "无法校验（未取到页面）"
+        # 每个渠道的登录墙形态不同：去哪儿是手机号表单，智行是「立即登录」
+        # 文案。混用会把「去哪儿登录页」判成已登录，登录卡提前变绿。
+        if (plat or "") == "app_qunar":
+            if "请输入手机号" in xml or "获取验证码" in xml:
+                return False, "页面仍是手机号登录页，请完成登录后再试"
         try:
             from crawlers.app_zhixing_parse import detect_state
             st = detect_state(xml)

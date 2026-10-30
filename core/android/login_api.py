@@ -144,7 +144,9 @@ def handle_finish(registry, plat: str, verify=None,
                   snapshot=None) -> Tuple[dict, int]:
     """POST /api/app-login/finish {plat}
 
-    verify: 可选回调 () -> (ok, detail)，用于 dump 首页判断是否真的登录成功
+    verify: 可选回调 (plat) -> (ok, detail)，用于 dump 首页判断是否真的
+            登录成功。各渠道的登录墙形态不同（去哪儿是手机号表单、智行是
+            「立即登录」文案），回调需要知道自己在校验哪个渠道。
     snapshot: 可选回调 () -> (ok, detail)，导出登录态
     """
     sess = registry.get(plat)
@@ -156,7 +158,13 @@ def handle_finish(registry, plat: str, verify=None,
     detail = []
     if verify is not None:
         try:
-            vok, vdetail = verify()
+            vok, vdetail = verify(plat)
+        except TypeError:
+            # 兼容老签名 verify()：没有 plat 参数的回调
+            try:
+                vok, vdetail = verify()
+            except Exception as e:                   # 校验本身失败不等于没登录
+                vok, vdetail = True, f"校验异常：{type(e).__name__}"
         except Exception as e:                       # 校验本身失败不等于没登录
             vok, vdetail = True, f"校验异常：{type(e).__name__}"
         detail.append(vdetail)

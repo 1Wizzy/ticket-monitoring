@@ -3,9 +3,9 @@
 
 纯函数，零 I/O：判定（该不该发）与措辞（发什么）分开，便于单测。
 """
-CN = {"ctrip": "携程", "qunar": "去哪儿", "fliggy": "飞猪",
-      "tongcheng": "同程", "tuniu": "途牛",
-      "app_zhixing": "智行 App"}
+# 渠道显示名统一取自单一事实源：新增 App 渠道时不必再改这里
+# （写死清单会让新渠道的告警文案露出裸 id）。
+from core.channels import CHANNEL_CN as CN  # noqa: E402
 
 
 def should_alert(streak, rounds, last_ts, now, cooldown_s):
