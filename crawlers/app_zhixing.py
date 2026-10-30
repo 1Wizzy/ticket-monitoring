@@ -310,42 +310,62 @@ class AppZhixingCrawler(AppCrawler):
             pass
 
     def _enter_detail_and_parse(self, dev, from_city: str, to_city: str,
-                                dates: List[str]) -> bool:
-        """在首页选上目标日期 → 点「机票查询」→ 解析列表页明细。
+                                dates: List[str]) -> List[FlightPrice]:
+        """逐日期：选上该日 → 点「机票查询」→ 解析列表页明细。
 
         日历价只是「每天一条最低价」，没有航班号与时刻，不能当明细用。
-        返回航班明细列表；拿不到返回 []。
+        返回全部日期的明细；一个日期都没拿到返回 []。
+
+        逐日期循环与其它渠道一致（ctrip/qunar 也是 `for date in dates`）：
+        只处理 dates[0] 会让配置的其余日期静默丢数据。
         """
         if self._skip_route:
             return []
-        target = dates[0] if dates else ""
-        if not target:
+        targets = [d for d in (dates or []) if d]
+        if not targets:
             return []
+        got: List[FlightPrice] = []
+        for i, target in enumerate(targets):
+            rows = self._one_date_detail(dev, from_city, to_city, target,
+                                         first=(i == 0))
+            out = self._to_prices(rows, from_city, to_city, target)
+            if not out:
+                self.logger.info("[%s] 明细页没解析出带价航班：%s",
+                                 self.name, target)
+                self.path_note("航班明细", "empty", date=target,
+                               detail="该日列表页无带价航班")
+                continue
+            self.path_note("航班明细", "ok", rows=len(out), date=target,
+                           detail=f"{len(out)} 条真实航班/时刻/价格",
+                           url=f"android://{_APP_PKG}?view=list")
+            got.extend(out)
+        return got
+
+    def _one_date_detail(self, dev, from_city: str, to_city: str,
+                         target: str, first: bool) -> List[dict]:
+        """选日期 → 点查询 → 返回该日列表页的原始行。
+
+        第一个日期时弹层可能还开着（主流程 keep_open=True）；之后的日期
+        在列表页上，要先回首页才能再开日历。
+        """
         try:
             from .app_zhixing_nav import _pick_date, find, nodes
         except Exception:
             return []
         try:
+            if not first:
+                self._park_at_home(dev)
+                if not self._try_long_calendar(dev, keep_open=True):
+                    return []
             xml = dev.dump() or ""
-            if "Search_Calendar_Dialog" in xml:
-                # 长窗口还开着：直接在里面点目标日（弹层会自己关掉）
-                ok, detail = _pick_date(dev, nodes(xml), target,
-                                        log=self.logger, xml=xml)
-                if not ok:
-                    self.logger.info("[%s] 明细前置选日期失败：%s",
-                                     self.name, detail)
-                    return []
-            else:
-                if "机票查询" not in xml:
-                    return []
-                # 首页日期行已是目标日时这里直接返回「已显示」，
-                # 不需要再开一次弹层。
-                ok, detail = _pick_date(dev, nodes(xml), target,
-                                        log=self.logger, xml=xml)
-                if not ok:
-                    self.logger.info("[%s] 明细前置选日期失败：%s",
-                                     self.name, detail)
-                    return []
+            if "Search_Calendar_Dialog" not in xml:
+                return []
+            ok, detail = _pick_date(dev, nodes(xml), target,
+                                    log=self.logger, xml=xml)
+            if not ok:
+                self.logger.info("[%s] 明细前置选日期失败：%s",
+                                 self.name, detail)
+                return []
             # 只点查询，不重跑整段导航（重跑会重启 App，白花 30s+）
             xml = dev.dump() or ""
             btn = find(nodes(xml), "机票查询")
@@ -353,23 +373,15 @@ class AppZhixingCrawler(AppCrawler):
                 return []
             if not dev.tap(btn.cx, btn.cy):
                 return []
-            rows = []
             deadline = time.time() + 30
             while time.time() < deadline:
                 xml = dev.dump() or ""
                 if xml and detect_state(xml) == "ok":
                     rows = parse_flight_rows(xml)
                     if any(r.get("price") for r in rows):
-                        break
+                        return rows
                 time.sleep(2)
-            out = self._to_prices(rows, from_city, to_city, target)
-            if not out:
-                self.logger.info("[%s] 明细页没解析出带价航班", self.name)
-                return []
-            self.path_note("航班明细", "ok", rows=len(out), date=target,
-                           detail=f"{len(out)} 条真实航班/时刻/价格",
-                           url=f"android://{_APP_PKG}?view=list")
-            return out
+            return []
         except Exception as e:
             self.logger.info("[%s] 明细路径异常：%s", self.name,
                              type(e).__name__)

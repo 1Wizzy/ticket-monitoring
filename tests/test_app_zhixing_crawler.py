@@ -393,3 +393,60 @@ def _cal_xml_str():
             '"flight_calendar_date_cell_price_text-2026-11-07" class='
             '"android.widget.TextView" bounds="[0,0][10,10]" /></node>'
             '</hierarchy>')
+
+
+def test_all_dates_get_detail_rows(monkeypatch):
+    """配置多个日期时，每个日期都要各自产出明细。
+
+    其它渠道都是 `for date in dates` 逐日采集（ctrip/qunar）；只处理
+    dates[0] 会让其余日期静默丢数据——用户在页面上配了 3 天，只回 1 天。
+    """
+    c, _, dev = _make()
+    c._skip_route = False
+    seen = []
+
+    def fake_one(dev_, fc, tc, target, first):
+        seen.append(target)
+        return [{"flight_no": "CA100" + target[-1], "depart_time": "08:00",
+                 "price": 300 + len(seen)}]
+
+    c._one_date_detail = fake_one
+    c._try_long_calendar = lambda dev_, keep_open=False: _cal_xml_str()
+    c._route_unchanged = lambda dev, fc, tc: True
+    c._close_calendar = lambda dev_: None
+    c._park_at_home = lambda dev_: True
+    out = c.safe_fetch("SHA", "CAN",
+                       ["2026-11-07", "2026-11-08", "2026-11-09"])
+    assert seen == ["2026-11-07", "2026-11-08", "2026-11-09"], \
+        "没有逐日期采集：%s" % seen
+    assert len(out) == 3, "应产出 3 个日期的明细，实际 %d" % len(out)
+    assert {p.depart_date for p in out} == {
+        "2026-11-07", "2026-11-08", "2026-11-09"}, \
+        "日期覆盖不全：%s" % {p.depart_date for p in out}
+    ok_dates = [p["date"] for p in c.paths
+                if p["path"] == "航班明细" and p["status"] == "ok"]
+    assert len(ok_dates) == 3, "每个日期都要各记一条账本：%s" % ok_dates
+
+
+def test_one_date_failure_does_not_drop_others(monkeypatch):
+    """某个日期失败不能连累其它日期。"""
+    c, _, dev = _make()
+    c._skip_route = False
+
+    def fake_one(dev_, fc, tc, target, first):
+        if target == "2026-11-08":
+            return []
+        return [{"flight_no": "CA1000", "depart_time": "08:00",
+                 "price": 300}]
+
+    c._one_date_detail = fake_one
+    c._try_long_calendar = lambda dev_, keep_open=False: _cal_xml_str()
+    c._route_unchanged = lambda dev, tc, tt: True
+    c._route_unchanged = lambda dev, fc, tc: True
+    c._close_calendar = lambda dev_: None
+    c._park_at_home = lambda dev_: True
+    out = c.safe_fetch("SHA", "CAN", ["2026-11-07", "2026-11-08"])
+    assert len(out) == 1 and out[0].depart_date == "2026-11-07"
+    empty_dates = [p["date"] for p in c.paths
+                   if p["path"] == "航班明细" and p["status"] == "empty"]
+    assert empty_dates == ["2026-11-08"], empty_dates
