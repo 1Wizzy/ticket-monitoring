@@ -505,12 +505,26 @@ def _demo_pacing_payload():
     的状态条有东西可渲染，避免"发布出去的演示站写着读取失败"。"""
     from core.pacing import parse_pacing
     pac = parse_pacing(_State.boot_cfg or _State.cfg or {})
+    # 演示载荷的渠道清单按真实渠道表派生（r652）：原先写死 5 家浏览器渠道，
+    # app_zhixing 整家不出现在演示站节流面板上——而它已经能采集、有登录入口。
+    # 来源用 cadence 的键（core.pacing 已把 App 并入），拿不到再退回 REGISTRY。
+    _ch = None
+    try:
+        _ch = [k for k in (pac.get("cadence") or {})]
+    except Exception:
+        _ch = None
+    if not _ch:
+        try:
+            from crawlers import REGISTRY as _R
+            _ch = sorted(_R.keys())
+        except Exception:
+            _ch = ["qunar", "fliggy", "ctrip", "tongcheng", "tuniu"]
     chans = {p: {"state": "ok", "remain_s": 0, "strikes": 0,
                  "reason": "", "needs_login": False,
                  "advice": {"state": "ok", "action": "none",
                             "severity": "ok", "eta_s": 0,
                             "hint": "演示数据，无需操作"}}
-             for p in ("qunar", "fliggy", "ctrip", "tongcheng", "tuniu")}
+             for p in _ch}
     return {"ok": True, "cfg": pac,
             "quiet": {"start": pac["scan_quiet_start"],
                       "end": pac["scan_quiet_end"], "active": False},
