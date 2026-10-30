@@ -18790,7 +18790,13 @@ async function loadPacing(force){
   const _iv=j.iv_rate||{};
   const _ivName={probe:'自检',warmup:'预热',reset:'解除',verify:'验证',relogin:'重登'};
   /* 作用域中文（r511）：与溯源表同一套词，两处各写一份会漂移。 */
-  const _ivScope={dom:'国内',intl:'国际',pc:'PC',h5:'H5',fliggy_h5:'飞猪 H5'};
+  /* scope 到中文（r654）：网页登录写的是**槽位 key**（ctrip / fliggy_h5 ...），
+     App 登录写 app；缺哪一项，面板就把原始 id 直接打出来——
+     「fliggy_h5 100%」这种词读者认不出是哪一家。
+     槽位名与登录卡同源（LOGIN_SLOTS 的 surface_label）。 */
+  const _ivScope={dom:'国内',intl:'国际',pc:'PC',h5:'H5',
+   ctrip:'携程',qunar:'去哪儿',tongcheng:'同程',tuniu:'途牛',
+   fliggy:'飞猪 PC',fliggy_h5:'飞猪 H5',app:'智行 App'};
   const _ivRate=(()=>{
    const _all=Object.keys(_iv).filter(k=>_iv[k]&&(_iv[k].n>0||_iv[k].unjudged>0));
    const judged=_all.filter(k=>_iv[k].n>0)
