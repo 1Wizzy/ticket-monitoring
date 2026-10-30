@@ -188,6 +188,21 @@ class AdbDevice:
         out = self._sh("shell", "am", "force-stop", pkg)
         return out is not None
 
+    def deep_link(self, uri: str) -> bool:
+        """用 scheme 深链启动 App 的目标页。
+
+        有些 App 的首屏是强制登录页，但深链能直达功能页（去哪儿实测：
+        首屏 UCLoginByPhoneActivity，qunarphone://flight 直接进机票首页）。
+        失败返回 False，调用方回落到 app_start。
+        """
+        out = self._sh("shell", "am", "start", "-a",
+                       "android.intent.action.VIEW", "-d", uri,
+                       timeout=max(self.timeout, 60))
+        if out is None:
+            return False
+        low = out.lower()
+        return "error" not in low and "unable to resolve" not in low
+
     def app_installed(self, pkg: str) -> bool:
         out = self._sh("shell", "pm", "list", "packages") or ""
         return any(line.strip() == f"package:{pkg}"

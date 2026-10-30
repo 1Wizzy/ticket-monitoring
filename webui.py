@@ -14105,7 +14105,7 @@ async function diagProbe(p){
    整页脚本抛 `Cannot access 'APP_PLAT_NAME' before initialization`，
    S 永不初始化、全站不可用。r614 曾把它写进 renderHealth 体内（缩进 0
    看不出来），结果健康卡之外的三处读它全是 ReferenceError。 */
-const APP_PLAT_NAME={app_zhixing:'智行 App'};
+const APP_PLAT_NAME={app_zhixing:'智行 App',app_qunar:'去哪儿 App'};
 function renderHealth(j){
  /* 已有时间线时错误体保陈旧（与 catch 分支「healthcard 可见=保陈旧不
     闪错」政策对齐）：瞬态 500 曾把整条格带掀成错误文案，下一轮询才自愈 */
@@ -17935,7 +17935,7 @@ async function probeAll(){
   /* 兜底别引用 PLATS：它在 buildForm() 体内（缩进 1 的 const），
      从这里取会 ReferenceError（门禁实测）。SRX_PLATS 才是顶层表。 */
   const list=_seen.length?_seen
-    :Object.keys(SRX_PLATS).concat('app_zhixing');
+    :Object.keys(SRX_PLATS).concat(Object.keys(APP_PLAT_NAME));
   _probeAllRes='全部自检中（顺序执行，约 1–5 分钟）…';
   out.innerHTML=_probeAllRes;
   const lines=[];
@@ -19189,8 +19189,11 @@ function buildForm(){if(!CFG)return;let h='',gh='';
    /* App 渠道（r613）：`app_zhixing` 早已在 REGISTRY / 健康正则 / 告警映射里，
      只要写进用户 `platforms:` 就会被实例化——但配置页没有任何入口，用户只能
      改 yaml。这里补一个勾选，并在 title 里点明它依赖「Android 真机通道」总开关
-     （那是另一组配置，别让人以为勾了就会跑）。 */
-   `<span class="chip pch p-app_zhixing${(u.platforms||[]).includes('app_zhixing')?' on':''}" title="真机采集（智行 App）：需先在「全局参数 · Android 真机通道」启用；不开总开关时勾了也不会跑" onclick="togPlat(${i},'app_zhixing',this)">${srxPlatIcon('app_zhixing')}智行 App</span>`+
+     （那是另一组配置，别让人以为勾了就会跑）。
+
+     r665：改为**按 APP_PLAT_NAME 派生**。原先写死智行一个 chip，新增去哪儿
+     App 时后端已注册、配置页却勾不到（门禁 test_r613 直接抓到）。 */
+   Object.keys(APP_PLAT_NAME).map(p=>`<span class="chip pch p-${p}${(u.platforms||[]).includes(p)?' on':''}" title="真机采集（${APP_PLAT_NAME[p]}）：需先在「全局参数 · Android 真机通道」启用；不开总开关时勾了也不会跑" onclick="togPlat(${i},'${p}',this)">${srxPlatIcon(p)}${APP_PLAT_NAME[p]}</span>`).join('')+
    `</div></div>`;
   const _en=(u.routes||[]).filter(r=>r.enabled!==false).length,
         _dis=(u.routes||[]).length-_en;
@@ -25270,7 +25273,8 @@ _CFG_SAVE_LOCK = threading.Lock()
 # ── App 渠道登录（r604）──────────────────────────────────────────
 # 包一层，把 webui 的配置/日志接到 core.android.login_api 上；
 # login_api 本身不 import webui，避免循环依赖。
-APP_LOGIN_PACKAGES = {"app_zhixing": "cn.suanya.zhixing"}
+APP_LOGIN_PACKAGES = {"app_zhixing": "cn.suanya.zhixing",
+                      "app_qunar": "com.Qunar"}
 
 
 def _app_login_registry():

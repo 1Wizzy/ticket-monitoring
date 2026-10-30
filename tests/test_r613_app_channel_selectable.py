@@ -25,19 +25,21 @@ def _w():
 
 
 def test_app_channel_is_selectable():
+    """App 渠道 chip 由 APP_PLAT_NAME 派生（r665 起不再逐个写死）。"""
     w = _w()
     i = w.index("chip pch p-${p}")
     seg = w[i:i + 900]
-    assert "p-app_zhixing" in seg, "渠道勾选里没有 App 渠道"
-    assert "togPlat(${i},'app_zhixing',this)" in seg, (
+    assert "APP_PLAT_NAME" in seg and "p-${p}" in seg, (
+        "App 渠道 chip 应通过 APP_PLAT_NAME 派生：%s" % seg[:200])
+    assert "togPlat(${i},'${p}',this)" in seg, (
         "App 渠道 chip 没有接到 togPlat（点了不会写 platforms）")
 
 
 def test_app_chip_states_its_dependency():
     """必须点明依赖 Android 总开关，否则用户勾了却不跑，无从判断。"""
     w = _w()
-    i = w.index("p-app_zhixing")
-    seg = w[i:i + 400]
+    i = w.index("title=\"真机采集（${APP_PLAT_NAME[p]}）")
+    seg = w[i:i + 300]
     assert "Android" in seg and "总开关" in seg, (
         "App 渠道 chip 没说明它依赖 Android 真机通道总开关：%s" % seg[:120])
 
@@ -50,25 +52,40 @@ def test_every_registry_channel_has_a_chip():
     w = _w()
     i = w.index("chip pch p-${p}")
     seg = w[i:i + 900]
-    # 渠道 chip 有两个来源：`PLATS` 动态表（p-${p}）与显式追加的单个 chip。
-    # 只查字面量会把 5 家动态生成的误报成缺口（实测 fliggy/tongcheng/tuniu）。
+    # 渠道 chip 有两个来源：`PLATS` 动态表（p-${p}）与
+    # `APP_PLAT_NAME` 动态表（同样 p-${p}，App 渠道走这个）。
+    # 两张表都是从源码解析出来的真实键，不是写死清单。
     dyn = set()
     k = w.index("const PLATS={")
     for part in w[k:w.index("}", k)].split(","):
         if ":" in part:
             dyn.add(part.split(":", 1)[0].strip().split()[-1].strip("'\""))
+    ak = w.index("const APP_PLAT_NAME={")
+    body = w[ak:w.index("};", ak)]
+    for part in body.split("{", 1)[1].split(","):
+        if ":" in part:
+            dyn.add(part.split(":", 1)[0].strip().strip("'\""))
     missing = [c for c in REGISTRY
                if c not in dyn and ("p-" + c) not in seg and ("'%s'" % c) not in seg]
     assert not missing, "这些已注册渠道在页面上勾不到：%s" % missing
 
 
-def test_renders_six_chips_and_toggles():
-    """真渲染：6 个 chip，点一下 App 渠道要真的进 CFG.platforms。"""
+def test_renders_all_chips_and_toggles():
+    """真渲染：每个已注册渠道都有一枚可点 chip，且点了真的写进 CFG.platforms。
+
+    不再断言"恰好 6 个"——渠道数随接入增加（r665 加了去哪儿 App），
+    写死数量会让「加渠道」本身变成红灯。判据改为：REGISTRY 里每个渠道
+    都能在 DOM 里找到对应 chip，且至少对**每个 App 渠道**做一次
+    开→关往返。
+    """
     import socket
     import subprocess
     import sys
     import time
     import urllib.request
+
+    sys.path.insert(0, ROOT)
+    from crawlers import REGISTRY
 
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
@@ -106,17 +123,22 @@ def test_renders_six_chips_and_toggles():
             pg.wait_for_timeout(900)
             pg.evaluate("()=>{try{setOpenUser([0])}catch(e){};buildForm()}")
             pg.wait_for_timeout(900)
-            got = pg.evaluate("""()=>{
+            got = pg.evaluate("""(want)=>{
               const chips=[...document.querySelectorAll('#cfgform .chip.pch')];
-              const chip=chips.find(c=>String(c.className)
-                .indexOf('p-app_zhixing')>=0);
-              if(!chip)return {n:chips.length,missing:true};
-              const before=(CFG[0].platforms||[]).slice();
-              chip.click();
-              const after=(CFG[0].platforms||[]).slice();
-              chip.click();
-              return {n:chips.length,before:before,after:after,
-                      back:(CFG[0].platforms||[]).slice()}}""")
+              const res={n:chips.length,missing:[],tog:[]};
+              for(const w of want){
+                const chip=chips.find(c=>String(c.className)
+                  .indexOf('p-'+w)>=0);
+                if(!chip){res.missing.push(w);continue}
+                const before=(CFG[0].platforms||[]).slice();
+                chip.click();
+                const after=(CFG[0].platforms||[]).slice();
+                chip.click();
+                const back=(CFG[0].platforms||[]).slice();
+                res.tog.push({p:w,before:before,after:after,back:back});
+              }
+              return res}""",
+                          [c for c in REGISTRY if c.startswith("app_")])
             b.close()
     finally:
         srv.terminate()
@@ -125,7 +147,11 @@ def test_renders_six_chips_and_toggles():
         except Exception:
             srv.kill()
 
-    assert not got.get("missing"), "App 渠道 chip 没渲染：%s" % got
-    assert got["n"] == 6, "渠道勾选数量应为 6：%s" % got
-    assert "app_zhixing" in got["after"], "点了没写进 platforms：%s" % got
-    assert "app_zhixing" not in got["back"], "再点没能取消：%s" % got
+    assert not got["missing"], "这些已注册渠道没有渲染 chip：%s" % got["missing"]
+    assert got["n"] >= len(REGISTRY), (
+        "渠道勾选数量少于已注册渠道数：%d < %d" % (got["n"], len(REGISTRY)))
+    assert got["tog"], "没有 App 渠道可供往返测试"
+    for t in got["tog"]:
+        assert t["p"] in t["after"], "%s 点了没写进 platforms：%s" % (
+            t["p"], t)
+        assert t["p"] not in t["back"], "%s 再点没能取消：%s" % (t["p"], t)

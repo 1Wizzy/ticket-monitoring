@@ -19,13 +19,13 @@ BROWSER_CHANNELS = ("ctrip", "fliggy", "qunar", "tongcheng", "tuniu")
 
 # App 渠道（Android 模拟器 + adb）：需 android.enabled 且用户 platforms
 # 显式列出才会被实例化。
-APP_CHANNELS = ("app_zhixing",)
+APP_CHANNELS = ("app_zhixing", "app_qunar")
 
 # 显示名（中文）。App 渠道必须在这里，否则界面会露出裸 id（app_zhixing）。
 CHANNEL_CN = {
     "ctrip": "携程", "qunar": "去哪儿", "fliggy": "飞猪",
     "tongcheng": "同程", "tuniu": "途牛",
-    "app_zhixing": "智行 App",
+    "app_zhixing": "智行 App", "app_qunar": "去哪儿 App",
 }
 
 
@@ -66,6 +66,9 @@ PATH_CN = {
     "app-blocker": "App 拦路弹窗",
     "app-dump": "App 界面快照",
     "app-error": "App 解析",
+    # 去哪儿 App：登录是硬前置，且列表页单独一段账
+    "app-login": "App 登录",
+    "航班列表": "App 航班列表",
     "android-runtime": "模拟器运行时",
     "android-device": "模拟器设备",
     "snap-restore": "登录态快照恢复",
