@@ -18693,6 +18693,18 @@ async function loadPacing(force){
      ac.push('<button type="button" data-pk="'+k+':verify" onclick="verifyNow(\''+k+'\')">去验证</button>');
     }
    }
+   /* r669：「建议自检」的行必须真有一个自检按钮。
+      后端在 soft_reject / path_degraded / calendar_only / stale 四类结论里
+      都写「可点『自检』验证这条路」（action=probe），但按钮原先只按
+      v.state / needs_login 拼，这四类一行都落不到，只剩「展开溯源」——
+      结论让人按的按钮不存在，等于把人晾在原地。这里按 adv.action 补一个。
+      只补 probe：它是**当场可执行**的（probeNow 走真实探测）。`route` /
+      `watch` 指向「去配置里改」，本面板没有对应动作，不伪造按钮。 */
+   const _advAct=String(adv.action||'');
+   if(_advAct==='probe'&&!v.needs_login&&adv.state!=='login'){
+    const _hasProbe=ac.some(b=>b.indexOf(':probe')>=0);
+    if(!_hasProbe)ac.push('<button type="button" data-pk="'+k+':probe" onclick="probeNow(\''+k+'\')">自检</button>');
+   }
    const _open=PACE.detail===k;
    /* aria-controls 只在详情真的存在时才写：五行都挂同一个 id 会让
      四行指向不存在的节点（无效 IDREF）。 */
