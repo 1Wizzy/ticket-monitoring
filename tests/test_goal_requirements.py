@@ -46,11 +46,19 @@ def test_goal_b_independent_slots_when_cookies_not_shared():
 
 
 def test_goal_c_pacing_lives_in_health_card_only():
-    """节流面板只能在渠道健康卡内，配置页只留参数。"""
+    """节流实时面板只能在渠道健康卡内；参数从那里一键直达配置分区。
+
+    r638 起参数集中在独立的「渠道节流」分区（之前是全局参数里的锚点），
+    所以判据看「直达函数切到某个配置分区并聚焦节流控件」，不再钉死锚点 id。
+    """
     w = _w()
     assert w.count('id="paceBox"') == 1
     assert "healthcard .hpace" in w
-    assert "cfgGoThrottle" in w and 'id="glThrottle"' in w
+    assert "cfgGoThrottle" in w, "健康卡没有参数直达入口"
+    fn = w[w.index("function cfgGoThrottle("):]
+    fn = fn[:fn.index("async function health(")]
+    assert "showCfgPanel(" in fn and "glbQs" in fn, (
+        "直达函数没有切分区并聚焦节流控件：%r" % fn[:160])
 
 
 def test_goal_d_health_has_five_dimensions():

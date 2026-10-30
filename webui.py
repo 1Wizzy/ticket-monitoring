@@ -18293,13 +18293,12 @@ async function loadPacing(force){
                   :s1.query_attempts);
      if(!_a1)return;
      const _r1=(s1.query_rate_live!=null?s1.query_rate_live:s1.query_rate);
-     /* e1 只说「哪个域、多少、为什么算低」——数字与右半 scoped() 同源
-        （查询口径），通路明细由右半 pws 承担。原先 e1 打尝试级通路数字，
-        于是同一行左边「国际 H5 45%（20 次尝试）偏低」、右边「国际 82%」，
-        读者只能看到两个打架的数。 */
+     /* e1 只说「哪个域、多少」——数字与右半 scoped() 同源（查询口径）。
+        门槛值（85%）不进正文：它是固定阈值，每行都写一遍会把一行撑到
+        两行高（实测两个域都偏低时 1440 档 e1 溢出 899/500，行高从 44
+        涨到 99/152）。阈值与「查询口径」由行 title 承载。 */
      if(_r1!=null&&parseFloat(_r1)<0.85)
-      _badD.push((sk==='dom'?'国内':'国际')+' 查询 '+_rate(_r1)
-                 +'（'+_a1+' 次，低于 85% 线）');
+      _badD.push((sk==='dom'?'国内':'国际')+' '+_rate(_r1));
     });
     /* 通路级同样按查询口径的门槛判：一条通路只有在**它所属的域**查询率
        也偏低时才算劣化。域查询率健康而通路尝试级低 = 重试救回来了，
@@ -18363,12 +18362,15 @@ async function loadPacing(force){
       const n=parseInt(q.attempts)||0;
       if(n>=5&&(parseFloat(q.rate)||0)<0.6)
        _worst.push((sk==='dom'?'国内':'国际')+' '+pp+' 单次 '
-         +Math.round((parseFloat(q.rate)||0)*100)+'%（'+n+' 次）'
-         +'，该域查询率已把它摊到 '+_qa3+' 次查询里');
+         +Math.round((parseFloat(q.rate)||0)*100)+'%（'+n+' 次）');
      });
     });
-    if(_worst.length)ev=_badD.slice(0,2).join(' · ')+' 端成功率偏低；'
-      +'最差通路 '+_worst.slice(0,2).join(' · ');
+    /* 只点**一条**最差通路，且不重复域级结论、不带长解释。原先最多两条、
+       每条还附「该域查询率已把它摊到 N 次查询里」，两个域都偏低时整行
+       e1 溢出 899/500（1440 档行高 44→99，390 档 →152）。 */
+    if(_worst.length)
+     ev=(_badD.length?(_badD.slice(0,2).join(' · ')+' 端成功率偏低；'):'')
+       +'最差通路 '+_worst[0];
    }
    else if(adv.state==='soft_reject'){lab='软拒待预热';tone='warn';
     ev='上轮被风控软拒，本轮先预热';}
@@ -19236,7 +19238,6 @@ function buildForm(){if(!CFG)return;let h='',gh='';
     独立成「渠道节流」分区后，与「监控 · 渠道健康」的实时状态/干预
     形成一静一动的对照。控件本体与保存链路不变（同一批 GLB 键）。 */
  const gp=''
-  +'<div id="glThrottle" style="scroll-margin-top:calc(var(--hdh,54px) + 24px)"></div>'
   +glsec('🧯 节流 · 熔断（1–5 区 · 保存即热生效）')
   +'<div class="glgrid">'
   +glcell('静默起','glbQs','GLB.scan_quiet_start=(this.value||"").trim()',esc(GLB.scan_quiet_start||''),'凌晨停扫起点（HH:MM，留空=关闭）。只管抓取，不影响推送','text',null,'01:00')
@@ -21262,7 +21263,12 @@ function srxLogoURL(im){
 }
 function srxPlatIcon(p,cls,lazy){
  const im=SRX_BRAND_IMG[p]||'';
- const nm=SRX_PLATS[p]?SRX_PLATS[p][0]:(p||'渠道');
+ /* 中文名要覆盖 App 渠道（r614 只并进了几处名字表）。SRX_PLATS 只列 5 家
+    浏览器渠道，`app_zhixing` 落到英文 id 上，字符牌就渲染成光秃秃的
+    「a」——读者读不出这是哪一家（实测节流行「a 智行 App」）。 */
+ const _cn=(typeof APP_PLAT_NAME!=='undefined'&&APP_PLAT_NAME[p])
+   ||(SRX_PLATS[p]&&SRX_PLATS[p][0])||(p||'渠道');
+ const nm=_cn;
  const c='bic bic-ota '+(cls||'');
  if(!im)return '<span class="'+c+' bic-fb" data-plat="'+he(p)+'" style="--pc:'+(SRX_PLATS[p]?SRX_PLATS[p][1]:'#5a6c7d')+'" title="'+he(nm)+' · 官方图标未收录" aria-hidden="true">'+he(String(nm).slice(0,1))+'</span>';
  return '<img class="'+c+'" data-plat="'+he(p)+'" src="'+srxLogoURL(im)+'"'+(lazy?' loading="lazy"':'')+' decoding="async" alt="" aria-hidden="true" title="'+he(nm)+' · 官方图标" onerror="srxIconErr(this)">';
