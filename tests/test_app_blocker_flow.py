@@ -58,6 +58,10 @@ class FakeDevice:
     def app_stop(self, pkg):
         return True
 
+    def root(self):
+        # 快照恢复会先探 root；这个替身没快照，但方法要存在
+        return False
+
     def dump(self, retries=2):
         return self.pages.pop(0) if len(self.pages) > 1 else self.pages[0]
 

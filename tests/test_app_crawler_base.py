@@ -134,9 +134,14 @@ def test_snapshot_dir_matches_between_export_and_restore():
 
 # ---- r641：系统权限弹窗必须自动点掉（换机/重装后首次启动会遇到） ----
 class _PD:
-    def __init__(self, frames):
+    def __init__(self, frames, activity="com.android.permissioncontroller/"
+                 ".permission.ui.GrantPermissionsActivity"):
         self.frames = list(frames)
         self.taps = []
+        self.activity = activity
+
+    def current_activity(self):
+        return self.activity
 
     def dump(self):
         if self.frames:

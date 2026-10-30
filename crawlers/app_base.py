@@ -97,7 +97,11 @@ class AppCrawler:
             ok, detail = False, f"{type(e).__name__}: {e}"
         if ok:
             self.logger.info("[%s] 已恢复登录态快照（%s）", self.name, detail)
-            self.path_note("snap-restore", "ok", detail=detail)
+            # r640c：账本契约是「ok 必须带行数」——快照恢复本身不取数，
+            # 显式 rows=0 并写明这是登录态恢复、不是一次成功取数，
+            # 免得被读成「恢复了快照 = 查到了航班」。
+            self.path_note("snap-restore", "ok", rows=0,
+                           detail="登录态恢复（非取数）：" + str(detail)[:120])
             # 恢复里刚 app_start 过，等界面稳定再让调用方继续判断；
             # 否则紧接着的 dump 可能还是旧的（权限框/首页都读不到）。
             time.sleep(2)
@@ -109,46 +113,39 @@ class AppCrawler:
     def _dismiss_system_prompts(self, dev) -> int:
         """点掉系统权限弹窗（通知/定位等）。返回处理次数。
 
-        换机、重装、`pm clear` 之后，App 每次启动都可能弹系统级权限框，
+        换机、重装、`pm clear` 之后，智行每次启动都可能弹系统级权限框，
         它盖在首页上——采集会读成「首页未就绪 / 页面认不出」，被误判成
         App 改版。这不是风控，可以代点「允许」。
 
-        要点：
-          * 权限框在 `app_start` 之后才渲染，必须轮询等；
-          * 点掉一个后系统可能接着弹下一个（通知→定位→存储），
-            所以点完继续循环，直到一段时间内没有新的。
+        只看 **activity** 决定要不要介入：不在权限控制器时**不读页面**。
+        读页面会消耗调用方的页面序列（实测把广告页吃掉，导致广告关不掉）。
         """
         from .app_zhixing_nav import nodes
         allow = ("允许", "始终允许", "仅在使用中允许", "确定", "知道了")
         handled = 0
-        idle = 0
-        deadline = time.time() + 20
+        deadline = time.time() + 12
         while time.time() < deadline and handled < 6:
+            try:
+                act = (dev.current_activity() or "").lower()
+            except Exception:
+                act = ""
+            if "permission" not in act:
+                return handled
             xml = dev.dump() or ""
             hit = None
-            if xml:
-                for n in nodes(xml):
-                    if (n.text or "").strip() in allow:
-                        hit = n
-                        break
+            for n in nodes(xml):
+                if (n.text or "").strip() in allow:
+                    hit = n
+                    break
             if hit is None:
-                idle += 1
-                # 刚恢复过快照时 App 刚被拉起，权限框可能还没渲染：
-                # 给它两次机会（约 2s），之后才认为确实没有弹框。
-                if idle >= 2 and handled == 0:
-                    return 0
-                if idle >= 2:
-                    return handled
                 time.sleep(1)
                 continue
-            idle = 0
             self.logger.info("[%s] 关闭系统权限弹窗：%s", self.name, hit.text)
             dev.tap(hit.cx, hit.cy)
             handled += 1
             time.sleep(1.5)
         return handled
 
-    # ---------- 账本（与 BaseCrawler 同形）----------
     def path_reset(self):
         self.paths = []
         self.last_path = ""
