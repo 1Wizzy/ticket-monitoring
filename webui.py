@@ -18293,12 +18293,12 @@ async function loadPacing(force){
                   :s1.query_attempts);
      if(!_a1)return;
      const _r1=(s1.query_rate_live!=null?s1.query_rate_live:s1.query_rate);
-     /* e1 只说「哪个域、多少」——数字与右半 scoped() 同源（查询口径）。
-        门槛值（85%）不进正文：它是固定阈值，每行都写一遍会把一行撑到
-        两行高（实测两个域都偏低时 1440 档 e1 溢出 899/500，行高从 44
-        涨到 99/152）。阈值与「查询口径」由行 title 承载。 */
+     /* e1 只说**哪个域偏低**，不再复述百分比——右半 e2 已经列出
+        「国内 75% · 国际 42% · H5 25%」，两半各打一遍同一组数字，
+        实测读作「同一行把结论抄了两遍」。门槛值（85%）、次数、查询
+        口径全部由行 title 承载。 */
      if(_r1!=null&&parseFloat(_r1)<0.85)
-      _badD.push((sk==='dom'?'国内':'国际')+' '+_rate(_r1));
+      _badD.push(sk==='dom'?'国内':'国际');
     });
     /* 通路级同样按查询口径的门槛判：一条通路只有在**它所属的域**查询率
        也偏低时才算劣化。域查询率健康而通路尝试级低 = 重试救回来了，
@@ -18360,16 +18360,17 @@ async function loadPacing(force){
      Object.keys(s1.paths||{}).forEach(pp=>{
       const q=s1.paths[pp]||{};
       const n=parseInt(q.attempts)||0;
+      /* 只点名「哪条路」，不再复述百分比与次数——右半 pws 已经列了
+         同一口径的「H5 25%（需登录 2 · 软拒 1）」，两处各打一遍是重复。 */
       if(n>=5&&(parseFloat(q.rate)||0)<0.6)
-       _worst.push((sk==='dom'?'国内':'国际')+' '+pp+' 单次 '
-         +Math.round((parseFloat(q.rate)||0)*100)+'%（'+n+' 次）');
+       _worst.push((sk==='dom'?'国内':'国际')+' '+pp);
      });
     });
     /* 只点**一条**最差通路，且不重复域级结论、不带长解释。原先最多两条、
        每条还附「该域查询率已把它摊到 N 次查询里」，两个域都偏低时整行
        e1 溢出 899/500（1440 档行高 44→99，390 档 →152）。 */
     if(_worst.length)
-     ev=(_badD.length?(_badD.slice(0,2).join(' · ')+' 端成功率偏低；'):'')
+     ev=(_badD.length?(_badD.slice(0,2).join('、')+'端成功率偏低；'):'')
        +'最差通路 '+_worst[0];
    }
    else if(adv.state==='soft_reject'){lab='软拒待预热';tone='warn';

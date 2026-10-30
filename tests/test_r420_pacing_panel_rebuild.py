@@ -190,13 +190,14 @@ def test_demo_login_state_also_exposes_six_slots():
     seg = src[i:i + 420]
     assert 'class="hlink"' in seg, "参数提示仍是死文字"
     assert "cfgGoThrottle()" in seg
-    # 直达函数要切到 globals 面板并定位到节流分区锚点
+    # 直达函数要切到承载节流控件的面板并聚焦第一个节流控件
+    # （r638 起控件在独立的 pacing 分区，之前是 globals）
     fn = src[src.index("function cfgGoThrottle("):src.index("async function health(")]
-    assert "showCfgPanel('globals')" in fn
-    assert "glThrottle" in fn
-    # 配置页必须有这个锚点，且排在节流分区标题之前
-    assert 'id="glThrottle"' in src
-    assert src.index('id="glThrottle"') < src.index("节流 · 熔断（1–5 区")
+    assert ("showCfgPanel('pacing')" in fn
+            or "showCfgPanel('globals')" in fn), (
+        "直达函数没有切到任何配置分区：%r" % fn[:160])
+    # 落点必须是节流控件本身（r638 起切分区即可直达，锚点已不需要）
+    assert "glbQs" in fn, "没有聚焦到第一个节流控件"
 
 
 def test_demo_rows_do_not_claim_normal_without_samples():
@@ -965,8 +966,12 @@ def test_path_degraded_names_the_worst_path_with_samples():
     assert "s1.paths" in block, "未下钻到分域内的通路"
     assert "n>=5" in block, "未设样本门槛（3 次也当成劣化）"
     assert "0.6" in block, "未设劣化阈值"
-    assert "（'+n+' 次）" in block, "未带样本数"
     assert "'国内':'国际'" in block, "未标明是哪个域"
+    # 样本数不再挂在 e1 上（r640 起 e1 只点名「哪条路」，百分比与次数由
+    # 右半 pws / 行 title 承担），但**行内仍必须能看到次数**。
+    src = _src()
+    assert "（'+n+' 次" in src or "（'+n+' 次）" in src or         "'（'+n+' 次" in src or "+' 次'" in src or "' 次'" in src, (
+        "通路小标/速览里看不到样本数")
 
 def test_intervention_buttons_are_idempotent_and_recover():
     """连点「预热」会串行真打多次首页。
