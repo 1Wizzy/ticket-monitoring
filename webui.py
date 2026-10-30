@@ -14223,8 +14223,20 @@ function renderHealth(j){
    const _fx=[];
    if((_v.login||0)>0)_fx.push('需登录 '+_v.login);
    if((_v.soft||0)>0)_fx.push('软拒 '+_v.soft);
-   _pr.push(_k+' 单次 '+Math.round((_v.rate||0)*100)+'%'
-     +'（'+_v.attempts+' 次'+(_fx.length?' · '+_fx.join(' · '):'')+'）');}
+   /* 分母口径：`rate` 把 unsupported/empty 也算成失败。android-runtime
+      实测 63 次全是 unsupported（运行时没就绪），打成「单次 0%（63 次）」
+      等于说「这条路全挂」——实际是一次都没真正试过。改用 rate_excl_empty，
+      无效样本为 0 时直说「无有效样本」，不编造 0%。 */
+   /* 字段缺失（旧载荷/合成样例）退回 rate；只有显式为 null（后端判定
+      「有效样本为 0」）才说无有效样本。 */
+   const _rv=('rate_excl_empty' in _v)?_v.rate_excl_empty:_v.rate;
+   const _val=(_rv==null)?'无有效样本'
+     :('单次 '+Math.round((_rv||0)*100)+'%');
+   const _skip=((_v.unsupported||0)+(_v.empty||0));
+   const _note=[_fx.join(' · '),
+                (_skip>0?('无效 '+_skip):'')].filter(Boolean).join(' · ');
+   _pr.push(_k+' '+_val
+     +'（'+_v.attempts+' 次'+(_note?' · '+_note:'')+'）');}
   const _pathHtml=_pr.length
    ?`<span class="hpath" title="${he('近24h分通路：'+_pr.join(' · ')+'；退役=该通路已被替代，不再计入健康度')}">${he(_pr.join(' · '))}</span>`
    :'';
@@ -18412,7 +18424,11 @@ async function loadPacing(force){
       const n=parseInt(q.attempts)||0;
       /* 只点名「哪条路」，不再复述百分比与次数——右半 pws 已经列了
          同一口径的「H5 25%（需登录 2 · 软拒 1）」，两处各打一遍是重复。 */
-      if(n>=5&&(parseFloat(q.rate)||0)<0.6)
+      /* 用 rate_excl_empty：android-runtime 这类通路 63 次全是 unsupported
+         （运行时未就绪），rate 是 0% 但**没有一次有效尝试**——打成
+         「0%」等于把「没跑起来」说成「跑了全失败」。 */
+      const _rq2=q.rate_excl_empty;
+      if(n>=5&&_rq2!=null&&parseFloat(_rq2)<0.6)
        _worst.push((sk==='dom'?'国内':'国际')+' '+pp);
      });
     });
