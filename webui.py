@@ -9814,11 +9814,11 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
  <div class="cfgmain" id="cfgmain">
  <div class="cfpanel" id="panel-login">
  <div class="ucard" id="sec-login"><div class="uhead"><span class="seclab inline"><span class="secicon"><svg class="ic" aria-hidden="true"><use href="#i-lock"></use></svg></span><span class="zh">渠道登录</span></span>
-  <span class="secnote">五个渠道独立登录 · 飞猪 PC/H5 分别登录（同一淘宝账号，会话不共享） · 点「我已登录完成」即保存并生效（无需重启）</span></div>
+  <span class="secnote">五个浏览器渠道 + 智行 App（真机）各自独立登录 · 飞猪 PC/H5 分别登录（同一淘宝账号，会话不共享） · 点「我已登录完成」即保存并生效（无需重启）</span></div>
  <div id="loginRows"><span class="muted">加载中…</span></div>
  <div class="row" style="margin-top:6px">
   <button class="btn2" onclick="loadLogin(this)"><svg class="ic" aria-hidden="true"><use href="#i-rotate"></use></svg> 刷新状态</button>
-  <span class="muted">五个渠道都必须登录（入口页可匿名浏览，出价与明细要登录后才有） · 飞猪 PC 与 H5 是两套独立会话，需分别登录 · 采集进行中时窗口可能被占用，稍后再试</span></div>
+  <span class="muted">五个浏览器渠道 + 智行 App 都必须登录（入口页可匿名浏览，出价与明细要登录后才有） · 飞猪 PC 与 H5 是两套独立会话，需分别登录 · App 走真机内嵌画面，不是浏览器弹窗 · 采集进行中时窗口可能被占用，稍后再试</span></div>
  </div>
  <div class="ucard" id="sec-chlinks" style="margin-top:10px">
   <div class="uhead"><span class="seclab inline"><span class="secicon"><svg class="ic" aria-hidden="true"><use href="#i-open"></use></svg></span><span class="zh">渠道入口</span></span>
@@ -17650,7 +17650,10 @@ function refreshCfgChrome(){const s=CFG?_cfgStats():{users:0,routes:0,on:0,off:0
   ?((RUNTIME.version==='demo'?'demo':('v'+(RUNTIME.version||'—')))+' · '+_cbase)
   :'配置文件路径读取中…');
  const _cpe=$('cfgChromePath');if(_cpe)_cpe.title=_cp;
- _txt($('navN-login'),'5 渠道');
+ /* 计数按真实卡片派生（r650）：r644 补了智行 App，写死「5 渠道」会少算一家 */
+ {const _lr=$('loginRows');
+  const _n=_lr?[..._lr.querySelectorAll('.lgcard')].length:0;
+  _txt($('navN-login'),_n?_n+' 渠道':'—');}
  _txt($('navN-users'),s.users+' 用户');
  _txt($('navN-watch'),CFG_WATCH.loadedAt?(CFG_WATCH.list.length+' 关注'):'—');
  _txt($('navN-globals'),p?p+' 待重启':'无需重启');

@@ -160,3 +160,56 @@ def test_login_section_covers_every_required_channel():
     assert not missing, (
         "这些采集渠道在「渠道登录」分区里没有登录入口：%s（实际 %s）"
         % (missing, plats))
+
+
+def test_login_copy_and_nav_count_match_the_real_cards():
+    """文案里的「五个渠道」与导航计数必须与真实卡片数一致（r650）。
+
+    r644 补了智行 App 之后：卡片 6 张，而卡头仍写「五个渠道独立登录」、
+    导航写死「5 渠道」——同一屏里两个数字都对不上。
+    现在：卡头/底部说明都写「五个浏览器渠道 + 智行 App」，导航按真实
+    `.lgcard` 数派生。
+    """
+    srv, base = _boot()
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            if not os.path.exists(pw.chromium.executable_path):
+                pytest.skip("chromium 二进制缺失")
+            b = pw.chromium.launch()
+            try:
+                pg = b.new_page(viewport={"width": 1440, "height": 1200})
+                pg.add_init_script("window.setInterval=()=>1;")
+                pg.goto(base)
+                pg.wait_for_function(
+                    "typeof S!=='undefined'&&S&&S.users", timeout=30000)
+                pg.evaluate("()=>{switchView('cfg')}")
+                pg.wait_for_timeout(1800)
+                got = pg.evaluate(r"""()=>{
+                  const t=(sel)=>{const e=document.querySelector(sel);
+                                  return e?e.textContent.trim():'';};
+                  return {nav:t('#navN-login'),
+                          cards:document.querySelectorAll(
+                            '#loginRows .lgcard').length,
+                          sec:t('#sec-login .secnote'),
+                          foot:t('#sec-login .muted')};}""")
+            finally:
+                b.close()
+    finally:
+        srv.terminate()
+        try:
+            srv.wait(timeout=5)
+        except Exception:
+            srv.kill()
+
+    n = got["cards"]
+    assert n == 6, "登录卡片数异常：%s" % n
+    assert got["nav"].strip().startswith(str(n)), (
+        "导航计数 %r 与真实卡片数 %d 不一致（写死的数字会漂）"
+        % (got["nav"], n))
+    for name, txt in (("卡头", got["sec"]), ("底部说明", got["foot"])):
+        assert "五个渠道" not in txt, (
+            "%s 仍写「五个渠道」，而实际有 %d 张卡：%r" % (name, n, txt[:80]))
+        assert "智行 App" in txt, (
+            "%s 没提到智行 App（统一登录要求未落地到文案）：%r"
+            % (name, txt[:80]))
