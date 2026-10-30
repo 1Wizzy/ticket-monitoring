@@ -6,11 +6,9 @@ The UI must not turn an absent round or an unclassified failure into a green
 cookie-state hint; no network calls and no synthetic log lines live here.
 """
 PLATFORMS = ("ctrip", "qunar", "fliggy", "tongcheng", "tuniu")
-# App 渠道（可选）：中文名必须有，否则界面显示裸 id
-APP_CHANNELS = ("app_zhixing",)
-CN = {"ctrip": "携程", "qunar": "去哪儿", "fliggy": "飞猪",
-      "tongcheng": "同程", "tuniu": "途牛",
-      "app_zhixing": "智行 App"}
+# App 渠道与中文名统一来自 core/channels.py（单一事实源）：
+# 曾在此另写一份，新增渠道时漏改就会出现「能采但界面露裸 id」。
+from core.channels import APP_CHANNELS, CHANNEL_CN as CN  # noqa: E402
 
 _IP = ("179991", "风控", "限流", "403", "429", "ip封", "IP封")
 _CAPTCHA = ("验证码", "滑块", "人机", "challenge", "captcha")

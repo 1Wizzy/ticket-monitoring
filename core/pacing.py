@@ -26,8 +26,8 @@ from urllib.parse import urlparse
 
 PLATFORMS = ("ctrip", "fliggy", "qunar", "tongcheng", "tuniu")
 # App 渠道（可选）：需要独立节奏 key，但**不属于**内置浏览器渠道集合。
-# 本地定义而非 import crawlers，避免 core → crawlers → core 的循环导入。
-APP_CHANNELS = ("app_zhixing",)
+# 清单来自零依赖的 core/channels.py（曾在此本地另写一份，加渠道必然漏改）。
+from core.channels import APP_CHANNELS  # noqa: E402
 
 _HHMM = re.compile(r"^(\d{1,2}):(\d{2})$")
 
