@@ -219,7 +219,7 @@ docker compose up -d                 # otherwise builds locally via `build: .`
 
 Open `http://NAS_IP:8765`. Config, the price database (`data/`), browser sessions (`user_data/`) and logs all live in local volumes — upgrades and rebuilds keep your data. The image ships chromium and CJK fonts (~1.5 GB, no first-run browser download). The Windows toast channel auto-disables inside containers; DingTalk/email pushes are unaffected. On a NAS without Docker, grab `…-linux-x64.zip` and run it directly.
 
-Images are published to `ghcr.io/dengmeiluan/ticket-monitoring:latest` (plus `sha-<short>` for traceability) by the `release-build` workflow when run with `push_image` enabled. **After the first push, set the package visibility to public** — otherwise anonymous `docker pull` still returns `denied` (GitHub returns the same receipt for "not found" and "no permission"). Routine workflow runs only build and smoke-test. Only `linux/amd64` is published; on ARM use the `…-linux-x64.zip` release or build locally.
+Images are published to `ghcr.io/dengmeiluan/ticket-monitoring:latest` (plus `sha-<short>` for traceability) by the `release-build` workflow when run with `push_image` enabled, and the package is **public** — anonymous pulls work. Routine workflow runs only build and smoke-test. When a pull fails, remember GitHub returns the same `denied` receipt for "not found" and "no permission": check whether the tag was ever pushed before assuming a permissions problem. Only `linux/amd64` is published; on ARM use the `…-linux-x64.zip` release or build locally.
 
 Headless only: there is no display server inside the container, so the headed login window cannot open. Log in on a desktop machine, then mount/copy `user_data/` into the container.
 

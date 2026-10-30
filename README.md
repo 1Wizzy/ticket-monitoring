@@ -273,7 +273,7 @@ docker compose up -d                 # 没有镜像则本地构建（build: .）
 
 浏览器打开 `http://NAS_IP:8765` 即用。配置、价格库（`data/`）、浏览器会话档案（`user_data/`）、日志全部落本地卷，容器升级/重建不丢数据；镜像内置 chromium 与中文字体（约 1.5GB，首启免下载内核）。Windows 右下角弹窗通道在容器内自动停用，钉钉/邮件推送不受影响。无 Docker 的 NAS 也可下载 `…-linux-x64.zip` 直接跑。
 
-镜像由 `release-build` 工作流的 `push_image` 开关在发行轮推送 `ghcr.io/dengmeiluan/ticket-monitoring:latest`（另有 `sha-<短哈希>` 供溯源）。**首次推送后需在 GitHub 该 package 的设置里把可见性改为 public**——否则匿名 `docker pull` 仍会 denied（GitHub 对「不存在/无权限」返回同一回执）。日常手动跑工作流只构建冒烟、不推送。镜像目前只出 `linux/amd64`；ARM（树莓派等）请用 `…-linux-x64.zip` 或本地 `build: .`。
+镜像由 `release-build` 工作流的 `push_image` 开关在发行轮推送 `ghcr.io/dengmeiluan/ticket-monitoring:latest`（另有 `sha-<短哈希>` 供溯源），已设为**公开**，可直接匿名拉取；日常手动跑工作流只构建冒烟、不推送。判断拉取失败的原因时注意：GitHub 对「镜像不存在」和「无权限」返回同一张 denied 回执，先分清是没跑过推送（标签不存在）还是 package 又变回 private。镜像目前只出 `linux/amd64`；ARM（树莓派等）请用 `…-linux-x64.zip` 或本地 `build: .`。
 
 ## 特价机票监控
 
