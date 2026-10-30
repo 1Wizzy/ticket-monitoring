@@ -333,7 +333,26 @@ def _tap_calendar_cell(dev, xml: str, ymd: str) -> tuple:
     left = dev.dump() or ""
     if "Search_Calendar_Dialog" in left:
         return False, "点了日期但弹层没关"
+    # 点完必须核对首页日期行真的换了：没换时点「机票查询」会重查上一日，
+    # 结果被打上目标日期——价格错配而看不出任何异常。
+    shown = home_date_text(left)
+    if shown and shown != _want_md(ymd):
+        return False, f"点完日期仍是 {shown}（期望 {_want_md(ymd)}）"
     return True, "已在长窗口选中日期"
+
+
+def _want_md(ymd: str) -> str:
+    """2026-11-05 -> '11月5日'（App 的日期行不补零）。"""
+    return f"{int(ymd[5:7])}月{int(ymd[8:10])}日"
+
+
+def home_date_text(xml: str) -> str:
+    """首页日期行当前显示的目标日；找不到返回空串。"""
+    for n in nodes(xml):
+        t = (n.text or "").strip()
+        if re.fullmatch(r"\d{1,2}月\d{1,2}日", t):
+            return t
+    return ""
 
 
 def _calendar_cell(xml: str, ymd: str):
