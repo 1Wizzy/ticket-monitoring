@@ -232,4 +232,4 @@ android:
   vm_index: 0              # 多开实例序号
   boot_timeout_s: 180      # 冷启动实测 24–36s，留足余量
   action_timeout_s: 60     # 单条 adb 命令超时
-  snapshot: true           # 预留：登录态快照（P3）
+  snapshot: true           # 登录态快照：网页登录一次后自动保存并在下次采集前恢复
