@@ -1229,11 +1229,28 @@ class PriceStorage:
                 (from_city, to_city, depart_date, day))
             # 元素展开聚合（每桶读当日明细行×元素，量级=当日元素数，
             # 万级以内）；桶内序=fetched_at→行→元素位（open/close 语义）
+            # `extra` 有两种形态，必须都吃：
+            #   · 浏览器渠道 —— JSON **数组**，逐元素展开（每元素一个候选价）；
+            #   · App 渠道   —— JSON **对象**（{"calendar":false,"source":…}），
+            #     只是元数据，价格在 price 列。
+            # 直接 `json_each(fp.extra)` 遇到对象会让整条 SQL 抛
+            # `malformed JSON`，于是 App 采到的行一行都进不了日桶
+            # ——采集正常、面板永远没数。这里按 json_type 分流。
             rows = c.execute(
-                """SELECT json_extract(je.value,'$.price'),
-                          json_extract(je.value,'$.transCity'),
+                """SELECT CASE WHEN json_valid(fp.extra)
+                                    AND json_type(fp.extra)='array'
+                              THEN json_extract(je.value,'$.price')
+                              ELSE fp.price END AS px,
+                          CASE WHEN json_valid(fp.extra)
+                                    AND json_type(fp.extra)='array'
+                               THEN json_extract(je.value,'$.transCity')
+                               ELSE NULL END AS tcity,
                           fp.fetched_at
-                    FROM flight_prices fp, json_each(fp.extra) je
+                    FROM flight_prices fp
+                    LEFT JOIN json_each(
+                        CASE WHEN json_valid(fp.extra)
+                                  AND json_type(fp.extra)='array'
+                             THEN fp.extra ELSE '[]' END) je
                     WHERE fp.from_city=? AND fp.to_city=? AND fp.depart_date=?
                       AND fp.fetched_at>=? AND fp.fetched_at<? AND fp.extra!=''
                     ORDER BY fp.fetched_at, fp.id, je.key""",
