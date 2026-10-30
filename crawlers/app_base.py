@@ -107,6 +107,13 @@ class AppCrawler:
             time.sleep(2)
             return True
         self.logger.warning("[%s] 登录态快照恢复失败：%s", self.name, detail)
+        # 「设备上的登录态比快照新」不是失败，是刻意保留——记成 error 会
+        # 让健康卡显示「快照恢复失败」，而实际情况正相反（用户在 App 里
+        # 刚登过，恢复才是错的）。这类记录用 skipped 语义单独标注。
+        if "比快照新" in str(detail):
+            self.path_note("snap-restore", "ok", rows=0,
+                           detail="跳过恢复（非失败）：" + str(detail)[:120])
+            return False
         self.path_note("snap-restore", "error", detail=str(detail)[:150])
         return False
 

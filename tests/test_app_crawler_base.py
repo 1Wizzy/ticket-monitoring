@@ -189,3 +189,33 @@ def test_permission_dialog_not_confused_with_app_buttons():
     d.frames_last = d.frames[0] if d.frames else _dlg(["机票查询"], [100])
     assert c._dismiss_system_prompts(d) == 0
     assert d.taps == [], "不该在正常页面上乱点"
+
+
+def test_snapshot_skip_when_device_newer_is_not_error():
+    """「设备登录态比快照新」是刻意保留，不能记成 error。
+
+    记成 error 会让健康卡显示「快照恢复失败」，而实际情况正相反——
+    用户在 App 里刚登过，此时恢复才是错的。
+    """
+    import logging
+    from crawlers.app_zhixing import AppZhixingCrawler
+
+    c = AppZhixingCrawler({"android": {"enabled": True, "snapshot": True}},
+                          logging.getLogger("t"))
+
+    class Store:
+        def exists(self, plat):
+            return True
+
+    class Mgr:
+        store = Store()
+
+        def restore(self, plat):
+            return False, "设备上的登录态比快照新，已保留设备数据"
+
+    c._snapshot_manager = lambda dev: Mgr()
+    c.restore_login_snapshot(object())
+    recs = [p for p in c.paths if p["path"] == "snap-restore"]
+    assert recs, "跳过恢复也要留痕"
+    assert recs[0]["status"] == "ok", "跳过不是失败：%s" % recs[0]
+    assert "跳过恢复" in recs[0]["detail"], recs[0]["detail"]
