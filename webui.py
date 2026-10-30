@@ -17773,29 +17773,77 @@ async function loadPacing(force){
    else if(adv.state==='path_degraded'){
     lab='路径劣化';tone='warn';
     /* 说清「哪一端/哪条通路」劣化即可——百分比紧邻右半已经给过，
-       e1 再报一遍数字读作啰嗦（实测「国际 74% 偏低 … 国际 74%」）。 */
+       e1 再报一遍数字读作啰嗦（实测「国际 74% 偏低 … 国际 74%」）。
+       口径必须与右半 scoped() 同源（查询级 `query_rate_live`）：曾读尝试级
+       `rate`，同一行渲染成「国际 H5 45%（20 次）偏低 · 国际 82%」——左按
+       尝试 45%、右按查询 82%，读者只会认为界面在自相矛盾。真实库实测智行
+       App 国际域：尝试级 30% / 查询级 100%（差 70 个点），差得不是一点点。
+       现在 e1 只给查询级数字 + 门槛，通路明细交给右半 pws（同口径）。 */
     const _badD=[],_badP=[];
     ['dom','intl'].forEach(sk=>{
-     const s1=sc[sk];
-     if(s1&&(parseInt(s1.attempts)||0)>0&&(parseFloat(s1.rate)||0)<0.85)
-      _badD.push(sk==='dom'?'国内':'国际');
+     const s1=sc[sk];if(!s1)return;
+     const _a1=_n(s1.query_attempts_live!=null?s1.query_attempts_live
+                  :s1.query_attempts);
+     if(!_a1)return;
+     const _r1=(s1.query_rate_live!=null?s1.query_rate_live:s1.query_rate);
+     /* e1 只说「哪个域、多少、为什么算低」——数字与右半 scoped() 同源
+        （查询口径），通路明细由右半 pws 承担。原先 e1 打尝试级通路数字，
+        于是同一行左边「国际 H5 45%（20 次尝试）偏低」、右边「国际 82%」，
+        读者只能看到两个打架的数。 */
+     if(_r1!=null&&parseFloat(_r1)<0.85)
+      _badD.push((sk==='dom'?'国内':'国际')+' 查询 '+_rate(_r1)
+                 +'（'+_a1+' 次，低于 85% 线）');
+    });
+    /* 通路级同样按查询口径的门槛判：一条通路只有在**它所属的域**查询率
+       也偏低时才算劣化。域查询率健康而通路尝试级低 = 重试救回来了，
+       不该催人换路（否则又回到「H5 通路成功率偏低 · 国际 91%」的打架）。 */
+    const _healthyScopes=[];
+    ['dom','intl'].forEach(sk=>{
+     const s1=sc[sk];if(!s1)return;
+     const _qa0=_n(s1.query_attempts_live!=null?s1.query_attempts_live
+                   :s1.query_attempts);
+     if(!_qa0)return;
+     const _qr0=(s1.query_rate_live!=null?s1.query_rate_live:s1.query_rate);
+     if(_qr0!=null&&parseFloat(_qr0)>=0.85)_healthyScopes.push(sk);
     });
     Object.keys(pw).forEach(pp=>{
      if(dead.indexOf(pp)>=0)return;
      const w2=pw[pp]||{};
-     if((parseInt(w2.attempts)||0)>0&&(parseFloat(w2.rate)||0)<0.85)
-      _badP.push(pp);
+     if((parseInt(w2.attempts)||0)<=0)return;
+     if((parseFloat(w2.rate)||0)>=0.85)return;
+     /* 该通路在哪个域下？域健康就别报（重试已救回）。 */
+     const _inBad=['dom','intl'].filter(sk=>
+       (sc[sk]||{}).paths&&(sc[sk].paths||{})[pp]
+       &&_healthyScopes.indexOf(sk)<0);
+     if(_inBad.length||!Object.keys(sc).length)_badP.push(pp);
     });
     /* 兜底不能凭空断言「存在低成功率通路」：走到这里说明 pw/sc 里根本没有
        可用的通路样本（否则上面两段必有一条命中），那是「没有账」，
-       不是「账里有坏路」。分开说，读者才知道该等数据还是该修路。 */
-    ev=_badD.length?(_badD.join('/')+' 端成功率偏低')
-      :(_badP.length?(_badP.slice(0,2).join('/')+' 通路成功率偏低')
-        :'暂无通路账，先跑一轮再判断');
-    /* 指名「哪一端 × 哪条通路」只有多少有效率。实测去哪儿国际 H5 只有
-       25%（32 次）而同渠道国内 H5 是 80%——只说「国际端偏低」读者既不
-       知道是哪条路，也不知道差多少，更无从决定该怎么干预。
-       带样本数：32 次和 3 次的 25% 完全不是一回事。 */
+       不是「账里有坏路」。分开说，读者才知道该等数据还是该修路。
+       第三种情形：域查询率健康、但尝试级偏低——这是**重试救回来了**，
+       就该说重试，而不是含糊成「暂无通路账」让人白等一轮。 */
+    const _retryOnly=[];
+    ['dom','intl'].forEach(sk=>{
+     const s1=sc[sk];if(!s1)return;
+     const _qa2=_n(s1.query_attempts_live!=null?s1.query_attempts_live
+                   :s1.query_attempts);
+     if(!_qa2)return;
+     const _qr2=(s1.query_rate_live!=null?s1.query_rate_live:s1.query_rate);
+     if(_qr2==null||parseFloat(_qr2)<0.85)return;   /* 域本身不健康，另说 */
+     if((parseInt(s1.attempts)||0)>_qa2)             /* 尝试多于查询 = 有重试 */
+      _retryOnly.push((sk==='dom'?'国内':'国际')+' '+_qa2+' 次查询 '
+        +_rate(_qr2));
+    });
+    ev=_badD.length?(_badD.slice(0,2).join(' · ')+' 端成功率偏低')
+      :(_badP.length?(_badP.slice(0,2).join('/')+' 端成功率偏低（该域内通路）')
+        :(_retryOnly.length?(_retryOnly.join(' · ')+('（偏低的是单次尝试，'
+                              +'重试已救回；按压测结论无需换路）'))
+          :'暂无通路账，先跑一轮再判断'));
+    /* 点名域内表现最差的那条通路（带样本数）。样本门槛 5：32 次的 25%
+       和 3 次的 25% 完全不是一回事。只列**所属域查询率也偏低**的通路，
+       域健康时那是重试救回，催人换路等于让人做无效操作。
+       这里给的是该通路的**尝试级**有效率并显式标注，与右半 pws 同源；
+       域级那句（上面）才是查询口径。两处都自带口径标签，不再打架。 */
     const _worst=[];
     ['dom','intl'].forEach(sk=>{
      const s1=sc[sk];if(!s1)return;
@@ -17803,11 +17851,13 @@ async function loadPacing(force){
       const q=s1.paths[pp]||{};
       const n=parseInt(q.attempts)||0;
       if(n>=5&&(parseFloat(q.rate)||0)<0.6)
-       _worst.push((sk==='dom'?'国内':'国际')+' '+pp+' '
-         +Math.round((parseFloat(q.rate)||0)*100)+'%（'+n+' 次）');
+       _worst.push((sk==='dom'?'国内':'国际')+' '+pp+' 单次 '
+         +Math.round((parseFloat(q.rate)||0)*100)+'%（'+n+' 次）'
+         +'，该域查询率已把它摊到 '+_qa3+' 次查询里');
      });
     });
-    if(_worst.length)ev=_worst.slice(0,2).join(' · ')+' 偏低';
+    if(_worst.length)ev=_badD.slice(0,2).join(' · ')+' 端成功率偏低；'
+      +'最差通路 '+_worst.slice(0,2).join(' · ');
    }
    else if(adv.state==='soft_reject'){lab='软拒待预热';tone='warn';
     ev='上轮被风控软拒，本轮先预热';}
