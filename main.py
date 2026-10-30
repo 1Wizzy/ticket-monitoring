@@ -3535,7 +3535,13 @@ def main():
                 logger.info("=" * 52)
                 logger.info("首次使用：你的浏览器会自动打开配置页")
                 logger.info("  1) 在「用户与航线」里添加一条关注航线")
-                logger.info("  2) 勾选要用的渠道（含「智行 App」）")
+                # 渠道名从单一事实源派生：新增 App 渠道时这句文案自动跟上
+                # （写死「含『智行 App』」在接入去哪儿后就不全了）。
+                from core.channels import APP_CHANNELS, CHANNEL_CN
+                _apps = "「%s」" % "」「".join(
+                    CHANNEL_CN[p] for p in APP_CHANNELS)
+                logger.info("  2) 勾选要用的渠道（App 渠道：%s 需先在"
+                            "「全局参数 · Android 真机通道」启用）", _apps)
                 logger.info("  3) 点「保存并生效」，采集即刻开始")
                 logger.info("打不开就手动访问：%s", _url)
                 logger.info("=" * 52)
