@@ -14100,7 +14100,7 @@ async function diagProbe(p){
  await probeNow(p);
  try{renderHealthDiag()}catch(e){}
 }
-/* App 渠道中文名：'智行 App' / '美团 App'。**必须在任何引用之前声明**——
+/* App 渠道中文名：'智行 App'。**必须在任何引用之前声明**——
    const 有 TDZ，`typeof X!=='undefined'` 也救不了：引用点若在声明之前，
    整页脚本抛 `Cannot access 'APP_PLAT_NAME' before initialization`，
    S 永不初始化、全站不可用。r614 曾把它写进 renderHealth 体内（缩进 0
@@ -19059,7 +19059,7 @@ function buildForm(){if(!CFG)return;let h='',gh='';
   +'出口由模拟器自身的网络决定，不在这张表的管辖内；要换 App 出口请在 MuMu 里改。</div>'
   +glsec('Android 真机通道 · 保存即热生效')
   +'<div class="glgrid">'
-  /* Android 真机（r603）：智行/美团 App 没有可用的 Web 入口，只能走真机。
+  /* Android 真机（r603）：App 渠道没有可用的 Web 入口，只能走真机。
      这一组键后端 `core/android/config.py` 早已真读（且对每个字段钳制），
      配置页却一个控件都没有——按「配置页不允许存在任何无法配置的项」补齐。
      取值范围与后端钳制逐项一致，避免界面能填出后端会悄悄改掉的值。 */
