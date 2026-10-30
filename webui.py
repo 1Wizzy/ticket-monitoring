@@ -8920,6 +8920,8 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
 .pace-row .ev{grid-area:ev;display:flex;align-items:baseline;gap:8px;min-width:0;
  font-size:12px;color:var(--r-ink-3)}
 .pace-row .ev .e1{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pace-row .ev .e2k{font-style:normal;font-size:11px;color:var(--r-ink-3);
+ opacity:.72;margin-right:5px;letter-spacing:.2px}
 .pace-row .ev .e2{flex:none;font-size:11px;color:var(--r-ink-3);white-space:nowrap;
  font-variant-numeric:tabular-nums}
 .pace-row .ev .e2 b{font-family:var(--num);font-size:12px;font-weight:600;color:var(--r-ink-2)}
@@ -18578,6 +18580,13 @@ async function loadPacing(force){
     if(_qa)ev='近 24h 实测 '+_qa+' 次、出数 '+_qo+' 条'
       +(_qo*4<_qa*3?('（'+(100-Math.round(_qo/_qa*100))+'% 未出数）'):'');
    }
+   /* 最后兜底：`ok` 行到这一步仍没依据时，不能落破折号——本面板的「—」
+     专指「近 24h 无样本」，而这一行是判过「正常」的，两者直接打架
+     （截图实测：携程行渲染成「正常 —」）。这里给一句不承诺数据的话：
+     只说这一轮没发现要动的事，依据在展开的溯源里。 */
+   if(!ev){
+    ev=(adv.state==='ok')?'本轮未发现需处理项':(adv.hint?String(adv.hint).split(/[，；。]/)[0]:'');
+   }
    /* 干预成效前置：这一行的核心用途是「告诉用户按哪个钮能提高成功率」，
      而唯一能回答它的是「上次同类干预带来了什么」。只在两侧都有真实样本
      且变化 ≥5 个百分点时出现，避免把噪音写成成效。
@@ -18658,8 +18667,13 @@ async function loadPacing(force){
    return '<div class="pace-row" data-on="'+(_open?'1':'0')+'" title="'+esc(adv.hint||'')+'">'
     +'<span class="nm">'+srxPlatIcon(k)+esc(nm)+'</span>'
     +'<span class="st"><i class="dot '+tone+'" aria-hidden="true"></i><span class="glip '+tone+'">'+esc(lab)+'</span></span>'
+    /* e2 带一个极短前缀「近24h」，把两段分开：e1 是**结论**（这行怎么了），
+       e2 是**读数**（各域/通路的数）。实测两段直接相邻时读成一句
+       「…最差通路 国际 H5 国内 75% · 国际 42%」，读者分不清哪个数字
+       属于哪一段。 */
     +'<span class="ev"><span class="e1">'+esc(ev||'—')+'</span>'
-     +(pathTxt||_qbit?('<span class="e2">'+(pathTxt?esc(pathTxt):'')+(pathTxt&&_qbit?' · ':'')+_qbit+'</span>'):'')+'</span>'
+     +(pathTxt||_qbit?('<span class="e2">'+'<i class="e2k">近24h</i>'
+        +(pathTxt?esc(pathTxt):'')+(pathTxt&&_qbit?' · ':'')+_qbit+'</span>'):'')+'</span>'
     +'<span class="ac">'+ac.join('')+'</span></div>'+pre;
   }).join('');
   /* —— 本轮节流：量尺 + 配额轨 + 出处 —— */
