@@ -25172,6 +25172,14 @@ class _State:
     lock = threading.Lock()
 
 
+# 配置保存互斥（r649）：/api/config 是「读 yaml → 改 → 写 yaml」的读改写序列。
+# ThreadingHTTPServer 下两个并发保存会互相覆盖——实测两次都回 200，但 3 次里
+# 有 2 次丢掉其中一项改动（A 改轮询周期、B 改 TTL，最终只有一项生效）。
+# 用户看到「保存成功」，配置已被回滚。锁要覆盖到 reload 回调结束：否则
+# 热重载可能读到别人写了一半的 yaml。
+_CFG_SAVE_LOCK = threading.Lock()
+
+
 # ── App 渠道登录（r604）──────────────────────────────────────────
 # 包一层，把 webui 的配置/日志接到 core.android.login_api 上；
 # login_api 本身不 import webui，避免循环依赖。
@@ -31396,300 +31404,303 @@ class _Handler(BaseHTTPRequestHandler):
                         "err": "演示模式只读——下载源码或 zip 即可真跑"}, 403)
             return
         if self.path == "/api/config":
-            try:
-                length = int(self.headers.get("Content-Length", 0))
-                body = json.loads(self.rfile.read(length).decode("utf-8"))
-                import yaml as _y
-                with open(st.config_path, encoding="utf-8") as _yf:
-                    cfg = _y.safe_load(_yf) or {}
-                cfg["users"] = body.get("users") or []
-                glb = body.get("globals") or {}
-                if glb.get("interval_minutes"):
-                    cfg.setdefault("schedule", {})["interval_minutes"] = \
-                        max(5, int(glb["interval_minutes"]))
-                if glb.get("jitter_minutes") is not None:
-                    cfg.setdefault("schedule", {})["jitter_minutes"] = \
-                        max(0, int(glb["jitter_minutes"]))
-                # 1/3/5 区 · 节流参数（保存即热生效）：非法值一律回默认，
-                # 坏配置不能让监控整轮停摆
-                _sc0 = cfg.setdefault("schedule", {})
-                for _k in ("scan_quiet_start", "scan_quiet_end"):
-                    if glb.get(_k) is not None:
-                        _v = str(glb[_k]).strip()[:5]
-                        if not re.match(r"^([01]?\d|2[0-3]):[0-5]\d$", _v):
-                            _v = ""
-                        _sc0[_k] = _v
-                for _k, _d in (("fast_ttl_min", 15), ("slow_ttl_min", 120)):
-                    if glb.get(_k) is not None:
-                        try:
-                            _v = int(glb[_k])
-                        except (TypeError, ValueError):
-                            _v = _d
-                        _sc0[_k] = max(5, min(1440, _v))
-                if glb.get("near_ratio") is not None:
-                    try:
-                        _nr = float(glb["near_ratio"])
-                    except (TypeError, ValueError):
-                        _nr = 0.15
-                    _sc0["near_ratio"] = max(0.0, min(1.0, _nr))
-                if glb.get("stagger_seconds") is not None:
-                    try:
-                        _sg = int(glb["stagger_seconds"])
-                    except (TypeError, ValueError):
-                        _sg = 0
-                    _sc0["stagger_seconds"] = max(0, min(120, _sg))
-                if glb.get("port"):
-                    cfg.setdefault("web", {})["port"] = \
-                        max(1024, int(glb["port"]))
-                if glb.get("base_url") is not None:
-                    cfg.setdefault("web", {})["base_url"] = \
-                        str(glb["base_url"]).strip()[:300]
-                if glb.get("host") is not None and str(glb["host"]).strip():
-                    _h = str(glb["host"]).strip()[:64]
-                    try:
-                        _probe = socket.socket(socket.AF_INET,
-                                               socket.SOCK_STREAM)
-                        try:
-                            _probe.bind((_h, 0))
-                        finally:
-                            _probe.close()
-                    except OSError as _e:
-                        self._json({"ok": False, "err": (
-                            "监听地址不可用（本机没有该地址：%s）：%s"
-                            % (_h, _e))}, 400)
-                        return
-                    cfg.setdefault("web", {})["host"] = _h
-                if glb.get("headless") is not None:
-                    cfg.setdefault("crawler", {})["headless"] = \
-                        bool(glb["headless"])
-                # 启动级路径三件可写（r339 用户指令「一切配置可变更化」）：
-                # 保存进 config.yaml，重启进程生效；旧档由启动序列自动搬迁
-                # 空串=显式回默认（db/log/ud 不能落空键；bdir 空=渠道默认）
-                if glb.get("db_path") is not None:
-                    cfg.setdefault("output", {})["db_path"] = \
-                        (str(glb["db_path"]).strip()[:300]
-                         or "data/prices.db")
-                if glb.get("log_path") is not None:
-                    cfg.setdefault("output", {})["log_path"] = \
-                        (str(glb["log_path"]).strip()[:300]
-                         or "logs/monitor.log")
-                if glb.get("user_data_dir") is not None:
-                    cfg.setdefault("crawler", {})["user_data_dir"] = \
-                        (str(glb["user_data_dir"]).strip()[:300]
-                         or "user_data")
-                # 保存级总检（r346）：非法字符/保留名、四路径同址、
-                # 目标不可写与文件/目录错配——不能只靠前端预览。
-                _perr = _storage_save_error(cfg)
-                if _perr:
-                    raise ValueError(_perr)
-                # 路径语义守卫（r342）：文件键不得指向已有目录、目录键
-                # 不得指向已有文件、库与日志不得同址——错配会在重启
-                # 迁移/启动时才炸，前端如实拦截比事后排障便宜
-                _db_abs = os.path.abspath(_anchored(str(
-                    (cfg.get("output") or {}).get(
-                        "db_path", "data/prices.db") or "data/prices.db"), ""))
-                _lg_abs = os.path.abspath(_anchored(str(
-                    (cfg.get("output") or {}).get(
-                        "log_path", "logs/monitor.log")
-                    or "logs/monitor.log"), ""))
-                _ud_abs = os.path.abspath(_anchored(str(
-                    (cfg.get("crawler") or {}).get(
-                        "user_data_dir", "user_data") or "user_data"), ""))
-                if os.path.isdir(_db_abs):
-                    raise ValueError("数据库路径指向目录，请填文件路径（如 data/prices.db）")
-                if os.path.isdir(_lg_abs):
-                    raise ValueError("日志路径指向目录，请填文件路径（如 logs/monitor.log）")
-                if os.path.isfile(_ud_abs):
-                    raise ValueError("浏览器资料目录指向文件，请填目录路径")
-                _bd_raw = str((cfg.get("crawler") or {}).get(
-                    "browser_dir", "") or "").strip()
-                if _bd_raw and os.path.isfile(os.path.abspath(_anchored(
-                        _bd_raw, ""))):
-                    raise ValueError("浏览器内核目录指向文件，请填目录路径")
-                if _db_abs == _lg_abs:
-                    raise ValueError("数据库与运行日志不能使用同一路径")
-                if glb.get("run_on_start") is not None:
-                    cfg.setdefault("schedule", {})["run_on_start"] = \
-                        bool(glb["run_on_start"])
-                # 采集参数：rt["cfg"] 单一事实源，保存热生效（起）
-                _crw = cfg.setdefault("crawler", {})
-                if glb.get("timeout_seconds"):
-                    _crw["timeout_seconds"] = min(
-                        600, max(10, int(glb["timeout_seconds"])))
-                if glb.get("delay_min") is not None:
-                    _crw["delay_min"] = max(0, int(glb["delay_min"]))
-                if glb.get("delay_max") is not None:
-                    _crw["delay_max"] = max(0, int(glb["delay_max"]))
-                if glb.get("user_agent") is not None:
-                    _crw["user_agent"] = str(glb["user_agent"]).strip()[:600]
-                # 采集代理（r319）：空串=清空回直连（显式落键不留脏）；
-                # 形态校验（Soldier P2#4）——非 http(s)://host:port 的
-                # 手滑输入（如漏 scheme 的 127.0.0.1:7897）会让 httpx
-                # 抛 InvalidURL 使发现层全哑，宁缺勿错一律回直连
-                if glb.get("proxy") is not None:
-                    _px = str(glb["proxy"]).strip()[:300]
-                    if _px and not re.match(r"^https?://[^\s/]+:\d+$", _px):
-                        _px = ""
-                    _crw["proxy"] = _px
-                # 按渠道绑出口（r600）：与全局 proxy 同一套形态校验——
-                # 漏 scheme 的手滑输入会让该渠道 httpx 抛 InvalidURL，
-                # 而故障表现是「这一家全红」，最难归因回配置笔误。
-                if isinstance(glb.get("proxy_map"), dict):
-                    _crw["proxy_map"] = _proxy_map_clean(glb["proxy_map"])
-                # Android 真机通道（r603）：字段范围与 core/android/config.py
-                # 的钳制逐项一致，避免界面能填出后端会悄悄改掉的值。
-                if isinstance(glb.get("android"), dict):
-                    _and = glb["android"]
-                    _a0 = dict(cfg.get("android") or {})
-                    if _and.get("enabled") is not None:
-                        _a0["enabled"] = bool(_and["enabled"])
-                    if _and.get("provider") is not None:
-                        _a0["provider"] = (str(_and["provider"]).strip()
-                                           or "mumu")[:40]
-                    if _and.get("install_dir") is not None:
-                        _a0["install_dir"] = str(
-                            _and["install_dir"]).strip()[:400]
-                    for _ak, _alo, _ahi, _ad in (
-                            ("vm_index", 0, 64, 0),
-                            ("boot_timeout_s", 10, 600, 180),
-                            ("action_timeout_s", 5, 900, 60)):
-                        if _and.get(_ak) is not None:
+            # 读改写串行（r649）：并发保存会丢更新（实测两次都回 200，
+            # 但 3 次里 2 次只有一项生效），热重载也可能读到半份文件。
+            with _CFG_SAVE_LOCK:
+                try:
+                    length = int(self.headers.get("Content-Length", 0))
+                    body = json.loads(self.rfile.read(length).decode("utf-8"))
+                    import yaml as _y
+                    with open(st.config_path, encoding="utf-8") as _yf:
+                        cfg = _y.safe_load(_yf) or {}
+                    cfg["users"] = body.get("users") or []
+                    glb = body.get("globals") or {}
+                    if glb.get("interval_minutes"):
+                        cfg.setdefault("schedule", {})["interval_minutes"] = \
+                            max(5, int(glb["interval_minutes"]))
+                    if glb.get("jitter_minutes") is not None:
+                        cfg.setdefault("schedule", {})["jitter_minutes"] = \
+                            max(0, int(glb["jitter_minutes"]))
+                    # 1/3/5 区 · 节流参数（保存即热生效）：非法值一律回默认，
+                    # 坏配置不能让监控整轮停摆
+                    _sc0 = cfg.setdefault("schedule", {})
+                    for _k in ("scan_quiet_start", "scan_quiet_end"):
+                        if glb.get(_k) is not None:
+                            _v = str(glb[_k]).strip()[:5]
+                            if not re.match(r"^([01]?\d|2[0-3]):[0-5]\d$", _v):
+                                _v = ""
+                            _sc0[_k] = _v
+                    for _k, _d in (("fast_ttl_min", 15), ("slow_ttl_min", 120)):
+                        if glb.get(_k) is not None:
                             try:
-                                _av = int(_and[_ak])
+                                _v = int(glb[_k])
                             except (TypeError, ValueError):
-                                _av = _ad
-                            _a0[_ak] = max(_alo, min(_ahi, _av))
-                    if _and.get("snapshot") is not None:
-                        _a0["snapshot"] = bool(_and["snapshot"])
-                    cfg["android"] = _a0
-                if glb.get("debug") is not None:
-                    _crw["debug"] = bool(glb["debug"])
-                if glb.get("stealth") is not None:
-                    _crw["stealth"] = bool(glb["stealth"])
-                if glb.get("auto_verify") is not None:
-                    _crw["auto_verify"] = bool(glb["auto_verify"])
-                # 内核缓存位（启动级）：保存进配置，重启进程生效；
-                # 空串=显式回渠道默认位（显式落键不留脏）
-                if glb.get("browser_dir") is not None:
-                    _crw["browser_dir"] = \
-                        str(glb["browser_dir"]).strip()[:300]
-                # 2/5 区 · 熔断与请求预算（保存即热生效）
-                _rate0 = _crw.setdefault("rate", {})
-                if glb.get("min_gap_s") is not None:
-                    try:
-                        _mg = float(glb["min_gap_s"])
-                    except (TypeError, ValueError):
-                        _mg = 0.0
-                    _rate0["min_gap_s"] = round(max(0.0, min(300.0, _mg)), 1)
-                if glb.get("per_minute") is not None:
-                    try:
-                        _pm = int(glb["per_minute"])
-                    except (TypeError, ValueError):
-                        _pm = 0
-                    _rate0["per_minute"] = max(0, min(600, _pm))
-                _warm0 = _crw.setdefault("warmup", {})
-                if glb.get("warmup_enabled") is not None:
-                    _warm0["enabled"] = bool(glb["warmup_enabled"])
-                if glb.get("warmup_platforms") is not None:
-                    # 可预热 = **真的声明了入口**（warmup_url 非空）的渠道。
-                    # 曾用手写白名单，里面含 ctrip/tongcheng —— 这两家没有
-                    # 入口，填进去后按钮可点但点了什么也不做（r627）。
-                    _wl = [x.strip() for x in
-                           str(glb["warmup_platforms"]).split(",") if x.strip()]
-                    _warm0["platforms"] = [x for x in _wl if x in _warmable()]
-                    _ignored = [x for x in _wl if x not in _warmable()]
-                    if _ignored:
-                        _warm0["ignored"] = _ignored
-                _brk0 = _crw.setdefault("breaker", {})
-                if glb.get("breaker_enabled") is not None:
-                    _brk0["enabled"] = bool(glb["breaker_enabled"])
-                if glb.get("health_penalty_enabled") is not None:
-                    _crw["health_penalty_enabled"] = bool(
-                        glb["health_penalty_enabled"])
-                # 成功率保护阈值（r485）：四档数字可调，不再写死
-                for _hk, _hc in (("health_min_samples", int),
-                                 ("health_ok_ratio", float),
-                                 ("health_slow_ratio", float),
-                                 ("health_slow_factor", float),
-                                 ("health_slowest_factor", float)):
-                    if glb.get(_hk) is not None:
+                                _v = _d
+                            _sc0[_k] = max(5, min(1440, _v))
+                    if glb.get("near_ratio") is not None:
                         try:
-                            _crw[_hk] = _hc(glb[_hk])
+                            _nr = float(glb["near_ratio"])
                         except (TypeError, ValueError):
-                            pass
-                if glb.get("breaker_base_s") is not None:
-                    try:
-                        _bb = int(glb["breaker_base_s"])
-                    except (TypeError, ValueError):
-                        _bb = 300
-                    _brk0["base_s"] = max(30, min(3600, _bb))
-                if glb.get("breaker_cap_s") is not None:
-                    try:
-                        _bc = int(glb["breaker_cap_s"])
-                    except (TypeError, ValueError):
-                        _bc = 3600
-                    _brk0["cap_s"] = max(120, min(86400, _bc))
-                # r523：把原先「只能在文件里改」的采集细节落盘（热生效）。
-                _crw2 = cfg.setdefault("crawler", {})
-                for _ck, _cd, _lo, _hi in (
-                        ("session_max_days", 0, 0, 365),
-                        ("max_concurrency", 0, 0, 16)):
-                    if glb.get(_ck) is not None:
+                            _nr = 0.15
+                        _sc0["near_ratio"] = max(0.0, min(1.0, _nr))
+                    if glb.get("stagger_seconds") is not None:
                         try:
-                            _crw2[_ck] = max(_lo, min(_hi, int(glb[_ck])))
+                            _sg = int(glb["stagger_seconds"])
                         except (TypeError, ValueError):
-                            _crw2[_ck] = _cd
-                for _sk2 in ("mobile_user_agent", "tls_impersonate",
-                             "debug_dir"):
-                    if glb.get(_sk2) is not None:
-                        _crw2[_sk2] = str(glb[_sk2] or "").strip()[:300]
-                if glb.get("login_desktop") is not None:
-                    _crw2["login_desktop"] = bool(glb["login_desktop"])
-                if glb.get("login_cooldown_s") is not None:
-                    try:
-                        _lc2 = int(glb["login_cooldown_s"])
-                    except (TypeError, ValueError):
-                        _lc2 = 900
-                    _brk0["login_cooldown_s"] = max(60, min(86400, _lc2))
-                if glb.get("near_days") is not None:
-                    try:
-                        _nd2 = int(glb["near_days"])
-                    except (TypeError, ValueError):
-                        _nd2 = 3
-                    cfg.setdefault("schedule", {})["near_days"] = max(
-                        0, min(30, _nd2))
-                if isinstance(glb.get("cadence"), dict):
-                    _cad0 = _crw2.setdefault("cadence", {})
-                    for _cp, _cv in glb["cadence"].items():
-                        if _cp not in ("qunar", "fliggy", "ctrip",
-                                       "tongcheng", "tuniu"):
-                            continue
+                            _sg = 0
+                        _sc0["stagger_seconds"] = max(0, min(120, _sg))
+                    if glb.get("port"):
+                        cfg.setdefault("web", {})["port"] = \
+                            max(1024, int(glb["port"]))
+                    if glb.get("base_url") is not None:
+                        cfg.setdefault("web", {})["base_url"] = \
+                            str(glb["base_url"]).strip()[:300]
+                    if glb.get("host") is not None and str(glb["host"]).strip():
+                        _h = str(glb["host"]).strip()[:64]
                         try:
-                            # 与 core/pacing.py 同口径：整数分钟、0..10080。
-                            _cad0[_cp] = max(0, min(10080, int(_cv)))
+                            _probe = socket.socket(socket.AF_INET,
+                                                   socket.SOCK_STREAM)
+                            try:
+                                _probe.bind((_h, 0))
+                            finally:
+                                _probe.close()
+                        except OSError as _e:
+                            self._json({"ok": False, "err": (
+                                "监听地址不可用（本机没有该地址：%s）：%s"
+                                % (_h, _e))}, 400)
+                            return
+                        cfg.setdefault("web", {})["host"] = _h
+                    if glb.get("headless") is not None:
+                        cfg.setdefault("crawler", {})["headless"] = \
+                            bool(glb["headless"])
+                    # 启动级路径三件可写（r339 用户指令「一切配置可变更化」）：
+                    # 保存进 config.yaml，重启进程生效；旧档由启动序列自动搬迁
+                    # 空串=显式回默认（db/log/ud 不能落空键；bdir 空=渠道默认）
+                    if glb.get("db_path") is not None:
+                        cfg.setdefault("output", {})["db_path"] = \
+                            (str(glb["db_path"]).strip()[:300]
+                             or "data/prices.db")
+                    if glb.get("log_path") is not None:
+                        cfg.setdefault("output", {})["log_path"] = \
+                            (str(glb["log_path"]).strip()[:300]
+                             or "logs/monitor.log")
+                    if glb.get("user_data_dir") is not None:
+                        cfg.setdefault("crawler", {})["user_data_dir"] = \
+                            (str(glb["user_data_dir"]).strip()[:300]
+                             or "user_data")
+                    # 保存级总检（r346）：非法字符/保留名、四路径同址、
+                    # 目标不可写与文件/目录错配——不能只靠前端预览。
+                    _perr = _storage_save_error(cfg)
+                    if _perr:
+                        raise ValueError(_perr)
+                    # 路径语义守卫（r342）：文件键不得指向已有目录、目录键
+                    # 不得指向已有文件、库与日志不得同址——错配会在重启
+                    # 迁移/启动时才炸，前端如实拦截比事后排障便宜
+                    _db_abs = os.path.abspath(_anchored(str(
+                        (cfg.get("output") or {}).get(
+                            "db_path", "data/prices.db") or "data/prices.db"), ""))
+                    _lg_abs = os.path.abspath(_anchored(str(
+                        (cfg.get("output") or {}).get(
+                            "log_path", "logs/monitor.log")
+                        or "logs/monitor.log"), ""))
+                    _ud_abs = os.path.abspath(_anchored(str(
+                        (cfg.get("crawler") or {}).get(
+                            "user_data_dir", "user_data") or "user_data"), ""))
+                    if os.path.isdir(_db_abs):
+                        raise ValueError("数据库路径指向目录，请填文件路径（如 data/prices.db）")
+                    if os.path.isdir(_lg_abs):
+                        raise ValueError("日志路径指向目录，请填文件路径（如 logs/monitor.log）")
+                    if os.path.isfile(_ud_abs):
+                        raise ValueError("浏览器资料目录指向文件，请填目录路径")
+                    _bd_raw = str((cfg.get("crawler") or {}).get(
+                        "browser_dir", "") or "").strip()
+                    if _bd_raw and os.path.isfile(os.path.abspath(_anchored(
+                            _bd_raw, ""))):
+                        raise ValueError("浏览器内核目录指向文件，请填目录路径")
+                    if _db_abs == _lg_abs:
+                        raise ValueError("数据库与运行日志不能使用同一路径")
+                    if glb.get("run_on_start") is not None:
+                        cfg.setdefault("schedule", {})["run_on_start"] = \
+                            bool(glb["run_on_start"])
+                    # 采集参数：rt["cfg"] 单一事实源，保存热生效（起）
+                    _crw = cfg.setdefault("crawler", {})
+                    if glb.get("timeout_seconds"):
+                        _crw["timeout_seconds"] = min(
+                            600, max(10, int(glb["timeout_seconds"])))
+                    if glb.get("delay_min") is not None:
+                        _crw["delay_min"] = max(0, int(glb["delay_min"]))
+                    if glb.get("delay_max") is not None:
+                        _crw["delay_max"] = max(0, int(glb["delay_max"]))
+                    if glb.get("user_agent") is not None:
+                        _crw["user_agent"] = str(glb["user_agent"]).strip()[:600]
+                    # 采集代理（r319）：空串=清空回直连（显式落键不留脏）；
+                    # 形态校验（Soldier P2#4）——非 http(s)://host:port 的
+                    # 手滑输入（如漏 scheme 的 127.0.0.1:7897）会让 httpx
+                    # 抛 InvalidURL 使发现层全哑，宁缺勿错一律回直连
+                    if glb.get("proxy") is not None:
+                        _px = str(glb["proxy"]).strip()[:300]
+                        if _px and not re.match(r"^https?://[^\s/]+:\d+$", _px):
+                            _px = ""
+                        _crw["proxy"] = _px
+                    # 按渠道绑出口（r600）：与全局 proxy 同一套形态校验——
+                    # 漏 scheme 的手滑输入会让该渠道 httpx 抛 InvalidURL，
+                    # 而故障表现是「这一家全红」，最难归因回配置笔误。
+                    if isinstance(glb.get("proxy_map"), dict):
+                        _crw["proxy_map"] = _proxy_map_clean(glb["proxy_map"])
+                    # Android 真机通道（r603）：字段范围与 core/android/config.py
+                    # 的钳制逐项一致，避免界面能填出后端会悄悄改掉的值。
+                    if isinstance(glb.get("android"), dict):
+                        _and = glb["android"]
+                        _a0 = dict(cfg.get("android") or {})
+                        if _and.get("enabled") is not None:
+                            _a0["enabled"] = bool(_and["enabled"])
+                        if _and.get("provider") is not None:
+                            _a0["provider"] = (str(_and["provider"]).strip()
+                                               or "mumu")[:40]
+                        if _and.get("install_dir") is not None:
+                            _a0["install_dir"] = str(
+                                _and["install_dir"]).strip()[:400]
+                        for _ak, _alo, _ahi, _ad in (
+                                ("vm_index", 0, 64, 0),
+                                ("boot_timeout_s", 10, 600, 180),
+                                ("action_timeout_s", 5, 900, 60)):
+                            if _and.get(_ak) is not None:
+                                try:
+                                    _av = int(_and[_ak])
+                                except (TypeError, ValueError):
+                                    _av = _ad
+                                _a0[_ak] = max(_alo, min(_ahi, _av))
+                        if _and.get("snapshot") is not None:
+                            _a0["snapshot"] = bool(_and["snapshot"])
+                        cfg["android"] = _a0
+                    if glb.get("debug") is not None:
+                        _crw["debug"] = bool(glb["debug"])
+                    if glb.get("stealth") is not None:
+                        _crw["stealth"] = bool(glb["stealth"])
+                    if glb.get("auto_verify") is not None:
+                        _crw["auto_verify"] = bool(glb["auto_verify"])
+                    # 内核缓存位（启动级）：保存进配置，重启进程生效；
+                    # 空串=显式回渠道默认位（显式落键不留脏）
+                    if glb.get("browser_dir") is not None:
+                        _crw["browser_dir"] = \
+                            str(glb["browser_dir"]).strip()[:300]
+                    # 2/5 区 · 熔断与请求预算（保存即热生效）
+                    _rate0 = _crw.setdefault("rate", {})
+                    if glb.get("min_gap_s") is not None:
+                        try:
+                            _mg = float(glb["min_gap_s"])
                         except (TypeError, ValueError):
-                            pass
-                # win_toast 缺省即开启——保存时落显式布尔进 config.yaml
-                for u0 in (cfg["users"] or []):
-                    n0 = u0.get("notifier") or {}
-                    n0["win_toast"] = bool(n0.get("win_toast", True))
-                    u0["notifier"] = n0
-                with open(st.config_path, "w", encoding="utf-8") as f:
-                    _y.safe_dump(cfg, f, allow_unicode=True,
-                                 sort_keys=False, width=100)
-                n = st.reload_cb() if st.reload_cb else 0
-                # 签名缓存作废：签名五元组只含运行时 users 形态，cfg 派生
-                # 键（suspended 等）在「只改停用航线配置」场景下 users 序列
-                # 化逐字节不变，不作废则卡片文本陈旧到进程重启
-                _STATE_CACHE["sig"] = None
-                st.logger.info("[web配置] 已保存并热重载：%d 用户", n)
-                # 保存回执带路径元数据与启动差量：前端保存后无需再
-                # 拉一次配置即可点亮「需重启」与迁移预案
-                self._json({"ok": True, "users": n,
-                            "storage": _storage_view(cfg),
-                            "restart": _restart_view(cfg)})
-            except Exception as e:
-                self._json({"ok": False, "err": str(e)}, 500)
+                            _mg = 0.0
+                        _rate0["min_gap_s"] = round(max(0.0, min(300.0, _mg)), 1)
+                    if glb.get("per_minute") is not None:
+                        try:
+                            _pm = int(glb["per_minute"])
+                        except (TypeError, ValueError):
+                            _pm = 0
+                        _rate0["per_minute"] = max(0, min(600, _pm))
+                    _warm0 = _crw.setdefault("warmup", {})
+                    if glb.get("warmup_enabled") is not None:
+                        _warm0["enabled"] = bool(glb["warmup_enabled"])
+                    if glb.get("warmup_platforms") is not None:
+                        # 可预热 = **真的声明了入口**（warmup_url 非空）的渠道。
+                        # 曾用手写白名单，里面含 ctrip/tongcheng —— 这两家没有
+                        # 入口，填进去后按钮可点但点了什么也不做（r627）。
+                        _wl = [x.strip() for x in
+                               str(glb["warmup_platforms"]).split(",") if x.strip()]
+                        _warm0["platforms"] = [x for x in _wl if x in _warmable()]
+                        _ignored = [x for x in _wl if x not in _warmable()]
+                        if _ignored:
+                            _warm0["ignored"] = _ignored
+                    _brk0 = _crw.setdefault("breaker", {})
+                    if glb.get("breaker_enabled") is not None:
+                        _brk0["enabled"] = bool(glb["breaker_enabled"])
+                    if glb.get("health_penalty_enabled") is not None:
+                        _crw["health_penalty_enabled"] = bool(
+                            glb["health_penalty_enabled"])
+                    # 成功率保护阈值（r485）：四档数字可调，不再写死
+                    for _hk, _hc in (("health_min_samples", int),
+                                     ("health_ok_ratio", float),
+                                     ("health_slow_ratio", float),
+                                     ("health_slow_factor", float),
+                                     ("health_slowest_factor", float)):
+                        if glb.get(_hk) is not None:
+                            try:
+                                _crw[_hk] = _hc(glb[_hk])
+                            except (TypeError, ValueError):
+                                pass
+                    if glb.get("breaker_base_s") is not None:
+                        try:
+                            _bb = int(glb["breaker_base_s"])
+                        except (TypeError, ValueError):
+                            _bb = 300
+                        _brk0["base_s"] = max(30, min(3600, _bb))
+                    if glb.get("breaker_cap_s") is not None:
+                        try:
+                            _bc = int(glb["breaker_cap_s"])
+                        except (TypeError, ValueError):
+                            _bc = 3600
+                        _brk0["cap_s"] = max(120, min(86400, _bc))
+                    # r523：把原先「只能在文件里改」的采集细节落盘（热生效）。
+                    _crw2 = cfg.setdefault("crawler", {})
+                    for _ck, _cd, _lo, _hi in (
+                            ("session_max_days", 0, 0, 365),
+                            ("max_concurrency", 0, 0, 16)):
+                        if glb.get(_ck) is not None:
+                            try:
+                                _crw2[_ck] = max(_lo, min(_hi, int(glb[_ck])))
+                            except (TypeError, ValueError):
+                                _crw2[_ck] = _cd
+                    for _sk2 in ("mobile_user_agent", "tls_impersonate",
+                                 "debug_dir"):
+                        if glb.get(_sk2) is not None:
+                            _crw2[_sk2] = str(glb[_sk2] or "").strip()[:300]
+                    if glb.get("login_desktop") is not None:
+                        _crw2["login_desktop"] = bool(glb["login_desktop"])
+                    if glb.get("login_cooldown_s") is not None:
+                        try:
+                            _lc2 = int(glb["login_cooldown_s"])
+                        except (TypeError, ValueError):
+                            _lc2 = 900
+                        _brk0["login_cooldown_s"] = max(60, min(86400, _lc2))
+                    if glb.get("near_days") is not None:
+                        try:
+                            _nd2 = int(glb["near_days"])
+                        except (TypeError, ValueError):
+                            _nd2 = 3
+                        cfg.setdefault("schedule", {})["near_days"] = max(
+                            0, min(30, _nd2))
+                    if isinstance(glb.get("cadence"), dict):
+                        _cad0 = _crw2.setdefault("cadence", {})
+                        for _cp, _cv in glb["cadence"].items():
+                            if _cp not in ("qunar", "fliggy", "ctrip",
+                                           "tongcheng", "tuniu"):
+                                continue
+                            try:
+                                # 与 core/pacing.py 同口径：整数分钟、0..10080。
+                                _cad0[_cp] = max(0, min(10080, int(_cv)))
+                            except (TypeError, ValueError):
+                                pass
+                    # win_toast 缺省即开启——保存时落显式布尔进 config.yaml
+                    for u0 in (cfg["users"] or []):
+                        n0 = u0.get("notifier") or {}
+                        n0["win_toast"] = bool(n0.get("win_toast", True))
+                        u0["notifier"] = n0
+                    with open(st.config_path, "w", encoding="utf-8") as f:
+                        _y.safe_dump(cfg, f, allow_unicode=True,
+                                     sort_keys=False, width=100)
+                    n = st.reload_cb() if st.reload_cb else 0
+                    # 签名缓存作废：签名五元组只含运行时 users 形态，cfg 派生
+                    # 键（suspended 等）在「只改停用航线配置」场景下 users 序列
+                    # 化逐字节不变，不作废则卡片文本陈旧到进程重启
+                    _STATE_CACHE["sig"] = None
+                    st.logger.info("[web配置] 已保存并热重载：%d 用户", n)
+                    # 保存回执带路径元数据与启动差量：前端保存后无需再
+                    # 拉一次配置即可点亮「需重启」与迁移预案
+                    self._json({"ok": True, "users": n,
+                                "storage": _storage_view(cfg),
+                                "restart": _restart_view(cfg)})
+                except Exception as e:
+                    self._json({"ok": False, "err": str(e)}, 500)
         elif self.path == "/api/open-folder":
             # 打开数据所在文件夹 / 默认应用打开文件（r342）：
             # 白名单键经 _open_folder_target/_open_file_target 单源解析；
