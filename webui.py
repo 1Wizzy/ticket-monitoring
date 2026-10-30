@@ -16337,6 +16337,9 @@ let LG_LASTFOCUS=null;
    点击按原始分辨率回传，服务端再换算。
    不用 <canvas>：<img> 足够，且避免每帧重绘开销。 */
 let APP_LOGIN={plat:null,timer:null,smooth:false};
+/* App 渠道登录状态（r644）：登录分区要给智行 App 一张卡，状态必须真读，
+   不能凭「没调用过」就显示未登录。*/ 
+let APP_LOGIN_STATE={};
 function appPlatName(p){
  /* 延时回调可能在声明块之外执行（整页脚本已结束），此时裸引用会抛
     「APP_PLAT_NAME is not defined」。与另三处 CN/PCN 表同一守卫写法。 */
@@ -16488,7 +16491,8 @@ document.addEventListener('keydown',e=>{
 function renderLoginCards(force){
  const box=$('loginRows');if(!box)return;
  const j=CHANNEL_STATE&&CHANNEL_STATE.payload;
- const sig=JSON.stringify([j&&j.plats,j&&j.slots,CHANNEL_STATE&&CHANNEL_STATE.error,j&&j.demo]);
+ const sig=JSON.stringify([j&&j.plats,j&&j.slots,CHANNEL_STATE&&CHANNEL_STATE.error,j&&j.demo,
+                           APP_LOGIN_STATE]);
  if(!force&&sig===LGSIG)return;LGSIG=sig;
  const order=['ctrip','qunar','fliggy','fliggy_h5','tongcheng','tuniu'];
  /* 全渠道统一「必须登录」：入口页虽可匿名浏览，但出价/明细必须登录。
@@ -16507,6 +16511,22 @@ function renderLoginCards(force){
  }
  const legacy=!(j&&j.slots);
  const by={};slots.forEach(s=>{by[s.slot||s.plat]=s});
+ /* App 渠道（r644）：登录走网页内嵌的真机画面（/api/app-login/*），
+    不属于这 6 个浏览器槽位，但**同样是「必须登录」**——采集端会记
+    login 状态。此前登录分区只有 5 张卡，用户在配置页里找不到智行 App
+    的登录入口，与「统一要求各厂商+渠道都登录」直接冲突。
+    合成一个槽位对象喂给同一套 slotBody/lgActionHTML（它们已支持 App）。 */
+ const appSlots=(typeof APP_PLAT_NAME!=='undefined')
+  ?Object.keys(APP_PLAT_NAME).map(p=>{
+     const a=(APP_LOGIN_STATE||{})[p]||{};
+     /* surface 留空：卡片 tag 已是「真机」，槽位行再写一遍就是重复
+        （实测「真机 必须登录 真机 必须登录（App 内登录）」）。 */
+     return {slot:p,plat:p,surface:'',surface_label:'',
+             name:APP_PLAT_NAME[p],account:'',
+             requirement:'App 内登录',
+             status:a.status||'',detail:a.detail||'',saved:!!a.saved,
+             active:!!a.active};})
+  :[];
  const groups=[
   {key:'ctrip',name:'携程',tag:'全端',slots:[by.ctrip]},
   {key:'qunar',name:'去哪儿',tag:'H5',slots:[by.qunar]},
@@ -16514,7 +16534,9 @@ function renderLoginCards(force){
    slots:[by.fliggy,by.fliggy_h5]},
   {key:'tongcheng',name:'同程',tag:'全端',slots:[by.tongcheng]},
   {key:'tuniu',name:'途牛',tag:'全端',slots:[by.tuniu]},
- ].map(g=>Object.assign({},g,{slots:(g.slots||[]).filter(Boolean)}))
+ ].concat(appSlots.map(sl=>({key:sl.plat,name:sl.name,tag:'真机',
+                             slots:[sl]})))
+  .map(g=>Object.assign({},g,{slots:(g.slots||[]).filter(Boolean)}))
   .filter(g=>g.slots.length);
  /* 行体只渲染「表面 + 状态说明」，操作按钮由卡片统一放到第三列。
     此前单渠道把按钮嵌在 .lgslot 内、飞猪双端却是 .lgcard 直接子级，
@@ -16714,10 +16736,29 @@ async function srxSpLoad(force){
  }catch(e){body.innerHTML='<span class="muted">特价雷达加载失败：'+he(e.message||e)+'</span>'}
 }
 function srxSpOpen(){try{switchView('mon');showMonTab('specials');setTimeout(function(){const c=$('spRadarMonitor');if(c)try{c.scrollIntoView({block:'start'})}catch(_){}},80)}catch(e){}}
+/* App 渠道登录状态（r644）：登录分区要给智行 App 一张卡，状态必须真读。
+   逐个拉 /api/app-login/state（目前只有一家），失败保持空态而不是谎报。 */
+async function loadAppLoginState(){
+ const M=(typeof APP_PLAT_NAME!=='undefined')?APP_PLAT_NAME:{};
+ const out={};
+ for(const p of Object.keys(M)){
+  try{
+   const r=await fetch('/api/app-login/state?plat='+encodeURIComponent(p),
+                       {cache:'no-store'});
+   const j=await r.json();
+   const sess=(j&&j.session)||null;
+   out[p]=sess?{status:sess.status||'',detail:sess.detail||'',
+                saved:!!sess.saved,active:!!sess.active}:{};
+  }catch(e){out[p]={};}
+ }
+ APP_LOGIN_STATE=out;
+ return out;
+}
 async function loadLogin(b,force){
  if(b&&b.classList.contains('busy'))return;
  if(b)b.classList.add('busy');
- try{const j=await loadChannelState(!!force||!!b);if(force||b){renderLoginCards(true);CHLINK_CFG_LOADED=false;}if(!CHLINK_CFG_LOADED)srxChLinksLoad('cfg');return j;}
+ try{await loadAppLoginState();
+  const j=await loadChannelState(!!force||!!b);if(force||b){renderLoginCards(true);CHLINK_CFG_LOADED=false;}if(!CHLINK_CFG_LOADED)srxChLinksLoad('cfg');return j;}
  finally{if(b)b.classList.remove('busy');}
 }
 /* finish 后有界短周跟Watch：会话保存是登录线程的异步尾部（持久化
