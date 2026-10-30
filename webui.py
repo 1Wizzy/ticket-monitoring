@@ -13805,11 +13805,20 @@ function renderHealth(j){
      看起来像数据打架。轮次明细仍保留在格带与 title 里可查。 */
   const _qp=(j.paths||{})[p]||{};
   const _qscope=((_qp.scopes)||{});
-  let _qok=0,_qall=0;
+  /* 兜底也要按查询口径加权：曾用 `_q.rate`（尝试级）乘 `_q.attempts`
+     ——那是「尝试级 × 尝试数」，和分域小标（查询级）不是一个分母，
+     `query_*_live` 缺失时同一行又会打架。有查询字段就按查询加权，
+     没有就整段作废（宁可回落到轮次口径并如实标注，也不混着算）。 */
+  let _qok=0,_qall=0,_qmiss=false;
   for(const _k of ['dom','intl']){
    const _q=_qscope[_k];
-   if(_q&&(_q.attempts||0)>0){_qall+=_q.attempts;_qok+=Math.round((_q.rate||0)*_q.attempts);}}
-  const qRate=_qall>0?Math.round(_qok/_qall*100):null;
+   if(!_q)continue;
+   const _qn=(_q.query_attempts_live!=null?_q.query_attempts_live
+              :_q.query_attempts)||0;
+   const _qr=(_q.query_rate_live!=null?_q.query_rate_live:_q.query_rate);
+   if(!_qn||_qr==null){_qmiss=true;continue;}
+   _qall+=_qn;_qok+=Math.round(_qr*_qn);}
+  const qRate=(!_qmiss&&_qall>0)?Math.round(_qok/_qall*100):null;
   /* 徽标优先「在用口径」：退役通路（如被窗历取代的旧日历）的历史成败
      不该继续拖低一家健康渠道。无退役通路时与查询口径完全一致。 */
   const _liveRate=(_qp.query_rate_live!=null

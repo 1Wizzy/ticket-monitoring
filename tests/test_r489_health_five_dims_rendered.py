@@ -187,3 +187,28 @@ def test_backend_scope_fields_match_what_the_frontend_reads():
     for k in front:
         assert '"%s":' % k in back_src, \
             "后端未下发前端要读的分域字段 %s（分域这一维渲染不出来）" % k
+
+
+def test_badge_fallback_never_mixes_attempt_level_into_query_rate():
+    """徽标兜底（`_liveRate` 不可用时）也必须按**查询**口径加权。
+
+    `qRate` 曾用 `_q.rate × _q.attempts`——那是「尝试级 × 尝试数」，
+    和分域小标（查询级）不是一个分母。`query_*_live` 缺失时同一行又
+    会「13% 国际 73%」打架。现在：有查询字段就按查询加权；缺任一域的
+    查询字段就整段作废（回落到轮次口径并在 title 里如实标注），
+    绝不混着算。
+    """
+    import io
+    import os
+    import re
+
+    src = io.open(os.path.join(ROOT, "webui.py"), encoding="utf-8",
+                  newline="").read()
+    i = src.index("const _qscope=((_qp.scopes)||{});")
+    seg = src[i:i + 1200]
+    assert "query_attempts_live" in seg and "query_rate_live" in seg, (
+        "徽标兜底没有用查询口径字段：%s" % seg[:400])
+    assert "(_q.rate||0)*_q.attempts" not in seg, (
+        "徽标兜底仍在用尝试级 rate 加权（与分域小标不同分母）：%s"
+        % seg[:400])
+    assert "_qmiss" in seg, "缺少「查询字段不全就别算」的标记"
