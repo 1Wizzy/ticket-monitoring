@@ -19037,6 +19037,12 @@ function buildForm(){if(!CFG)return;let h='',gh='';
       esc(((GLB.proxy_map||{})[p])||''),
       '该渠道单独走的出口；留空 = 跟随全局「采集代理」', 'text', null, '留空 = 跟随全局')).join('')
   +'</div>'
+  /* 为什么这里没有智行 App（r653）：App 走真机（MuMu 模拟器内采集），
+     出网由模拟器自己的网络负责，`crawler.proxy_map` 对它不生效
+     （AppCrawler 是独立基类，不读 proxy_map）。给一个填了没用的框
+     比不给更糟——用户会以为自己配好了。这里如实说明去哪儿配。 */
+  +'<div class="gsub" style="margin:2px 0 10px">智行 App 走真机（模拟器内采集），'
+  +'出口由模拟器自身的网络决定，不在这张表的管辖内；要换 App 出口请在 MuMu 里改。</div>'
   +glsec('Android 真机通道 · 保存即热生效')
   +'<div class="glgrid">'
   /* Android 真机（r603）：智行/美团 App 没有可用的 Web 入口，只能走真机。
