@@ -322,23 +322,79 @@ def _pick_date(dev, ns, ymd: str, log=None, xml: str = "") -> tuple:
     return True, "已选日期"
 
 
+def _cell_month_scroll_hint(xml: str, ymd: str):
+    """目标格卷到哪个方向去了：'down'（看更早日期）/ 'up'（看更晚）。
+
+    必须按**可见格子**的日期算范围：卷出屏幕的格子在 XML 里仍在（bounds
+    退化），把它们算进来会让范围永远覆盖目标日，滚动方向判不出来——
+    实测就是这样：屏幕显示 12 月起，XML 里却还挂着 11-08 起的一堆格子。
+    """
+    vis = sorted(m.group(1) for m in re.finditer(
+        r'resource-id="flight_calendar_date_cell-(\d{4}-\d{2}-\d{2})"'
+        r'[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml or "")
+        if int(m.group(5)) > int(m.group(3)))
+    if not vis:
+        return None
+    if ymd < vis[0]:
+        return "down"
+    if ymd > vis[-1]:
+        return "up"
+    return None
+
+
+def _needs_earlier(xml: str, ymd: str) -> bool:
+    """目标日是否位于当前可见区间之前（→ 需要往下拉看更早）。"""
+    vis = [m.group(1) for m in re.finditer(
+        r'resource-id="flight_calendar_date_cell-(\d{4}-\d{2}-\d{2})"'
+        r'[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml or "")
+        if int(m.group(5)) > int(m.group(3))]
+    return bool(vis) and ymd < max(vis)
+
+
+def _scroll_calendar(dev, direction: str) -> bool:
+    """在日历弹层里滚动一屏。direction: 'down'=看更早日期，'up'=看更晚。"""
+    # 手指从日历中段划到另一端；区间取 500→1300（避开头部标题与底部按钮）
+    if direction == "down":
+        return bool(dev.swipe(450, 500, 450, 1300, 400))
+    return bool(dev.swipe(450, 1300, 450, 500, 400))
+
+
 def _tap_calendar_cell(dev, xml: str, ymd: str) -> tuple:
-    """在已打开的长窗口日历里点目标日；成功后弹层会自己关掉。"""
-    cell = _calendar_cell(xml, ymd)
-    if cell is None:
-        return False, f"日历里没有 {ymd} 这一格"
-    if not dev.tap(*cell):
-        return False, f"点击日历格失败 {ymd}"
-    time.sleep(2)
-    left = dev.dump() or ""
-    if "Search_Calendar_Dialog" in left:
-        return False, "点了日期但弹层没关"
-    # 点完必须核对首页日期行真的换了：没换时点「机票查询」会重查上一日，
-    # 结果被打上目标日期——价格错配而看不出任何异常。
-    shown = home_date_text(left)
-    if shown and shown != _want_md(ymd):
-        return False, f"点完日期仍是 {shown}（期望 {_want_md(ymd)}）"
-    return True, "已在长窗口选中日期"
+    """在已打开的长窗口日历里点目标日；成功后弹层会自己关掉。
+
+    目标日可能被卷出视口（91 格分三个月，屏幕只放得下其中一段）。那种
+    情况下格子仍在 XML 里，但 bounds 退化、点不到——必须先把日期滚回
+    可视区。最多滚动 4 屏；仍找不到才认「不在窗口内」（那是能力边界，
+    与「点了没反应」是两回事）。
+    """
+    for attempt in range(5):
+        cell = _calendar_cell(xml, ymd)
+        if cell is None:
+            hint = _cell_month_scroll_hint(xml, ymd)
+            if hint is None:
+                # 日期在可见区间内却拿不到坐标：只可能是夹在两段可见区
+                # 之间的缝隙（被裁掉的半行）。按目标相对首格的方向推一屏。
+                if attempt > 1:
+                    break
+                hint = "down" if _needs_earlier(xml, ymd) else "up"
+            if not _scroll_calendar(dev, hint):
+                break
+            time.sleep(1.5)
+            xml = dev.dump() or ""
+            continue
+        if not dev.tap(*cell):
+            return False, f"点击日历格失败 {ymd}"
+        time.sleep(2)
+        left = dev.dump() or ""
+        if "Search_Calendar_Dialog" in left:
+            return False, "点了日期但弹层没关"
+        # 点完必须核对首页日期行真的换了：没换时点「机票查询」会重查上一日，
+        # 结果被打上目标日期——价格错配而看不出任何异常。
+        shown = home_date_text(left)
+        if shown and shown != _want_md(ymd):
+            return False, f"点完日期仍是 {shown}（期望 {_want_md(ymd)}）"
+        return True, "已在长窗口选中日期"
+    return False, f"日历里没有 {ymd} 这一格（不在弹层覆盖范围内或不在可视区）"
 
 
 def _want_md(ymd: str) -> str:
@@ -356,12 +412,19 @@ def home_date_text(xml: str) -> str:
 
 
 def _calendar_cell(xml: str, ymd: str):
-    """长窗口日历里某天的可点坐标；找不到返回 None。"""
+    """长窗口日历里某天的可点坐标；找不到或**不在视口内**返回 None。
+
+    bounds 必须校验 y2 > y1：弹层是滚动容器，卷出屏幕的行在 XML 里仍在，
+    但 bounds 退化成 `[11,327][90,30]`（y2 < y1，可见高度 0）。按中心点
+    算出的坐标会落到弹层头部，点完弹层不关——报「点了日期但弹层没关」，
+    看着像点击失败，实际是**那一格根本没显示**（实测 11 月全月如此）。
+    """
     m = re.search(
         r'resource-id="flight_calendar_date_cell-%s"[^>]*'
         r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"' % re.escape(ymd), xml or "")
     if not m:
         return None
-    x = (int(m.group(1)) + int(m.group(3))) // 2
-    y = (int(m.group(2)) + int(m.group(4))) // 2
-    return x, y
+    x1, y1, x2, y2 = (int(m.group(i)) for i in range(1, 5))
+    if y2 <= y1 or x2 <= x1:
+        return None
+    return (x1 + x2) // 2, (y1 + y2) // 2
