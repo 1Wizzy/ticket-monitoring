@@ -17842,7 +17842,16 @@ async function probeAll(){
  if(PACE_BUSY['probe:all'])return;
  PACE_BUSY['probe:all']=1;
  try{
-  const list=['qunar','fliggy','ctrip','tongcheng','tuniu'];
+  /* 「全部」也必须覆盖面板上真出现的每一家（r643）：写死 5 家时
+     App 渠道既不单点也不进批量，等于整家不可干预。
+     取「面板实际渲染过的渠道」（PACE_LR.channels 的键）优先，
+     拿不到再退回 PLATS + App（PLATS 只列 5 家浏览器渠道）。 */
+  const _seen=(typeof PACE_LR!=='undefined'&&PACE_LR)
+    ?Object.keys(PACE_LR.channels||{}):[];
+  /* 兜底别引用 PLATS：它在 buildForm() 体内（缩进 1 的 const），
+     从这里取会 ReferenceError（门禁实测）。SRX_PLATS 才是顶层表。 */
+  const list=_seen.length?_seen
+    :Object.keys(SRX_PLATS).concat('app_zhixing');
   _probeAllRes='全部自检中（顺序执行，约 1–5 分钟）…';
   out.innerHTML=_probeAllRes;
   const lines=[];
@@ -18659,7 +18668,12 @@ async function loadPacing(force){
      「预热 3 个 / 自检 5 个」，会以为面板漏渲染或这两家没有入口记录。
      现在五家全列，无入口的给不可用态 + 原因，可点与不可点一眼分清。 */
   const WARM=cf.warmup_platforms||[];
-  const PROBE=['qunar','fliggy','ctrip','tongcheng','tuniu'];
+  /* 干预按钮的渠道清单必须与**面板上真出现的行**一致（r643）：
+     `_order` 里出现哪家，这里就能对哪家动手。原先写死 5 家浏览器渠道，
+     `app_zhixing` 在节流行里看得到、却点不到任何干预按钮——「可看得见
+     不可干预」正是用户最高准则里点名的缺口。后端 probe_channel 是通用
+     的（get_crawlers([platform])），App 渠道本就支持。 */
+  const PROBE=_order.slice();
   const warmRow='<span class="g"><b>预热</b>'
    +PROBE.map(p=>WARM.indexOf(p)>=0
      ?('<button type="button" data-pk="warm:'+p+'" onclick="warmNow(\''+p+'\')">'+esc(_tk(p))+'</button>')
