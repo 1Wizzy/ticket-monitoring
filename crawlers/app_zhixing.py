@@ -78,6 +78,11 @@ class AppZhixingCrawler(AppCrawler):
                            detail="device unavailable")
             return []
 
+        # 「登录一次永久复用」：本进程首次采集前把上次保存的登录态恢复回来。
+        # 必须在任何 UI 操作之前（恢复会 force-stop App 再解包），否则
+        # 会把正在操作的页面顶掉。没有快照时静默跳过，不算失败。
+        self.restore_login_snapshot(dev)
+
         # 异常逃逸不在这里写：调用方统一走 `AppBaseCrawler.safe_fetch()`，
         # 它已 try/except 并记 `app-error`（含本段抛出的一切）。此处再包一层
         # 只是重复防御，且会抢在 safe_fetch 的去重判断之前多记一条。

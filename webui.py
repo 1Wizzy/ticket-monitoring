@@ -347,11 +347,11 @@ def _demo_config_payload() -> dict:
         "globals": {"interval_minutes": 15, "jitter_minutes": 5,
                     "port": int(((_State.cfg or {}).get("web") or {})
                                 .get("port", 8765) or 8765),
-                    # 节流六项（r628）：演示分支原先一项都不回读，配置页的
-                    # 「首页预热 / 熔断 / 成功率保护」读 GLB.x !== false，
-                    # undefined 一律当「开」——哪怕实际配置里是关的。
-                    # 演示站是官方预览面，不能展示与真实行为不符的开关态。
+                    # r628：演示分支原先不回读节流开关，配置页读
+                    # `GLB.x !== false`，undefined 一律当「开」——演示站
+                    # 会展示与真实行为不符的开关态。
                     **_demo_pacing_globals(),
+                    "android": dict((_State.cfg or {}).get("android") or {}),
                     "run_on_start": True, "headless": True,
                     "timeout_seconds": 45, "delay_min": 5, "delay_max": 15,
                     "user_agent": "", "debug": False, "browser_dir": "",
@@ -393,6 +393,24 @@ def _exit_history_push(ip):
             json.dump(h[-10:], f)
     except OSError:
         pass
+
+
+def _proxy_map_clean(pm):
+    """按渠道绑出口（r600）的写入清洗：只留合法出口，不healthy的值一律丢弃。
+
+    与全局 `crawler.proxy` 同一套形态校验。这条不是洁癖：漏 scheme 的
+    `127.0.0.1:7897` 会让该渠道的 httpx 抛 InvalidURL，而故障表象是
+    「这一家渠道全红」——最难归因回配置笔误，所以宁可当成空（跟随全局），
+    也不要把脏值落盘。
+    空值不落键：proxy_map 里塞空串会让「跟随全局」与「显式直连」两种
+    语义混在一起，读配置的人分不清。
+    """
+    out = {}
+    for k, v in (pm or {}).items():
+        v = str(v or "").strip()[:300]
+        if v and re.match(r"^https?://[^\s/]+:\d+$", v):
+            out[str(k)[:40]] = v
+    return out
 
 
 def _last_seen_of(plat):
@@ -985,7 +1003,12 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .ws-chartwrap{position:relative;height:clamp(250px,30vw,352px);margin:0 0 2px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:linear-gradient(180deg,var(--card),var(--headbg))}
  #wsChart{display:block;width:100%;height:100%;cursor:crosshair;outline:none}
  #wsChart:focus-visible,#spMonChart:focus-visible{box-shadow:inset 0 0 0 2px var(--blue)}
- .ws-tip{position:absolute;z-index:5;display:none;max-width:270px;padding:6px 9px;border:0;border-radius:8px;background:rgba(44,62,80,.93);box-shadow:none;font-size:12px;line-height:1.5;color:#fff;pointer-events:none}
+ /* width:max-content 是必需的，不是美观选择：absolute 盒子默认
+    shrink-to-fit，可用宽度=包含块右侧剩余空间。左值贴右缘后（上一帧
+    已把浮窗放到 259px），下一帧一换内容就被压成 min-content 宽
+    （实测 141×49 → 53×158），而落位又用这个假宽度去钳位 → 永锁在
+    折叠态。宽度按内容定，钳位才有意义。 */
+ .ws-tip{position:absolute;z-index:5;display:none;width:max-content;max-width:270px;padding:6px 9px;border:0;border-radius:8px;background:rgba(44,62,80,.93);box-shadow:none;font-size:12px;line-height:1.5;color:#fff;pointer-events:none}
  .ws-tip.on{display:block}
  .ws-tip b{display:block;color:#fff;font-size:12px;margin-bottom:2px}
  .ws-tip .tr{display:flex;align-items:center;gap:6px;white-space:nowrap}
@@ -1073,7 +1096,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .ws-row.on{border-color:var(--blue);box-shadow:inset 3px 0 0 var(--blue)}
  .ws-row.hit{border-color:rgba(var(--okrgb),.4)}
  .ws-row.paused{opacity:.78}.ws-row.out{border-style:dashed}
- .ws-row-main{display:grid;grid-template-columns:minmax(158px,1.05fr) minmax(116px,.8fr) minmax(120px,.85fr) minmax(140px,1fr) minmax(92px,.62fr) 78px 66px;gap:0;align-items:center;width:100%;border:0;background:transparent;color:var(--tx);text-align:left;padding:0;box-shadow:none;cursor:pointer;border-radius:0}
+ .ws-row-main{position:relative;display:grid;grid-template-columns:minmax(158px,1.05fr) minmax(116px,.8fr) minmax(120px,.85fr) minmax(140px,1fr) minmax(92px,.62fr) 78px 66px;gap:0;align-items:center;width:100%;border:0;background:transparent;color:var(--tx);text-align:left;padding:0;box-shadow:none;cursor:pointer;border-radius:0}
  .ws-row-main:hover{filter:none;box-shadow:none}
  .ws-row-main:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}
  .ws-rc{padding:9px 10px;min-width:0;border-right:1px solid var(--line)}
@@ -1690,7 +1713,7 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
  .chartwrap{position:relative}
  .chart-empty{position:absolute;inset:0;display:flex;flex-direction:column;gap:6px;
         align-items:center;justify-content:center;color:var(--mut);font-size:13px;text-align:center;
-        line-height:1.6}   /* 行高与另两图空态同档（.ws-empty/ .spmon-empty 都是 1.6） */
+        line-height:1.6}   /* 行高同另两图空态（1.6）。13px 是标题档：初始占位只有裸文本。 */
  .chart-empty b{font-size:13px;font-weight:600;color:var(--tx)}
  .chart-empty span{font-size:12px}
  /* 无用户引导（空状态即教学） */
@@ -2107,6 +2130,22 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
    border-radius:var(--r3);background:transparent;color:var(--tx2);cursor:pointer}
  .lgmodal-b{padding:12px 14px 14px}
  .lgmodal-note{font-size:11px;color:var(--mut);margin-bottom:10px}
+ /* App 渠道登录画面（r604）：与浏览器登录共用 .lgmodal 外壳，
+    内部是 adb 帧流 + 透明点击层。深色底是为了让手机画面边界清楚，
+    与「卡中卡」无关——这里是图像容器，不是信息卡。 */
+ .appscr{position:relative;display:flex;justify-content:center;
+   background:var(--headbg);border-radius:var(--r3);overflow:hidden;
+   min-height:320px;max-height:520px}
+ .appscr img{display:block;max-width:100%;max-height:520px;
+   object-fit:contain;user-select:none;-webkit-user-drag:none}
+ .appscr-hit{position:absolute;inset:0;cursor:crosshair}
+ .appscr-wait{position:absolute;inset:0;display:flex;align-items:center;
+   justify-content:center;font-size:12px;color:var(--mut);
+   background:var(--headbg)}
+ .appscr-bar{display:flex;gap:8px;align-items:center;margin-top:10px;
+   font-size:11px;color:var(--mut)}
+ .appscr-bar .grow{flex:1;min-width:0;overflow:hidden;
+   text-overflow:ellipsis;white-space:nowrap}
  .lglanes{display:grid;grid-template-columns:1fr 1fr;gap:10px}
  .lglane{border:1px solid var(--line);border-radius:var(--r10);padding:9px 10px;
    display:flex;flex-direction:column;gap:5px;background:var(--bg2)}
@@ -2134,6 +2173,9 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
   color:var(--blue);border:1px solid color-mix(in srgb,var(--blue) 26%,var(--line));
   background:color-mix(in srgb,var(--blue) 6%,var(--card));white-space:nowrap}
  .lgcard .lgsub{font-size:11px;color:var(--mut)}
+/* 「必须登录」是要求、不是分类，所以不走 .lgtag 的蓝胶囊（那是渠道形态），
+   用与说明同级的弱色小字，紧跟渠道名；每张卡只出现一次（r608b）。 */
+ .lgcard .lgreq{font-size:10px;line-height:16px;color:var(--mut);white-space:nowrap}
  .lgcard .btn2{margin-top:auto}
  .glgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
 /* 只读参数说明（r521）：整行宽、两列（键路径 / 说明）。用既有发丝线与
@@ -2329,6 +2371,16 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
   transition:border-color .15s,box-shadow .15s}
  .cfgsearch:hover{border-color:var(--mut)}
  .cfgsearch:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px var(--ring);transition:box-shadow 0s}   /* 环即时呈现（r221 P2-6 同族） */
+/* 搜索页的键盘焦点环：2026-10-29 Tab 实走 36 个可聚焦元素，**11 个没有焦点环**
+   （出发日/采集日 tab、.srx-bandlogin、.srx-chip、.srx-more-rows、.srx-mtab…）——
+   而健康页/配置页是 0 个。根因是这些 .srx-* 规则自己写了 `outline:none`
+   （3px 宽度但 style:none），全局那条 `button:focus-visible` 被更具体的选择器让位。
+   这里按全站同一形态补回来：inset 2px 蓝环、不吃布局、不遮内容。 */
+/* !important 在这里是必需的：`.rngchip,.srx-chip,…{box-shadow:none}` 这类
+   「扁平化清零」规则写在后面且同权重，会把焦点环一起清掉——实测 Tab 到
+   srx-chip 时 matches(:focus-visible)=true 但 box-shadow=none。 */
+#searchview :is(button,a,[role="button"],summary,[tabindex]):focus-visible{
+ box-shadow:inset 0 0 0 2px var(--blue)!important;outline:none}
  .cfghit{font-size:11px;color:var(--mut);margin:-4px 0 8px;min-height:14px}
  /* ===== 追加规则一律置末尾（同特异性后者胜，防被前文同名规则覆盖） ===== */
  .stat .sval{overflow:hidden;text-overflow:ellipsis}
@@ -3374,6 +3426,25 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
  .cnav,.uhead2,.grouplab,.rhead,.chhead,.kpi.clk,.hc,.pbar,.plitem,
  .toast,.pvx,.tg,.tj,.dx,input.switch{
   touch-action:manipulation}}
+/* 小控件在触摸下的**命中区**补到 36px，但不改视觉高度。
+   2026-10-29 逐元素命中测试（390 档 coarse）：三图档位 `.rngchip` 26px、
+   配置页 `.cnav`/`.cc-chip` 25~32px、`.hdiag .btn2` 26px 的有效热区都只有
+   自身盒高（上下各扩 0px），指尖落点偏一点就点不中。
+   用伪元素纵向撑到 36px（与 `.chlink` 同一手法）：不占版面、不改观感、
+   不参与 flex 尺寸计算，桌面 fine 指针下不生效。 */
+@media(pointer:coarse){
+ /* 只加伪元素不够：chip 上下 3~6px 就是卡头/相邻 chip，热区被邻居抢走
+    （实测 .rngchip 上方 6px 命中 DIV.uhead、下方 3px 命中隔壁 chip）。
+    触摸档把盒高本身提到 32px，伪元素再补到 36px；桌面 fine 指针零变化。
+    `.lgact .btn2`（登录动作列）与 `.pvx`（预览关闭钮 28px）同属小控件，
+    一并纳入：它们四周留白足够，伪元素能真正撑满 36px。 */
+ .rngchip,.cnav,.cc-chip,.lgact .btn2,.pvx,#srccap .scbtn,
+ #paceBox .hdiag-acts .btn2{position:relative;min-height:32px}
+ .rngchip::after,.cnav::after,.cc-chip::after,
+ .lgact .btn2::after,.pvx::after,#srccap .scbtn::after,
+ #paceBox .hdiag-acts .btn2::after{
+  content:"";position:absolute;left:0;right:0;top:50%;
+  height:36px;transform:translateY(-50%)}}
 .sctl.dwrap{flex-direction:column;align-items:stretch;gap:6px}
 .dwrap .dline{display:flex;flex-wrap:wrap;gap:6px;align-items:center;
   justify-content:flex-start;min-width:0}
@@ -3989,8 +4060,21 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
       子元素（标题 / 小标 / 说明 / 动作簇）直接成为 .srx-probe 的 flex 子项。
       标题与小标用行内排列，触发器仍是绝对定位锚卡头右上角。 */
    #searchview .srx-probehead{display:contents}
-   #searchview .srx-probehead>b{order:0;padding-right:96px;line-height:1.5}
-   #searchview .srx-probehead>em{order:0;margin:0!important;padding:3px 0 0 8px;flex:0 0 auto}
+   /* r565：窄档摊平后 b 与 em 是同列两个 flex 项。em 收起时
+      `visibility:hidden`（仍占位）、展开时可见——它的 padding-top:3px
+      把所属 flex 行从 17px 抬到 20px，b 被默认 stretch 拉伸，
+      于是展开瞬间标题与「DEMO · 合成」整体上移 2px（用户实报
+      「展开的时候 demo 合成的位置抖动偏移了」）。b 改为不拉伸，
+      行高只由自身行盒决定，两态位置不动。 */
+   /* r565b：上面给的 height 只在展开态生效——展开态 `.srx-probe` 是 flex
+      列，b/em 被块化成 flex 项；收起态第 8040 行把卡片强制回 `display:block`，
+      b/em 退回行内盒，height 失效、只剩 1.5 行盒的半行距，实测收起态标题
+      顶 279.1 / 展开态 277.1（em 同样差 1.5px）。显式 `display:block`
+      后两态都是块盒，同一 height 同一顶边，半行距也一并消失。 */
+   #searchview .srx-probehead>b{order:0;padding-right:96px;line-height:1.5;
+    align-self:flex-start;height:19.5px;display:block;margin:0}
+   #searchview .srx-probehead>em{order:0;margin:0!important;padding:3px 0 0 8px;
+    flex:0 0 auto;align-self:flex-start;display:block}
    #searchview .srx-probehead>.srx-probe-mini,
    #searchview .srx-probehead>.srx-probehint{display:none!important}
    #searchview .srx-probeform{order:1}
@@ -3999,6 +4083,15 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
     width:100%!important;margin:6px 0 0!important;padding-right:0!important;
     display:flex!important;flex-wrap:wrap!important;gap:5px!important;
     justify-content:flex-end}
+   /* r545：窄档摊平成 flex 后只给了 head/form/acts 三个 order，
+      `srx-probefoot`（状态行 + 渠道入口）没给，默认 0 —— 与卡头同级，
+      于是被排到表单**之前**：实测 390 展开后纵向顺序是
+      标题(220) → 说明(239) → 状态行(262) → 表单(294) → 操作行(472)，
+      读作「展开的中间夹着一条常驻状态」，正是用户说的
+      「展开后中间还有元素常驻」。宽档没有这个顺序问题（状态行本就在
+      表单上方，`srx-probeacts` 还在卡头里）。窄档按「表单 → 操作行 →
+      状态」收尾：状态行是结果反馈，放在动作之后才讲得通。 */
+   #searchview .srx-probefoot{order:3}
   }
 
   /* 模态小标（监控数据 / DEMO · 合成）收起态被 display:none，展开态出现——
@@ -4137,10 +4230,19 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 @media(min-width:901px){
  #searchview .srx-context.ctx-collapsed .srx-line:nth-child(n+2){display:none}
  #searchview .srx-context.ctx-collapsed .srx-fmore{display:none}
+ /* r556：结果筛选条（.srx-abar）同属筛选态，收起时必须随表单一同收走。
+    选过出发日后它一直留在收起态里，把筛选区从 46px 撑到 74px——
+    于是「展开概览 → 选日期 → 收起概览」后整体比初始高 28px，用户读作
+    「收不回去了」。所选日期在列表头（「所选 2026-11-24」）与
+    「展开筛选」的数量徽标里都还在，不靠这条常驻行表达。 */
+ #searchview .srx-context.ctx-collapsed .srx-abar{display:none}
 }
 @media(max-width:900px){#searchview .srx-ctxbtn{display:none}}
 #searchview .srx-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0;padding:3px 0}
-#searchview .srx-line+.srx-line{border-top:1px dashed var(--line)}
+/* 筛选行之间不画线：扁平化后由 4px 间距分组（见下方
+   `.srx-line+.srx-line{border-top:0!important}`）。
+   原先这里还有一条 `border-top:1px dashed` —— 被 !important 永久覆盖，
+   实测 computed 恒为 `0px none`，属误导性死规则，已删。 */
 #searchview .srx-lab{flex:0 0 34px;font-family:var(--srx-mono);font-size:10px;letter-spacing:var(--ls1);color:var(--mut);text-transform:uppercase}
 #searchview .srx-chips{display:flex;align-items:center;gap:4px;flex-wrap:wrap;min-width:0;flex:1}
 #searchview .srx-chip{display:inline-flex;align-items:center;gap:4px;min-height:26px;padding:0 8px;border:1px solid var(--line);
@@ -4160,6 +4262,14 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
 #searchview .srx-more{min-height:27px;padding:0 10px;border:0;border-radius:var(--pill);
  background:var(--r-surface-2);color:var(--r-ink-2);font-size:12px;font-weight:600;
  cursor:pointer;white-space:nowrap}
+/* r539：筛选项 chips 原为 `flex:1`，吃满整行剩余宽度，把「展开更多条件」
+   顶到容器最右缘（实测 l=1329/r=1411，中心 x=1370）；而四行 chips 的
+   右端各不相同（812/1411/1321/1411），整块读作参差、与卡片不对齐
+   （用户：「展开筛选条件的面板布局明显跟当前页面没有对齐，大小不够协调」）。
+   改为 chips 按内容宽收缩、按钮紧跟其后：四行 chips 统一从 l=133 起，
+   按钮落在内容之后而不是贴右缘。 */
+#searchview .srx-line>.srx-chips{flex:0 1 auto}
+#searchview .srx-line>.srx-more{margin-left:8px}
 #searchview .srx-more:hover{background:var(--r-surface-3);color:var(--r-ink)}
 #searchview .srx-more[aria-expanded="true"]{background:var(--r-blue-soft);color:var(--r-blue)}
 #searchview .srx-more .n{margin-left:4px;font-family:var(--srx-mono);font-size:11px;color:inherit;opacity:.72}
@@ -6235,6 +6345,13 @@ footer{margin-bottom:18px}
 .pill::after{content:none}
 .pill:hover{filter:none;background:var(--r-surface-3)!important}
 .pill.ok{background:var(--okbg)!important;color:var(--ok-txt)!important}
+/* 「有人已达标」是 role=button + onclick 的真实可点元素，但上面这条 !important
+   与 .pill:hover 同为 (0,2,0)、又排在它后面，把 hover 的灰底整条压掉——
+   实测三个视图里悬停零变化。这里补一条同特异度、更靠后的 hover：
+   保持语义绿（不改成中性灰），只把底色压深 12% 做悬停反馈——
+   18% 会把 hover 态压到 4.35:1 欠 AA，12% 为 4.75:1。 */
+.pill.ok:hover{background:color-mix(in srgb,var(--okbg) 88%,var(--ok-txt) 12%)!important;
+ color:var(--ok-txt)!important;filter:none}
 .pill.ok::before{background:var(--r-green)}
 .pill.bad{background:var(--redbg)!important;color:var(--red)!important}
 .pill.bad::before{background:var(--r-red)}
@@ -6641,6 +6758,11 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.17)!impo
  font-size:11px;color:var(--warn-deep);background:var(--r-amber-soft);
  padding:0 6px;border-radius:var(--pill);height:18px;white-space:nowrap;
  font-variant-numeric:tabular-nums}
+/* 「已勾选但本轮未扫描」（r604）：整行说明，不是徽标——它描述的是一组
+   渠道的缺失，贴在任何单行上都会读成那一行的状态。 */
+#healthcard .hmiss{display:block;margin:10px 0 2px;padding:6px 9px;
+ font-size:11px;line-height:1.5;color:var(--r-ink-3);
+ background:var(--r-surface-2);border-radius:8px}
 #healthcard .hslot{display:inline-flex;align-items:center;height:18px;padding:0 6px;
  border-radius:var(--pill);background:var(--r-surface-2);color:var(--r-ink-3);
  white-space:nowrap;font-variant-numeric:tabular-nums}
@@ -6808,8 +6930,20 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.17)!impo
    「说明」按钮横移近 800px（实测 1512 1259→856 / 390 211→40）。所以位置
    保持在卡外，只收紧它与按钮之间的空隙（22→20px，吃掉 srccap 的 10px 底距
    里的一部分），不让它读作「跑到很远的地方」。 */
-#healthDiag>#scNote{display:none;margin:-8px 0 8px;font-size:11px;
- color:var(--r-ink-3);line-height:1.5}
+/* r536：说明正文在卡头之外，与触发钮之间隔着 srccap 的底部留白——
+   实测按钮底 347 / 说明顶 367，中间 20px 命中的是 srccap/uhead 容器，
+   读作「说明的展开在下面、中间还有东西」。
+   不能把说明塞进 .scfoot：那里是右对齐 flex，展开会让它撑宽、
+   按钮横移近 800px（r412 实测 1305→509）。位置保持卡外，
+   改用负 margin 吃掉 srccap 的底部空隙，让说明紧贴动作行下沿。
+   （负 margin 只影响说明自身，不改按钮行几何。） */
+/* r536b：负 margin 原为 -17px，实测按钮底 346.5 / 说明盒顶 357.5，仍余
+   11px——这段命中的是 .sclink 所在 .scfoot 的下内边距 8px、.srccap 的
+   下外边距 10px、.uhead 的下内边距 10px，三层叠加刚好 28px。
+   按这 28px 取值让说明盒顶边贴住按钮底边（间隙 0），文字呼吸交给
+   自身 padding-top:4px——中间不再有任何可命中的盒子。 */
+#healthDiag>#scNote{display:none;margin:-28px 0 8px;padding-top:4px;
+ font-size:11px;color:var(--r-ink-3);line-height:1.5}
 #healthDiag>#scNote.open{display:block}
 #srccap .scfoot{flex-wrap:wrap;row-gap:4px}
 /* r412「不动律」：文案在「说明 / 收起说明」之间切换，宽度变 22px，
@@ -6823,7 +6957,10 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.17)!impo
  color:var(--r-ink-3);font-size:11px;cursor:pointer;border-radius:6px}
 #srccap .sclink:hover{color:var(--r-blue);background:var(--r-surface-2)}
 #srccap .sclink:focus-visible{outline:none;box-shadow:0 0 0 2px var(--blue)}
-#srccap .scbtn{height:28px;padding:0 9px;border:0;border-radius:7px;
+/* 同一条来源条里的两个按钮（.sclink 文字钮 / .scbtn 实心钮）都是 28px 高，
+   圆角必须同档。本行曾是 7px，而紧邻的 .sclink 是 6px、全站 28px 控件
+   （.ws-lg/.scbtn 基类）也都是 6px——7px 是全站唯一残留的非令牌档。 */
+#srccap .scbtn{height:28px;padding:0 9px;border:0;border-radius:6px;
  background:var(--r-blue-soft);color:var(--r-blue);font-size:11px;font-weight:600}
 #srccap .scbtn.ghost{background:var(--r-surface-2);color:var(--r-ink-2)}
 #srccap .scbtn:hover{filter:brightness(.97)}
@@ -7102,7 +7239,16 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.17)!impo
 #searchview .srx-probe:not(.open) .srx-probefoot{margin-top:0;height:0;overflow:hidden}
 #searchview .srx-probefoot .srx-probestatus{margin-top:0;min-width:0}
 #searchview .srx-probefoot .srx-chlinks{grid-column:2;margin:0;border-top:0;padding:0}
-#searchview .srx-probefoot .srx-chlinks[open]{grid-column:1/-1;padding-top:2px}
+/* r523：展开态曾写 `[open]{grid-column:1/-1}`——details 整个盒子换到第 1 列并
+   落到下一行，触发器随盒子从右缘跑到左缘（实测 1512 档 x 1131→91，1280 档
+   915→76，另下沉 22px）。用户读作「点同一个按钮，按钮自己跑了」。
+   改法：展开时 details 退成 display:contents，让它的两个子元素直接参与父网格
+   ——summary 钉回第 1 行第 2 列原地不动，面板单独占满下一整行。 */
+#searchview .srx-probefoot .srx-chlinks[open]{display:contents;padding:0}
+#searchview .srx-probefoot .srx-chlinks[open]>summary{grid-row:1;grid-column:2}
+#searchview .srx-probefoot .srx-chlinks[open]>#srxChLinksBox{
+  grid-row:2;grid-column:1/-1;margin-top:2px;padding-top:6px;
+  border-top:1px dashed var(--line)}
 #searchview .srx-probefoot summary{display:flex;align-items:center;gap:5px;min-height:22px;padding:0;list-style:none}
 #searchview .srx-probefoot summary::-webkit-details-marker{display:none}
 #searchview .srx-probefoot summary span{font-size:11px;font-weight:600;color:var(--tx2);white-space:nowrap}
@@ -7161,6 +7307,13 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.17)!impo
  #searchview .srf-history{grid-area:history}
  #searchview .srf-price{grid-area:price}
  #searchview .srf-evidence{grid-area:evidence}
+ /* r544：左栏两行（共同筛选 334 + 加工与历史 223）比右栏（起降时段 231 +
+    检索特有 131）高 92px，右栏底部因此空出一整块——实测左栏底 752、
+    右栏底 660，读作「大小布局不对称、衔接空格很大」。让右栏最后一张卡
+    吸收这段高度：卡本身是 flex 列，内容贴顶，只是底边与左栏齐平，
+    分隔线随之收口，不再有悬空的一条断线。 */
+ #searchview .srf-evidence{align-self:stretch;min-height:100%}
+ #searchview .srf-time{align-self:start}
  #searchview .srf-display{grid-area:display}
  #searchview .srf-time::before,#searchview .srf-evidence::before{content:'';position:absolute;left:-11px;top:12px;bottom:12px;border-left:1px solid var(--line)}
 }
@@ -7220,10 +7373,14 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.17)!impo
 .ucard,.ucard.mon-card,.ws-card,.hdiag-card,#searchview .srx-list,
 #searchview .srx-mirror,#healthcard{border-width:0!important}
 #monview .ucard+#ucard,#monview .ucard+.ucard,
-#monview .ucard+.ws-card,#monview .ws-card+.ucard,
-#monview .ws-card+.ws-card,#monview .ucard+.hdiag,
+#monview .ucard+.hdiag,
 #montab-details .ucard+.ucard,#montab-health .ucard+.ucard,
 #montab-specials .ucard+.ucard,#montab-overview .ucard+.ucard{margin-top:10px!important}
+/* 关注台的卡片**不用这条**：它的父容器 `.wstudio` 是 flex+gap:10px，
+   再加 margin-top:10px 就是双份间距——实测同一容器里第一段 10px、
+   之后每段 20px，同一种卡片出现两种间距，且 20px 不在 4/6/8/12/16/24 阶上。
+   间距由容器的 gap 单源提供（与 mon-card 的 margin 归零同律）。 */
+#monview .wstudio>.ws-card{margin-top:0!important}
 #searchview .srx-brief+.srx-audit,#searchview .srx-brief+.srx-capbar{margin-top:8px!important}
 /* Sector Strip：签派航线轨，目标价作缺口，价格戳在右；只用于概览
    关注卡、关注台焦点轨与特价低日卡三处，不铺满全站。 */
@@ -7267,14 +7424,16 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.17)!impo
 .spmon-hist[open]>summary::after{transform:rotate(90deg)}
 .spmon-histhint{color:var(--r-ink-3);font-size:10px}
 .spmon-run{display:grid;grid-template-columns:104px 56px 48px minmax(0,1fr);gap:8px;
- align-items:center;padding:4px 2px;border-top:1px dashed var(--r-hair);
+ align-items:center;padding:4px 2px;border-top:1px solid var(--r-hair);
  font-size:10px;color:var(--r-ink-3)}
 .spmon-run.head{border-top:0;padding-bottom:2px;font-size:10px}
 .spmon-run.head b{font-weight:400;text-align:right}
 .spmon-run time{font-family:var(--num);color:var(--r-ink-2)}
 .spmon-run .st{display:inline-flex;align-items:center;justify-content:center;height:16px;
  border-radius:var(--pill);background:var(--r-surface-2);font-size:10px;font-weight:600}
-.spmon-run .st.ok{color:var(--r-green);background:var(--r-green-soft)}
+.spmon-run .st.ok{color:var(--ok-txt);background:var(--r-green-soft)}
+/* 用 --ok-txt 而不是 --r-green：后者对 r-green-soft 底实测 4.32:1（AA 需 4.5），
+   而同站 --ok-txt 正是为「绿字压绿底」准备的加深档（全站 5.63:1）。 */
 .spmon-run .st.cache_hit{color:var(--r-blue);background:var(--r-blue-soft)}
 .spmon-run .st.fallback,.spmon-run .st.partial{color:var(--r-amber);background:var(--r-amber-soft)}
 .spmon-run .st.error{color:var(--r-red);background:var(--r-red-soft)}
@@ -7299,13 +7458,12 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.17)!impo
 }
 /* r424：收起态原把网格压成 1fr —— 镜像从「右半栏 654px」变成「整行 1319px」，
    「展开镜像」按钮随之横移 337px、纵移 713px（实测 l 1209→872 / t 367→1080），
-   用户读作「展开位置都发生了偏移」。改为保留右列宽度、只让内容不占位：
-   触发器仍落在同一列同一行，只有镜像正文消失。
-   但这条规则必须限定在「本来就是两列」的宽度：≤1100px 起网格主动收成
-   单列（两列会把价格列挤出卡外），此时再套 2fr 会把展开态整行宽的镜像卡
-   压成半宽，按钮横跳 44px（390/460 实测）甚至 272px。 */
+   用户读作「展开位置都发生了偏移」。r523 改为「右列塌成按钮宽」：左列表拿走
+   余宽（不是镜像卡变整行），触发器仍在右缘同一行，位移 ≤2px。
+   这条必须限定在「本来就是两列」的宽度：≤1100px 起网格主动收成单列
+   （两列会把价格列挤出卡外），此时再套双列会把展开态整行宽的镜像卡压成半宽。 */
 @media(min-width:1101px){
- #searchview .srx-grid:has(.srx-mirror.srx-folded){grid-template-columns:repeat(2,minmax(0,1fr))}
+ #searchview .srx-grid:has(.srx-mirror.srx-folded){grid-template-columns:minmax(0,1fr) auto}
 }
 #searchview .srx-mirror.srx-folded{position:sticky;top:calc(var(--hdh,54px) + 8px)}
 @media(min-width:901px) and (max-width:1100px){
@@ -7392,6 +7550,9 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.17)!impo
 @media(max-width:600px){
  #searchview .srx-probefoot{grid-template-columns:1fr;gap:4px 0}
  #searchview .srx-probefoot .srx-chlinks{grid-column:1}
+ /* 窄档单列：状态在上、触发钮居中、面板垫底（r523，配合 display:contents） */
+ #searchview .srx-probefoot .srx-chlinks[open]>summary{grid-row:2;grid-column:1}
+ #searchview .srx-probefoot .srx-chlinks[open]>#srxChLinksBox{grid-row:3;grid-column:1}
 }
 #cfgview .ucard,#cfgview .cw-item{box-shadow:none!important;border-color:var(--r-hair)!important}
 #cfgview .cw-item{border-radius:12px!important}
@@ -7407,30 +7568,25 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.17)!impo
 .srx-hero-copy.srx-folded h1,.srx-hero-copy.srx-folded p{display:none}
 .srx-folded .srx-foldbody{display:none!important}
 .srx-mirror.srx-folded .srx-mchrome,.srx-mirror.srx-folded .srx-mbody{display:none!important}
-/* r421：收起镜像后只剩一条 1319px 满宽工具带——5 个渠道胶囊 + 列表/详情/
-   四源 仍在，但它们操作的是「已经收起来的内容」，属于折叠态遗留的常驻元素
+/* r421：收起镜像后只剩一条满宽工具带——5 个渠道胶囊 + 列表/详情/四源
+   仍在，但它们操作的是「已经收起来的内容」，属于折叠态遗留的常驻元素
    （与用户反复报的「折叠后中间还有元素/自占一行」同族）。收起态只留
-   唯一出口「展开镜像」，与列表头同一行右侧，不再单独占一条带。 */
-/* r424：「展开镜像 / 收起镜像」点击后位移 1428px（实测）。展开态按钮排在
-   右组最左（渠道胶囊 → [收起镜像][列表][详情][四源]），收起态别的内容
-   display:none 后它被 margin-left:auto 顶到最右——同一颗钮两态基准不同，
-   正是用户报的「展开位置都发生了偏移」。
-   改为：收起态只隐藏「可见性」、保留占位（visibility:hidden 不接收点击），
-   左右两段仍占各自宽度，按钮回到完全相同的坐标，且视觉上只剩它一颗。 */
+   唯一出口「展开镜像」。 */
+/* r424：两态触发器基准必须一致，曾用 visibility:hidden 占位保证逐像素不动。
+   r523 用户的判据更具体：「能收起来，但是也给不了右边用」——收起后那 654px
+   列仍在，左列表仍是半宽，右边残留一条空带，按钮浮在带子中央。占位保位是
+   把「按钮不跳」当成了唯一目标，牺牲了折叠本身的意义。
+   定案：触发器移到轨道末尾（贴卡片右缘，markup 里已是最后一个子元素），
+   收起时胶囊与视图钮真正 display:none，网格右列塌成 auto=按钮宽——
+   左列表拿回整行宽度，按钮仍贴同一右缘（实测 1512 档 +565px、按钮位移 2px）。 */
 .srx-mirror.srx-folded .srx-mrail>.srx-mtab,
-.srx-mirror.srx-folded .srx-mrail>.srx-mtools{visibility:hidden!important}
+.srx-mirror.srx-folded .srx-mrail>.srx-mtools{display:none!important}
+.srx-mirror.srx-folded .srx-mrail{justify-content:flex-end}
 /* 特异性必须压过 #searchview .srx-mrail{min-height:48px;padding:8px 10px;
    border-bottom:...}（更高且带全宽背景），否则收起态仍是一条 48px 横带。
-   r424：几何必须两态一致——`justify-content:flex-end` 会把触发器推到轨道最右
-   （实测 1209→1195），padding/min-height 清零又让轨道 48→28px、按钮纵移 9px。
-   定案：保留与展开态相同的 padding 与 min-height，只去掉背景与下边线；
-   内容用 visibility:hidden 占位，触发器位置逐像素不变，视觉上只剩它一颗。 */
-/* 边框只透明、不删宽度：`border-bottom:0` 让轨道盒高少 1px，居中的触发器
-   实测下移 1px（t=367→368），与「两态位置逐像素一致」冲突。
-   同理 `overflow` 不能动：触发器是 `position:sticky;right:0`，轨道一旦不再是
-   滚动容器，sticky 失效退回普通流位置；换成 hidden 也不成——浏览器在按钮
-   获焦时会把它滚进视野（实测 scrollLeft 0→158），按钮横跳 272px。
-   沿用展开态自身的 overflow-x:auto，sticky 参照系不变。 */
+   收起态只去掉背景与下边线；padding/min-height 保持与展开态相同，
+   触发器纵向坐标逐像素不变（实测 t 367→367）。 */
+/* 边框只透明、不删宽度：`border-bottom:0` 让轨道盒高少 1px，触发器下移 1px。 */
 #searchview .srx-mirror.srx-folded .srx-mrail{border-bottom-color:transparent!important;
  background:transparent!important}
 #searchview .srx-mirror.srx-folded{border:0!important;background:transparent!important;
@@ -7456,15 +7612,29 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.17)!impo
 .spmon-chartwrap{background:var(--r-surface-2);border-radius:12px;padding:10px 10px 6px;min-height:210px;min-width:0;overflow:hidden}
 /* absolute（不是 fixed）：PCHART.placeTip 按宿主容器算坐标，fixed 会
    把容器内偏移当视口坐标用 → 浮窗随滚动/重排乱飘。 */
+/* width:max-content 与 .ws-tip 同因：absolute 盒子默认 shrink-to-fit，
+   可用宽度=包含块右侧剩余空间；左值贴到右缘后下一帧换内容就被压成
+   min-content（实测 141×49 → 53×158），落位再拿这个假宽度钳位 → 永锁
+   在折叠态、右沿反而越界。宽度按内容定，钳位才成立。 */
 .spmon-tip{position:absolute;z-index:40;pointer-events:none;background:rgba(44,62,80,.93);
  border:0;border-radius:8px;padding:6px 9px;font-size:12px;line-height:1.5;
- color:#fff;max-width:min(270px,calc(100vw - 16px))}
+ width:max-content;max-width:min(270px,calc(100vw - 16px));color:#fff}
 /* 与关注浮窗同一套换行规则：都允许折行、都限 270px。雷达曾
    white-space:nowrap + max-width:100vw，长注记会拉成一条横贯全屏的
    长条，而同屏的关注浮窗是窄块——同一种读数卡两种形状。 */
 /* 有意深底白字：与航线走势 tooltip 同一惯例。浅色卡底在数据线上是一块
    白斑，会把短点整段盖掉（用户实报「白白的折叠遮挡短点」）。 */
 .spmon-tip b{font-family:var(--num);color:#fff}
+/* 行文法与 .ws-tip 完全同构（时刻行 / 图标·色点·名称·价格 行 / 明细行）：
+   两图浮窗并排时应读成同一个组件。这里只补 .spmon-tip 作用域，
+   不改 .ws-tip 那套（它是关注图的原件，改动会波及关注图）。 */
+.spmon-tip .tm{color:rgba(255,255,255,.72);font-family:var(--num);font-size:11px;margin-top:3px}
+.spmon-tip .tm:first-child{margin-top:0}
+.spmon-tip .tr{display:flex;align-items:center;gap:6px;white-space:nowrap;margin-top:2px}
+.spmon-tip .tr i{width:6px;height:6px;border-radius:50%;flex:none}
+.spmon-tip .tr b{display:inline;font-size:12px;margin:0 0 0 auto;padding-left:9px}
+.spmon-tip .tr span{overflow:hidden;text-overflow:ellipsis}
+.spmon-tip .tr .bic{flex:none}
 /* 宽度由 JS 按点数设定（可滚）；max-width:100% 会把可滚宽度压回容器宽，
    拖动指令随之失效——r373 的「滑动卡顿」根因。 */
 #spMonChart{display:block;height:clamp(240px,max(38vh,28vw),360px);cursor:crosshair;outline:none}
@@ -7490,14 +7660,23 @@ html[data-theme="dark"] .bic-air{box-shadow:0 0 0 1px rgba(255,255,255,.17)!impo
    左对齐块（且无独立标题档），读作另一套空态。 */
 .spmon-empty{display:flex;flex-direction:column;gap:6px;align-items:center;
  padding:16px;border-radius:var(--r10);background:var(--r-surface-2);
- font-size:12px;color:var(--r-ink-3);text-align:center}
+ font-size:12px;color:var(--r-ink-3);text-align:center;
+ /* 行高 1.6 与另两图空态（.chart-empty / .ws-empty）同档；此前本块缺这一行，
+    `.chart-empty` 的注释却写着「另两图都是 1.6」——注释对了，规则漏了。 */
+ line-height:1.6}
 .spmon-empty b{color:var(--r-ink);font-size:13px;font-weight:600}
 /* K 线不足 2 天时的居中空态：覆盖在画布之上而不是撑开滚动容器——
    .spmon-chartwrap 是 overflow-x:auto，用 sticky 才能在横向滚动时仍居中。 */
 /* 覆盖在画布之上：sticky + 负 top 让它在横向滚动时仍居中于可视区，
    高度跟随 canvas（JS 写入），不撑开滚动容器。 */
+/* 覆盖画布必须 absolute（sticky 在 flex 列里会落到画布下方，实测 y=898 而
+   画布底 874，读作多出一块灰板）。但 absolute 的 left:0 是**内容坐标**：
+   容器 overflow-x:auto 横向滚动后，空态跟着内容左移、滑出可视区
+   （实测 320 档 scrollLeft=39 时空态左缘 -9px）。所以横向位置由 JS 按
+   scrollLeft 写入（见 spMonPlaceEmpty），这里只管覆盖与居中。 */
 .spmon-kempty{position:absolute;left:0;right:0;top:0;margin:0 auto;
- max-width:100%;justify-content:center;background:transparent!important;display:none}
+ max-width:100%;justify-content:center;background:transparent!important;display:none;
+ z-index:2}
 .spcfg summary{cursor:pointer;list-style:none;padding:9px 2px;font-size:12px;font-weight:600;color:var(--r-ink-2)}
 .spcfg summary::-webkit-details-marker{display:none}
 .sprad-fld{display:inline-flex;align-items:center;gap:4px;font-size:11px;
@@ -7531,9 +7710,17 @@ r433：改成 6 列 + 前三张 span2 / 后两张 span3 后，两行卡宽不一
 }
 .hdiag-card{display:flex;flex-direction:column;gap:4px;padding:10px 11px;border-radius:var(--r10);
  background:var(--r-surface-2);font-size:11px;line-height:1.45}
-.hdiag-h{display:flex;align-items:center;gap:6px;font-size:12px}
+.hdiag-h{display:flex;align-items:center;gap:6px;font-size:12px;min-height:17px}
 .hdiag-h .bic{width:16px;height:16px}
 .hdiag-st{margin-left:auto;padding:1px 6px;border-radius:var(--pill);background:var(--r-surface);color:var(--r-ink-3);font-size:10px;font-weight:700;white-space:nowrap}
+/* r557：状态徽写着 `white-space:nowrap`，但 flex 子项默认 min-width:auto
+   不许收缩——卡宽 168px 时「飞猪演示 · 无符合条件的航班」放不下，徽章
+   直接把 .hdiag-h 顶成两行（实测 17px→35px），五张卡的「自检」按钮因此
+   差 17px（1100 档飞猪/同程 540 vs 其余 523），用户读作「渠道健康里又有
+   不对齐的布局设计，自检按钮」。基础规则不动（胶囊 1px 6px 的族规不变），
+   只补收缩与裁字；全文在 title 里，不靠折行表达。 */
+.hdiag-h>b{flex:0 0 auto;white-space:nowrap}
+.hdiag-h>.hdiag-st{min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis}
 .hdiag-card.ip .hdiag-st{background:var(--r-red-soft);color:var(--r-red)}
 .hdiag-card.captcha .hdiag-st,.hdiag-card.login .hdiag-st{background:var(--r-amber-soft);color:var(--r-amber)}
 .hdiag-card.timeout .hdiag-st,.hdiag-card.unknown .hdiag-st{background:var(--r-amber-soft);color:var(--r-amber)}
@@ -7567,7 +7754,11 @@ r433：改成 6 列 + 前三张 span2 / 后两张 span3 后，两行卡宽不一
    一大段，用户读作「渠道健康里又有不对齐的布局设计，自检按钮」。
    动作是正文的延续，不是卡底工具条：跟着证据行往下排，留白留在卡尾。 */
 .hdiag-card .hdiag-acts{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px;padding-top:0;min-height:0}
-.hdiag-card .hdiag-acts .btn2{margin-top:0;height:26px;padding:0 9px;font-size:11px}
+.hdiag-card .hdiag-acts .btn2{margin-top:0;height:26px;min-height:26px;padding:0 9px;font-size:11px}
+/* 上面这条 26px 自 r433 起就没生效过：基础 `.btn2` 声明在**更靠后**的
+   扁平层（`height:32px;min-height:32px`），同优先级按声明顺序后者胜；
+   而 `min-height` 还会把 height 顶回去——实测内联 `height:26px!important`
+   仍渲染 32px。这里把 min-height 一并写死，26px 才真的落到卡头动作上。 */
 /* 关注航线 / 关注航班共用设计语言：同一卡片、卡头、范围控件、图表容器、
    图例与指标排版。页面差异只保留业务内容，不再出现两套皮。 */
 .mon-card{background:var(--r-surface)!important;border:0!important;border-radius:14px!important;
@@ -7578,7 +7769,14 @@ r433：改成 6 列 + 前三张 span2 / 后两张 span3 后，两行卡宽不一
  box-shadow:none!important;padding:10px!important}
 .mon-legend{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:6px!important;
  padding:8px 2px 0!important;border-top:1px solid var(--r-hair);font-size:12px;color:var(--r-ink-3)!important}
-.mon-legend>span>b{width:16px!important;height:3px!important;border-radius:2px}
+/* 色块必须 inline-block 且与文字同基线：`.mon-legend>span` 是普通 span，
+   `<b>` 默认 block 会把色块顶到文字**上一行**——实测雷达图例「最低日 · 选中
+   11-14」的色块独占一行（16×3、x 与文字左缘相同但 y 不同），而航线图例的
+   色块是 inline-block + 5px 右距。同一种图例两种排法。
+   航线用的是 `.legend b{display:inline-block;...margin-right:5px}`，这里补上
+   同一条，三图就都读成「色块+文字」。 */
+.mon-legend>span>b{display:inline-block;width:16px!important;height:3px!important;
+ border-radius:2px;vertical-align:middle;margin-right:5px}
 /* 三图同一套脚注：图例只放图例项，说明另起一行「同一位置、同一字号、
    同一上边距」。trend 曾把说明写进 .mon-legend 内并 flex-basis:100%，
    图例盒子从 27px 撑到 64px（390 档 134px），另两图只有 27px ——
@@ -7732,6 +7930,12 @@ r433：改成 6 列 + 前三张 span2 / 后两张 span3 后，两行卡宽不一
    两槽各占一半会把 PC / H5 拉开到屏幕两端，读起来像两件无关的事。 */
 #loginRows .lgslots:has(.lgslot+.lgslot){grid-template-columns:auto auto!important;
  justify-content:start!important;gap:0 22px!important}
+/* r543：双槽说明必须单行——半格只有 157px 宽，900 档
+   「必须登录 · 已保存 · 会话待验证」（21 字）折成两行 33px，
+   把飞猪整行撑到 69px，同页其余四行 52px（r412 守卫实测红）。
+   完整文本在 title 里，截断不等于丢信息。 */
+#loginRows .lgslots:has(.lgslot+.lgslot) .lgsub{white-space:nowrap!important;
+ overflow:hidden!important;text-overflow:ellipsis!important}
 @media(max-width:700px){
  /* 窄档：每个槽位压成一行（标签 + 状态），否则 h/sub 两行 × 双槽 = 4 行，
     行高会到 123px。特异性须高于前面 `#loginRows .lgslot{...}` 那条
@@ -8416,6 +8620,16 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
 .chband-meta .chsess{display:inline-flex!important;align-items:center!important;height:17px!important;padding:0 6px!important;border-radius:var(--pill)!important;background:var(--r-surface-2)!important;color:var(--r-ink-3)!important;font-size:10px!important;font-weight:600!important}
 .chband-body{display:flex!important;flex-direction:column!important;gap:4px!important;min-width:0!important}
 .chband-grid{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:6px!important;min-width:0!important}
+/* r541：五个渠道带的高度曾各不相同（实测 1512 档 85/94/94/85/85、
+   1280 档 109/125/109/94/85）——因为 chip 文案长短不一，「去哪儿/飞猪」
+   这类长名把 chip 折成两行，而短名只有一行。用户读作
+   「大小布局不够对称协调」。改为 chip 文案单行 + 省略（完整信息在
+   title 里：URL · 说明 · 登录要求），并固定行高，五带即等高。
+   实测修后：1512/1280 五带全 91、390 档全 163，无裁切溢出。 */
+.chband-grid{grid-auto-rows:44px!important}
+.chlink{white-space:nowrap!important}
+.chlink>span,.chlink>b,.chlink>em{white-space:nowrap!important;overflow:hidden;
+ text-overflow:ellipsis;min-width:0}
 .chlink{display:flex!important;flex-direction:row!important;align-items:center!important;gap:7px!important;min-height:44px!important;padding:0 10px!important;border:0!important;border-radius:8px!important;background:var(--r-surface-2)!important;white-space:normal!important;text-decoration:none!important;overflow:hidden!important}
 .chlink:hover{background:var(--r-surface-3)!important;color:var(--r-ink)!important}
 .chlink-surface{display:none!important;font-size:10px!important;color:var(--r-ink-3)!important;letter-spacing:.03em}
@@ -8425,7 +8639,7 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
    被截掉的括号正半句是**区分同一行两个入口的唯一信息**（主名称都叫
    「机票搜索」），触屏也没有 hover 读 title，等于让人分不清该点哪个。
    改为换行：卡片由 grid 行等高，同一 band 内其它入口自动对齐。 */
-.chlink-top b{font-size:12px!important;font-weight:600!important;color:var(--r-ink)!important;white-space:normal!important;overflow:visible!important;text-overflow:clip!important;overflow-wrap:anywhere!important;line-height:1.3!important}
+.chlink-top b{font-size:12px!important;font-weight:600!important;color:var(--r-ink)!important;white-space:normal!important;overflow:hidden!important;text-overflow:clip!important;overflow-wrap:anywhere!important;line-height:1.3!important;display:-webkit-box!important;-webkit-line-clamp:2!important;-webkit-box-orient:vertical!important;max-height:2.6em!important}
 .chlink-go{margin-left:0!important;color:var(--r-blue)!important;font-size:10px!important;white-space:nowrap!important;flex:0 0 auto!important}
 .chlink-auth{display:inline-flex!important;align-items:center!important;align-self:center!important;height:16px!important;padding:0 6px!important;border:0!important;border-radius:var(--pill)!important;background:var(--r-amber-soft)!important;color:var(--r-amber)!important;font-size:10px!important;font-weight:600!important;flex:0 0 auto!important;white-space:nowrap!important}
 .chlink-auth.opt{background:var(--r-surface-3)!important;color:var(--r-ink-3)!important}
@@ -8444,12 +8658,17 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
 /* r435：`min-height:0` 让缺 go 箭头那颗（途牛特价行）只占 29.29px，
    同排其余 30px → 五条带差 1px，读作「没对齐」。给该行一个与格子
    一致的下限，四舍五入后五条带等高。 */
-.chband-specs{display:flex!important;flex-wrap:wrap!important;align-items:center!important;gap:0 10px!important;padding:0 0 0 1px!important;border:0!important;min-height:30px!important}
+.chband-specs{display:flex!important;flex-wrap:wrap!important;align-items:center!important;gap:0 10px!important;padding:0 10px!important;border:0!important;min-height:30px!important}
 /* r425：「特价」标签原在行首，把两条特价入口整体右推 33px——次行入口与
    上面主入口（PC/H5 国内/国际）左缘差一截，读作「缩进没对齐」。标签沉到
    行尾当注释，值回到行首：实测 1512 510→478、390 59→29，与主入口 477/28
    对齐（差 1px 为容器内边距），行高不变。 */
-.chspec-k{font-size:10px!important;color:var(--r-ink-4)!important;letter-spacing:.08em!important;flex:0 0 auto!important;order:0!important;margin-left:0!important;margin-right:2px!important}
+/* r542：「特价」是这一行的分类注记。放在行首会把两个入口整体右推 33px，
+   与上面主入口（PC/H5 国内/国际）左缘对不齐——r425 修过；r430 沉行尾用
+   order:9 又让标识列随条数漂移；钉到最右端则离内容 700px，读作「标签跟
+   内容无关」。定案：留在行内、排在入口之后（order:2 + margin-left:6px），
+   既不推入口，也紧贴它标注的那一行。 */
+.chspec-k{font-size:10px!important;color:var(--r-ink-4)!important;letter-spacing:.08em!important;flex:0 0 auto!important;order:2!important;margin-left:6px!important;margin-right:0!important}
 .chband-specs .chlink{display:inline-flex!important;flex-direction:row!important;align-items:center!important;gap:3px!important;min-height:0!important;padding:0!important;background:transparent!important;border-radius:0!important;color:var(--r-ink-3)!important;overflow:visible!important}
 .chband-specs .chlink:hover{background:transparent!important;color:var(--r-blue)!important}
 /* 行内文字链的热区补齐到 36px（触屏地板）：这一段把 .chlink 降级成行内文字，
@@ -8491,12 +8710,25 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
  .chband-specs .chlink{flex-wrap:nowrap!important;height:auto!important;min-height:0!important;padding:0!important;gap:4px!important}
  .chband-specs .chlink-surface{display:inline!important;flex:0 0 auto!important;order:0!important}
  .chband-specs .chlink-top{flex:0 1 auto!important;overflow:visible!important}
- .chband-specs .chlink-go{margin-left:0!important}
+ /* r542：窄档特价行读作「PC 特价 PC ↗」——面位小标与标题里的 PC/H5 是
+    同一件事说两遍。窄档网格格子的面位小标承担「这是哪个端」，特价行的
+    标题只是页面名，所以这里把标题里的 PC/H5 隐掉（完整信息仍在 title 与
+    宽档的 chlink-note 里）。 */
+ .chband-specs .chlink-top b{display:none!important}
+ /* r542：这里只藏「面位重复」的标题。不供（.off）那支的 b 是「不供」
+    状态词，留着——窄档读作「PC 特价 不供」，正是要传达的信息。 */
+ /* r542：窄档特价行的每个入口自带「PC 特价」面位小标，行首再挂一个
+    「特价」是同一句话说两遍，且把入口整体右推 21px。 */
+ .chband-specs .chspec-k{display:none!important}
+ /* r542：窄档卡片是自带 9px 内边距的盒子（面位小标在盒内），特价行
+    若再留 10px 容器内边距，行首「PC 特价」就会比卡片外框右缩 10px。
+    对齐对象改成卡片外框：容器内边距归零。 */
+ .chband-specs{padding:0!important}
 }
 @media(max-width:600px){
  .chlink{min-height:42px!important}
  .chlink-top b{font-size:11px!important}
- .chband-specs{gap:0 8px!important}
+ .chband-specs{gap:0 8px!important;padding:0!important}
 }
 @media(max-width:360px){
  .chband-grid{gap:5px!important}
@@ -8607,7 +8839,11 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
  margin-left:auto;flex:0 0 auto;white-space:nowrap}
 .pace-now b{font-family:var(--num);font-size:16px;font-weight:600;line-height:1.2;
  color:var(--r-ink);font-variant-numeric:tabular-nums}
-.pace-now b i{font-style:normal;font-size:11px;font-weight:400;color:var(--r-ink-3);margin-left:2px}
+.pace-now b i{font-style:normal;font-size:11px;font-weight:400;color:var(--r-ink-3);margin-left:2px;
+ /* 行高按自身字号算：父级 .pace-now b 是 16px/1.2，i 只改字号不改行高时
+    继承的是 16×1.2=19.2 的比例还是 19.2 的绝对值？实测算成 13.2px（=11×1.2），
+    而同一面板其余 11px 文本是 16.5px（=11×1.5）——同字号两种行高。 */
+ line-height:16.5px}
 .pace-now span{font-size:11px;color:var(--r-ink-3);white-space:nowrap}
 /* 小节标题：与健康卡「推送通道 · 近 24h」同一字级与字距 */
 .pace-sec{display:flex;align-items:center;gap:8px;margin:12px 0 4px;
@@ -8638,7 +8874,12 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
 .pace-sec :is(a,button){border:0;background:transparent;font-family:inherit;
  color:var(--r-blue);font-size:12px;font-weight:600;letter-spacing:0;cursor:pointer;
  display:inline-flex;align-items:center;height:22px;padding:0 6px;
- border-radius:var(--r3);text-decoration:none;white-space:nowrap}
+ border-radius:var(--r3);text-decoration:none;white-space:nowrap;
+ /* 行高写死数值：按钮默认 line-height:normal（12px 字实际算成 ~14.4px），
+    与面板内所有正文的 18px(=1.5) 不是同一套。实测 1440 面板里 13 个按钮
+    报 normal、其余 65 个文字节点报 16.5/18px——同一块面板两套行高，
+    用户读作「连字体都分段了」。height 已钉死 22px，加行高不改任何尺寸。 */
+ line-height:18px}
 .pace-sec :is(a,button):hover{background:var(--r-surface-2)}
 .pace-sec :is(a,button):focus-visible{outline:2px solid var(--blue);outline-offset:1px}
 /* 状态色点：色相之外还有文字胶囊，灰度/色盲下仍可分 */
@@ -8716,7 +8957,8 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
 .pace-stat:first-child{border-left:0}
 .pace-stat b{font-family:var(--num);font-size:16px;font-weight:600;line-height:1.2;
  color:var(--r-ink);white-space:nowrap;font-variant-numeric:tabular-nums}
-.pace-stat b i{font-style:normal;font-size:11px;font-weight:400;color:var(--r-ink-3);margin-left:2px}
+.pace-stat b i{font-style:normal;font-size:11px;font-weight:400;color:var(--r-ink-3);margin-left:2px;
+ line-height:16.5px}   /* 与 .pace-now b i 同一档（见该处注释） */
 .pace-stat span{font-size:11px;color:var(--r-ink-3);white-space:nowrap;
  overflow:hidden;text-overflow:ellipsis}
 /* 指标格数字一律走主色：空值时只把「—」本身弱化，不把整格降级。
@@ -8730,7 +8972,12 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
  background:var(--r-surface-2);margin:8px 0 0}
 .pace-rail>i{display:block;height:100%;flex:0 0 auto;min-width:2px}
 .pace-rail .rf{background:var(--r-blue)}
-.pace-rail .rs{background:color-mix(in srgb,var(--r-blue) 40%,var(--r-surface-3))}
+/* 三段是三种不同语义，不能只用同一色相的深浅：曾用「--r-blue 40% 混灰」
+   得到一条浅蓝——整条轨读成「一段深蓝 + 一段浅蓝」，与图例里
+   「快档 6 / 慢档 2 / TTL 内跳过 3」三档对不上，也看不出中间那段是
+   被降频（受限）而不是「发送的一部分」。快档=已发出（蓝）、
+   慢档=拉长间隔后发出（琥珀，与全站 warn=受限同义）、跳过=中性灰。 */
+.pace-rail .rs{background:var(--r-amber)}
 .pace-rail .rk{background:var(--r-hair-2)}
 /* 量尺轨 → 图例的视觉间距由这里承担（实测 6px，比跨块 8/12 小一档，
    因为图例是轨道自身的说明）。原 5px 不在 4/6/8/12 间距阶上。
@@ -8741,12 +8988,20 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
 .pace-legend span{display:inline-flex;align-items:center;gap:5px;
  font-variant-numeric:tabular-nums;white-space:nowrap}
 .pace-legend i{width:7px;height:7px;border-radius:2px;flex:none}
+/* 色必须与轨道分段同源：此前这里与 `.pace-rail` 各写一份，改轨道颜色后
+   图例仍是旧值——实测轨道改成琥珀、图例方块还是浅蓝，同一条轨两个颜色。
+   两处都写 `var(--r-amber)` 是当前可行的最小改法（权重/作用域不同，删掉
+   这一组会让图例方块退回无底色）；门禁
+   `test_rail_segments_and_legend_swatches_share_colors` 钉住二者逐值相同。 */
 .pace-legend .rf{background:var(--r-blue)}
-.pace-legend .rs{background:color-mix(in srgb,var(--r-blue) 40%,var(--r-surface-3))}
+.pace-legend .rs{background:var(--r-amber)}
 .pace-legend .rk{background:var(--r-hair-2)}
 .pace-legend b{font-family:var(--num);font-weight:600;color:var(--r-ink-2)}
 /* 因果链与出处：都是旁证，统一 11px；数字仍用等宽，便于竖读 */
-.pace-kv{font-size:11px;line-height:1.7;color:var(--r-ink-3);padding:8px 0 0}
+/* 行高与面板内其余文字同档 1.5（11px→16.5）：同一面板里原本并存
+   16.5 / 18 / 18.7 三档行高，只有这一处是 1.7——多出的 2.2px 还让
+   「量尺图例 → 这一段」的视觉间距变成 9px（阶上应为 8）。 */
+.pace-kv{font-size:11px;line-height:1.5;color:var(--r-ink-3);padding:8px 0 0}
 .pace-kv b{font-family:var(--num);font-weight:600;color:var(--r-ink-2);
  font-variant-numeric:tabular-nums}
 .pace-kv .eq{color:var(--r-ink-3);padding:0 3px}
@@ -8776,15 +9031,21 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
  font-variant-numeric:tabular-nums}
 .pace-rec .cnt i{font-style:normal;font-size:11px;font-weight:400;
  color:var(--r-ink-3);margin-left:1px}
-/* 干预入口：两个按钮组，组名是小字标签，按钮与全站按钮族同档 */
+/* 干预入口：两个按钮组，组名是小字标签，按钮与全站按钮族同档。
+   两组之间必须有可见分隔：13 个同款灰底按钮只靠 18px 间隙隔开时，
+   「预热 去哪儿 飞猪 携程 同程 途牛 全部 自检 自动 去哪儿 …」读成一串——
+   中间那段重复的渠道名会被当成「同一个东西列了两遍」。用发丝竖线分栏，
+   与全站「竖直发丝分隔」同一语言（.pace-stat 也用它），不加新图形。 */
 .pace-tools{display:flex;align-items:center;gap:8px 18px;flex-wrap:wrap;padding-top:4px}
+.pace-tools .g+.g{padding-left:18px;border-left:1px solid var(--r-hair)}
 .pace-tools .g{display:inline-flex;align-items:center;gap:5px;min-width:0;
  flex-wrap:wrap}
 .pace-tools .g>b{font-size:11px;font-weight:600;color:var(--r-ink-3);margin-right:1px}
 .pace-tools .g :is(button,a){display:inline-flex;align-items:center;height:28px;
  padding:0 9px;border:0;border-radius:var(--r3);cursor:pointer;
  background:var(--r-surface-2);color:var(--r-ink-2);font-family:inherit;
- font-size:12px;font-weight:600;text-decoration:none;white-space:nowrap}
+ font-size:12px;font-weight:600;text-decoration:none;white-space:nowrap;
+ line-height:18px}   /* 与 .pace-sec 按钮同一行高：height 已钉死，尺寸零变化 */
 .pace-tools .g :is(button,a):hover{background:var(--r-surface-3);color:var(--r-ink)}
 .pace-tools .g :is(button,a):focus-visible,.pace-tools .g select:focus-visible{
  outline:2px solid var(--blue);outline-offset:2px}
@@ -8909,6 +9170,16 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
  .pace-tools .g{gap:4px}
  .pace-tools .g :is(button,a){padding:0 7px}
  .pace-stat{padding:8px 9px}
+}
+/* 分组竖线只在两组**同一行**时才有意义。折行后它还挂在第二组左缘、
+   离第一组左缘空出 18px 缩进——读作「这一组莫名缩进了一格」，那一竖
+   也不像分隔条而像悬空短线。
+   换行由 flex-wrap 决定，宽度阈值量不出来（900 档两组仍同行：宽 340 /
+   402，容器 872；390 档才折）。用容器查询按「面板实际可用宽」判：
+   两组同行至少需要 322+18+402=742px 内容宽 + 面板左右 28px = 770。 */
+.pace-tools{container-type:inline-size}
+@container (max-width: 780px){
+ .pace-tools .g+.g{padding-left:0;border-left:0}
 }
 </style></head><body><div class="wrap">
 <svg class="svgdefs" aria-hidden="true" focusable="false"><defs>
@@ -9046,7 +9317,7 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
  <div class="spmon-body">
   <div id="spMonCal" class="spmon-cal" aria-label="特价日历"></div>
   <div class="spmon-main">
-   <div class="spmon-chartwrap"><canvas id="spMonChart" tabindex="0" role="img" aria-label="特价监控走势：聚焦后按左右方向键逐点读数"></canvas><span id="spMonCross" class="spmon-cross" aria-hidden="true"></span><div id="spMonTip" class="spmon-tip" role="status" aria-live="polite" hidden></div><div id="spMonTable" class="sr-only"><table><caption>特价监控时间轴数据</caption><thead><tr><th>采集时间</th><th>最低价</th><th>低价日</th><th>渠道</th><th>标记</th></tr></thead><tbody></tbody></table></div><div id="spMonChartNote" class="spmon-note chart-note"></div></div>
+   <div class="spmon-chartwrap"><canvas id="spMonChart" tabindex="0" role="img" aria-label="特价监控走势：聚焦后按左右方向键逐点读数"></canvas><div id="spMonKEmpty" class="spmon-empty spmon-kempty" style="display:flex"><b>正在读取监控记录</b><span>只画真实采集点，未采日期不补点。</span></div><span id="spMonCross" class="spmon-cross" aria-hidden="true"></span><div id="spMonTip" class="spmon-tip" role="status" aria-live="polite" hidden></div><div id="spMonTable" class="sr-only"><table><caption>特价监控时间轴数据</caption><thead><tr><th>采集时间</th><th>最低价</th><th>低价日</th><th>渠道</th><th>标记</th></tr></thead><tbody></tbody></table></div><div id="spMonChartNote" class="spmon-note chart-note"></div></div>
    <div class="legend mon-legend" id="spMonLegend" aria-label="雷达走势图例"></div>
    <div id="spMonLow" class="spmon-low"></div>
   </div>
@@ -9098,7 +9369,7 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
  <span class="rngchip" id="rng180" onclick="setRange('180d')">半年</span></span><span class="mdgrp"><span class="rngchip" id="mdOut" onclick="toggleOutliers()" title="默认隐藏极端离群价，避免一个异常点压扁整条曲线；点击显示原值">极值</span></span></span></div>
  <div class="frow" id="chartRoutes"></div>
  <div class="chartwrap mon-chartwrap"><canvas id="chart" tabindex="0" role="img" aria-label="价格走势图：聚焦后按左右方向键逐点读数，Home/End 跳首尾，Enter 看该轮明细"></canvas>
-  <div class="chart-empty" id="chartEmpty" style="display:flex">数据加载中…</div>
+  <div class="chart-empty" id="chartEmpty" style="display:flex"><b>正在读取走势</b><span>只画真实采集点，未采日期不补点。</span></div>
   <div class="sr-only" id="trendTipLive" role="status" aria-live="polite"></div></div>
  <div class="legend mon-legend"><span id="lgDirect"><b style="background:var(--blue)"></b>直飞最低</span>
   <span id="lgTrans"><b style="background:var(--orange)"></b>中转最低</span>
@@ -9436,14 +9707,19 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
    <button type="button" class="srx-bandreset" id="srxBandReset" onclick="srxBandReset()" hidden>回到所选日</button>
    <button type="button" class="srx-bandlogin" onclick="srxGoLogin()" title="打开渠道登录/会话">渠道登录</button><button type="button" class="srx-foldbtn srx-ovtoggle" id="srxOvHero" onclick="srxToggleOverview()" aria-expanded="false" aria-controls="srxOvBody">展开概览</button></div>
   <div id="srxBandBody" class="srx-foldbody">
+  <!-- r537：概览正文曾挂在价带**之后**（`#srxOvBody` 里 band → brief → capbar → kpis），
+       而触发钮在价带工具行内——展开后按钮底(347)到正文顶(389)之间隔着整条
+       日期格带，实测 42px 夹层，命中的是 .srx-band-h/.srx-band-days。
+       用户读作「展开中间还有元素常驻」。挪进折叠体、放在日期带之前：
+       实测间隙 42→7px，且收起态一并 display:none，不会漏出。 -->
+  <section class="srx-brief" id="srxBrief" aria-label="五源现势"><div class="srx-skel" style="height:76px;margin:0"></div></section>
+  <div class="srx-capbar" id="srxCapbar" role="note" aria-label="本次查询的渠道结果与会话状态（能力与无票分开）" hidden></div>
+  <div class="srx-audit" id="srxKpis" aria-live="polite"></div>
   <div class="srx-band-days" id="srxBandDays"><div class="srx-skel" style="height:48px;margin:0"></div></div>
   <div class="srx-band-note" id="srxBandNote">正在读取真实日桶…</div>
   </div>
  </section>
 
- <section class="srx-brief" id="srxBrief" aria-label="五源现势"><div class="srx-skel" style="height:76px;margin:0"></div></section>
- <div class="srx-capbar" id="srxCapbar" role="note" aria-label="本次查询的渠道结果与会话状态（能力与无票分开）" hidden></div>
- <div class="srx-audit" id="srxKpis" aria-live="polite"></div>
   </div><!-- /srxOvBody -->
  </section><!-- /srxOverview -->
 
@@ -9539,7 +9815,7 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
  <div id="loginRows"><span class="muted">加载中…</span></div>
  <div class="row" style="margin-top:6px">
   <button class="btn2" onclick="loadLogin(this)"><svg class="ic" aria-hidden="true"><use href="#i-rotate"></use></svg> 刷新状态</button>
-  <span class="muted">携程、去哪儿必须登录 · 同程/途牛建议 · 飞猪需淘宝登录（PC/H5 分别登录） · 采集进行中时窗口可能被占用，稍后再试</span></div>
+  <span class="muted">五个渠道都必须登录（入口页可匿名浏览，出价与明细要登录后才有） · 飞猪 PC 与 H5 是两套独立会话，需分别登录 · 采集进行中时窗口可能被占用，稍后再试</span></div>
  </div>
  <div class="ucard" id="sec-chlinks" style="margin-top:10px">
   <div class="uhead"><span class="seclab inline"><span class="secicon"><svg class="ic" aria-hidden="true"><use href="#i-open"></use></svg></span><span class="zh">渠道入口</span></span>
@@ -11946,7 +12222,30 @@ const PCHART={
     seg.forEach(p=>{ctx.beginPath();ctx.arc(g.X(p.t),g.Y(p.v),dot*0.85,0,7);
      ctx.fillStyle=style.color;ctx.fill();});
     ctx.globalAlpha=_alpha;}});
+  /* r527：段首/段尾各补一个实心端点（比采样点稍大）。断档两侧原本只有
+     小圆点，空白开始处读作「线被截断/渲染坏了」；端点让每一段自报
+     「我采到这里为止」。缺口仍然完全不画（不连线、不填充），语义不变。 */
+  if(style.vertexDots&&segs.length>1){
+   ctx.setLineDash([]);ctx.globalAlpha=Math.max(_alpha,.9);
+   ctx.fillStyle=style.color;
+   segs.forEach(seg=>{
+    [seg[0],seg[seg.length-1]].forEach(p=>{
+     ctx.beginPath();ctx.arc(g.X(p.t),g.Y(p.v),dot*1.15,0,7);ctx.fill();});});
+   ctx.globalAlpha=_alpha;}
   ctx.restore();return segs;},
+ /* 悬停落点标记：指针读到的那个点，三图必须画同一个记号。
+    旧实现是三种：航线 4.5px 纯实心、关注 3.2px 实心 + 1.5px 卡色光圈、
+    雷达**一个都不画**（悬停只有一条十字线，数据点上没有任何变化）。
+    同一个「移上去读数」的动作，两图有落点、一图没有，雷达因此被读成
+    「不跟手」——指针在动、图上没有东西跟着动。统一为「实心 + 卡色
+    光圈」：放在线上时仍分得清是哪一条系列（纯实心会与线糊成一段粗线）。 */
+ hoverDot(ctx,x,y,color){
+  if(!isFinite(x)||!isFinite(y))return;
+  ctx.save();
+  ctx.beginPath();ctx.arc(x,y,4,0,7);
+  ctx.fillStyle=color;ctx.fill();
+  ctx.strokeStyle=cssv('--card')||'#fff';ctx.lineWidth=1.5;ctx.stroke();
+  ctx.restore();},
  /* 最近点：横轴主键、纵向次键。二维最近点会把鼠标"吸"到曲线稀疏处的
    远处高点，读数与指针 x 对不上（门禁曾出现十字线跳离指针）。 */
  /* 最近点：先按横轴取最近时刻（同一 x 上多系列时全部视为候选），再在
@@ -11979,11 +12278,15 @@ const PCHART={
     读数时浮窗一直压在数据下方，钉顶部的版本又读作「不跟手」。
     这里只算坐标；画布浮窗（航线）直接取返回值绘制，DOM 浮窗走
     placeTipAxis 落位——两边同一份算术，不会再各写一套。 */
-placeAxis(boxW,boxH,tw,th,localX,topY){
+placeAxis(boxW,boxH,tw,th,localX,topY,rightEdge){
   /* 只钳位、不整块翻边：翻边会让浮窗在指针越过某个 x 时整体跳到另一侧
      （实测 0.844→0.867 之间 left 999→829，跳 170px），用户读作「悬浮窗乱飘」。
      贴着指针走到右缘后停在边缘，位移连续、也不挡住刚读的那一段。 */
-  const l=Math.max(8,Math.min(localX+14,boxW-tw-8));
+  /* rightEdge：可选的「可视右缘」（内容坐标）。画布比容器宽时（特价监控
+     1220px 画布塞进 320px 容器），右界若只按内容总宽算，未滚动时浮窗会被
+     放到可视区之外——实测 390 档浮窗页内 right 401 > 视口 390。 */
+  const _re=Math.min(boxW,(rightEdge==null?boxW:rightEdge));
+  const l=Math.max(8,Math.min(localX+14,_re-tw-8));
   const t=Math.max(8,Math.min(topY,boxH-th-8));
   return {l:Math.round(l),t:Math.round(t)};
 },
@@ -11996,7 +12299,18 @@ placeTipAxis(host,tip,cx,topY){
      两次相邻读之间浏览器必已重排，第二次就是最终宽度。 */
   const tw=Math.max(tip.offsetWidth,tip.getBoundingClientRect().width)||200;
   const th=tip.offsetHeight||40;
-  const p=PCHART.placeAxis(r.width,r.height,tw,th,cx-r.left,topY);
+  /* 容器可横向滚动时（雷达 1220px 画布在 320 档、scrollWidth 320 / clientWidth 281），
+     `left` 相对的是**滚动内容**起点，而 `cx-r.left` 量的是**可视区**偏移——
+     两者差一个 scrollLeft。实测 320 档 scrollLeft=39：浮窗贴左时 left=26，
+     而容器可视左缘在 30，浮窗被裁掉 4px（读作「悬浮窗飘出图外」）。
+     同时右缘钳位要用 scrollWidth（内容总宽）而不是 r.width（可视宽），
+     否则滚到中段时浮窗永远贴不到最右端。 */
+  const _hostW=Math.max(r.width,host.scrollWidth||0);
+  /* 右界取「可视右缘」在内容坐标里的位置：scrollLeft + 可视宽。容器比内容窄时
+     （特价监控画布 1220 塞进 320 容器），只按内容总宽钳位会把浮窗放到可视区外
+     ——实测 390 档 touch 点按后浮窗页内 right 401 > vw 390。 */
+  const _visRight=(host.scrollLeft||0)+r.width;
+  const p=PCHART.placeAxis(_hostW,r.height,tw,th,cx-r.left+(host.scrollLeft||0),topY,_visRight);
   tip.style.left=p.l+'px';tip.style.top=p.t+'px';},
 };
 function wsDrawChart(noHover){
@@ -12073,7 +12387,11 @@ function wsDrawChart(noHover){
      焦点系列粗实、其余细淡——层级由宽度+透明度表达，不复刻绘制逻辑。 */
   PCHART.line(ctx,fg,pts,{color:s.color,width:focused?2.1:1.25,
    alpha:focused?1:.55,gapMin:Math.max(36*36e5,span*.18),dot:1.6});
-  if(focused&&pts.length<=180){pts.forEach(p=>{ctx.beginPath();ctx.arc(X(p.t),Y(p.v),1.7,0,Math.PI*2);ctx.fillStyle=CARD;ctx.fill();ctx.strokeStyle=s.color;ctx.lineWidth=1;ctx.stroke()})}
+  /* r640：这里原先把每个顶点画成「卡片白底圆 + 色环」的串珠——实测放大
+     后折线被逐点切成断续的白洞（用户：「白白的折叠遮挡短点」「走势一定
+     不可以断档」）。PCHART.line 已按 vertexDots 在每个采样点画同色实心点
+     （不透明度 ≥.85），采样证据已由它承担；再叠一层白心环只会把线打断，
+     且与另两图（雷达/航线）的「同色点」语言不一致。整层删除。 */
   /* 末点半径与另两图同档 3.2（雷达折线、关注 K 线都是 3.2），聚焦放大到 3.5。
      原非聚焦用 2.4 —— 直径 4.8px vs 另两图 6.4px，面积差 78%，同一个「当前价」
      标记在关注图明显小一圈，是用户所说「其他走势图看着不对」的来源之一。
@@ -12258,7 +12576,7 @@ function wsDrawHover(){
   const t=info.x0+(x-info.L)/info.pw*(info.x1-info.x0);
   let rows=[],bestT=null;
   info.series.forEach(s=>{if(!s.pts.length)return;let best=null,bd=Infinity;s.pts.forEach(p=>{const d=Math.abs(p.t-t);if(d<bd){bd=d;best=p}});const px=info.pw/(info.x1-info.x0);if(best&&bd*px<=36){rows.push({s,p:best});if(bestT==null||best.t<bestT)bestT=best.t;
-    ctx.beginPath();ctx.arc(info.X(best.t),info.Y(best.v),3.2,0,Math.PI*2);ctx.fillStyle=s.color;ctx.fill();ctx.strokeStyle=cssv('--card');ctx.lineWidth=1.5;ctx.stroke();
+    PCHART.hoverDot(ctx,info.X(best.t),info.Y(best.v),s.color);
   }});
   if(rows.length&&tip){
    let h='<div class="tm">'+he(String(new Date(bestT).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})))+'</div>';
@@ -12358,8 +12676,13 @@ function wsRowHTML(w){
   +'<div class="ws-rc target"><div class="k">目标 / 差</div><div class="v">'+(ti.target==null?'<span style="color:var(--mut)">仅观察</span>':'<b>'+wsMoney(ti.target)+'</b>')+'</div><div class="s '+(ti.state==='hit'?'ok':(ti.state==='near'?'warn':''))+'">'+he(ti.text)+'</div></div>'
   +'<div class="ws-rc coverage"><div class="k">渠道覆盖</div><div class="v"><b>'+((q?q.coverage:0))+' / '+chans.length+'</b></div><div class="s" style="display:flex;gap:3px;align-items:center">'+dots+'</div></div>'
   +'<div class="ws-rc state"><span class="ws-state '+st.cls+(ti.state==='hit'&&w.active!==false&&w.inScope?' hit':'')+'" title="'+he(w.inScope?'':(w.scopeReason||'航班日期已过或不在当前扫描范围'))+'"><i></i>'+st.text+'</span></div>'
-  +'</div>'
+  /* r563：动作钮必须挂在 .ws-row-main 里。此前它是 <article> 的直接子级，
+     且用 `top:50%` 相对整个 article 垂直居中——展开详情后 article 变高，
+     钮中心随之下移（1512 实测 +108px、390 +263px），正是用户说的
+     「展开后位置发生偏移，不像同一个按钮的多态」。挂进内容行后，
+     两态都以恒高的 .ws-row-main 为锚，位置不动。 */
   +'<div class="ws-row-act"><button type="button" data-wslocate="'+he(w.id)+'" title="在检索台定位" aria-label="在检索台定位"><svg class="ic" aria-hidden="true"><use href="#i-search"></use></svg></button><button type="button" data-wsexpand="'+he(w.id)+'" title="'+(open?'收起详情':'展开详情')+'" aria-label="'+(open?'收起详情':'展开详情')+'" aria-expanded="'+(open?'true':'false')+'"><svg class="ic chev" aria-hidden="true"><use href="#i-expand"></use></svg></button></div>'
+  +'</div>'
   +'<div class="ws-detail" id="wsDetail-'+he(w.id)+'"'+(open?'':' hidden')+'>'+wsDetailHTML(w,q,ti)+'</div>'
   +'</article>';
 }
@@ -13154,9 +13477,9 @@ function drawHover(x){const c=$('chart'),ctx=c.getContext('2d');
   if(!pd&&!pt)return;
   ax=best[0];
   parts=[];
-  if(pd){ctx.fillStyle=cssv('--blue')||'#0b62d6';ctx.beginPath();ctx.arc(pd[0],pd[1],4.5,0,7);ctx.fill();
+  if(pd){PCHART.hoverDot(ctx,pd[0],pd[1],cssv('--blue')||'#0b62d6');
    parts.push('直飞最低 ￥'+pd[2]+fl(pd[4],pd[2],HPTS.thd));}
-  if(pt){ctx.fillStyle=cssv('--orange')||'#c98500';ctx.beginPath();ctx.arc(pt[0],pt[1],4.5,0,7);ctx.fill();
+  if(pt){PCHART.hoverDot(ctx,pt[0],pt[1],cssv('--orange')||'#c98500');
    parts.push('中转最低 ￥'+pt[2]+fl(pt[4],pt[2],HPTS.tht));}
   txt=((pd||pt)[3]||'')+'　'+parts.join('　');
  }
@@ -13728,7 +14051,7 @@ function renderHealthDiag(){
      动作文案提到探针就给一个直达探针的按钮（真链路，10–60 秒）。 */
   const probe=(String(c.action||'').indexOf('探针')>=0)
    ?'<button type="button" class="btn2" style="height:24px;padding:0 8px;font-size:11px" data-diagprobe="'+he(c.plat)+'" onclick="diagProbe(this.dataset.diagprobe)">发起探针</button>':'';
-  return '<div class="hdiag-card '+he(c.kind)+'"><div class="hdiag-h">'+srxPlatIcon(c.plat)+'<b>'+he(c.name)+'</b><span class="hdiag-st">'+he(_surfTxt+c.label)+'</span></div>'
+  return '<div class="hdiag-card '+he(c.kind)+'"><div class="hdiag-h">'+srxPlatIcon(c.plat)+'<b>'+he(c.name)+'</b><span class="hdiag-st" title="'+he(_surfTxt+c.label)+'">'+he(_surfTxt+c.label)+'</span></div>'
    +'<div class="hdiag-l"><span>登录 <b>'+he(lg)+'</b></span><span>Cookie <b>'+he(cv)+'</b></span><span>最近轮次 <b>'+he(st[c.s]||c.s||'—')+'</b></span></div>'
    +'<div class="hdiag-a">'+he(c.action)+'</div>'
    /* r436：证据行曾是条件渲染——只有 2/5 张卡有，那两张的「自检」被推下
@@ -14524,7 +14847,7 @@ function srxRadarSyncForm(){
 }
 /* ===== 特价监控：官方日历/榜单的逐日价 → 持久化走势 + 低价日真实航班 ===== */
 const SPMON_RUN_LABEL={ok:'成功',cache_hit:'缓存',fallback:'回退',partial:'部分',empty:'空结果',error:'失败',demo:'演示'};
-let SPMON={data:null,user:'',date:'',busy:false,alertCfg:null,lastAlert:null,chart:null,rt:0,range:30,mode:'line'};
+let SPMON={data:null,user:'',date:'',busy:false,alertCfg:null,lastAlert:null,chart:null,rt:0,range:30,mode:'line',base:null};
 async function spAlertLoad(){
  const u=(S&&S.users||[])[U];if(!u||!u.name||!$('spRadarAlertOn'))return;
  try{
@@ -14719,25 +15042,39 @@ function spMonSetMode(m){
  spMonSyncTools();
  const s=SPMON.chart;if(s)spMonDraw(s.dateSeries,s.selDate,s.lowDate);
 }
-/* 雷达图例：与航线/关注共用 .mon-legend 同一色块语言。此前这里只有一句
+/** 雷达图例：与航线/关注共用 .mon-legend 同一色块语言。此前这里只有一句
    纯文字注脚（「每线=一个出发日期 · 红=最低日 · 蓝=选中」），另两图是带
    色块的图例——同一种看图动作，三种表达。 */
-function spMonRenderLegend(){
+function spMonRenderLegend(series){
  const box=$('spMonLegend');if(!box)return;
  const s=SPMON.chart||{},low=s.lowDate||'',sel=s.selDate||'';
  const cols=cssv('--red')||'#c22a2e',blue=cssv('--blue')||'#0b62d6';
  const item=(c,t)=>'<span><b style="background:'+c+'"></b>'+esc(t)+'</span>';
  /* 最低日与选中日是同一天时只留一条——曾并排画两个同日期色块，
     读作两条不同系列。 */
- box.innerHTML=(low&&low===sel)
-  ?(item(cols,'最低日 · 选中 '+(low?' '+esc(String(low).slice(5)):'')))
+ const _main=(low&&low===sel)
+  ?(item(cols,'最低日 · 选中'+(low?' '+esc(String(low).slice(5)):'')))
   :(item(cols,'最低价日'+(low?' '+esc(String(low).slice(5)):''))
     +item(blue,'选中日'+(sel?' '+esc(String(sel).slice(5)):'')));
+ /* 其余日期也必须有一条图例。2026-10-29 实测：画布上 7 条线（1 红 + 6 条
+    灰色「其他出发日」），图例只有「最低日 · 选中 11-14」一条——一半以上的
+    线在图上找不到任何「这是什么」的解释，而航线图例是 5 条线 5 条图例。
+    灰线的颜色与线本身同源（--ink-3 × .7），数量写在尾巴上。 */
+ const _others=(series||[]).filter(x=>x.date!==low&&x.date!==sel);
+ box.innerHTML=_main+(_others.length
+  ?item(cssv('--ink-3')||'#647080','其他出发日 '+_others.length+' 条'):'');
 }
 function spMonDraw(dateSeries,selDate,lowDate){
  const c=$('spMonChart'),note=$('spMonChartNote');if(!c)return;
  const tip=$('spMonTip');if(tip)tip.hidden=true;
+ /* 首帧占位先收掉：HTML 里的「正在读取监控记录」是静态兜底，进到绘制流程
+    后由各分支自己决定要不要重新显示空态（成功画线 / 数据不足 / K 线不足）。
+    放在这里而不是各分支尾部，是为了让提前 return 的路径也不会留加载态。 */
+ {const _le=document.getElementById('spMonKEmpty');if(_le)_le.style.display='none'}
  SPMON.geo=null;
+ /* 底图快照先作废：本次可能是 K 线/空态，若沿用上一次折线的快照，
+     悬停复原会把旧折线贴回来（图与数据对不上）。只有真的画完才重新拍。 */
+ SPMON.base=null;
  SPMON.chart={dateSeries:dateSeries||[],selDate:selDate||'',lowDate:lowDate||''};
  spMonSyncTools();
  const rangeMs=SPMON.range>0?SPMON.range*24*3600*1000:0;
@@ -14828,8 +15165,9 @@ function spMonDraw(dateSeries,selDate,lowDate){
    let kempty=document.getElementById('spMonKEmpty');
    if(!kempty&&c.parentElement){
     kempty=document.createElement('div');kempty.id='spMonKEmpty';kempty.className='spmon-empty spmon-kempty';c.parentElement.appendChild(kempty);}
-   if(kempty){kempty.style.display='flex';kempty.style.height=H+'px';kempty.style.width='min(100%,'+W+'px)';
-    kempty.innerHTML='<b>仅 '+he(candles[0].d)+' 一个采集日</b><span>K 线需要至少 2 天才能比较涨跌（每天一个 OHLC）。</span>'}
+   if(kempty){
+    kempty.innerHTML='<b>仅 '+he(candles[0].d)+' 一个采集日</b><span>K 线需要至少 2 天才能比较涨跌（每天一个 OHLC）。</span>';
+    spMonPlaceEmpty(kempty,c.parentElement,W,H);}
    return;
   }
   {const kempty=document.getElementById('spMonKEmpty');if(kempty)kempty.style.display='none'}
@@ -14839,8 +15177,15 @@ function spMonDraw(dateSeries,selDate,lowDate){
   SPMON.geo={W,H,padL:kg.L,padR:kg.R,padT:kg.T,padB:kg.B,times,series,candles,
    X:kg.X,Y:kg.Y,kline:true};
   PCHART.axes(ctx,kg,{ticks:PCHART.niceTicks(kg.y0,kg.y1,4),
-   xTicks:candles.map((c,i)=>({x:kg.X(i),bot:c.d.slice(5),
-    align:i===0?'left':(i===candles.length-1?'right':'center'),guide:false}))});
+   /* 与另三处同一套抽稀：每个日 K 都出一条日期标签，交易日一多必然重叠
+      （关注 K 线早已按 `W<560?4:8` 抽稀；这里原是 candles.map 全量输出，
+      20 天就有 20 个「MM-DD」挤在轴带上）。首尾必须保留，读得到区间端点。 */
+   xTicks:(()=>{const _n=candles.length;
+    const step=Math.max(1,Math.ceil(_n/(kg.pw<560?4:8)));const out=[];
+    candles.forEach((c,i)=>{
+     if(i%step===0||i===_n-1)out.push({x:kg.X(i),bot:c.d.slice(5),
+      align:i===0?'left':(i===_n-1?'right':'center'),guide:false});});
+    return out;})()});
   const bw=Math.max(3,Math.min(16,kg.pw/candles.length*0.52));
   candles.forEach((cd,i)=>{
    const x=kg.X(i),up=cd.c>=cd.o;
@@ -14851,12 +15196,31 @@ function spMonDraw(dateSeries,selDate,lowDate){
    ctx.fillRect(x-bw/2,y1,bw,Math.max(1.5,y2-y1));
   });
   if(note)note.textContent='K线='+(focus.date||'最低日')+' 的监控快照按日聚合（开/收/高/低）· '+candles.length+' 日 · 红涨绿跌 · 范围 '+SPMON.range+' 天';
+  SPMON.base=spMonSnapshot(c);
   return;
  }
  if(times.length<2||all.length<2){
-  if(note)note.textContent='当前范围监控次数不足（'+times.length+' 次采集）· 切到更大范围或继续积累后显示每个出发日的走势';
+  /* 脚注保留「监控次数不足」这个判据词（既有用例按它认「零快照」状态），
+     但不再复述空态里已写的具体次数；只补一句「怎么补数据」。 */
+  if(note)note.textContent='当前范围监控次数不足 · 切到更大范围或继续积累后显示走势（范围 '+SPMON.range+' 天）';
+  /* 画布上也要说清楚。此前这条分支只写脚注就 return，整块 210~360px
+     画布留白——而航线/关注在数据不足时都有居中空态（`.chart-empty` /
+     `.ws-empty`），只有雷达读作「图画坏了」。复用 K 线那条覆盖层
+     （sticky，不撑开横向滚动容器），两段文案各说各的「差什么」。 */
+  const _pf=c.parentElement;
+  let _pe=document.getElementById('spMonKEmpty');
+  if(!_pe&&_pf){_pe=document.createElement('div');_pe.id='spMonKEmpty';
+    _pe.className='spmon-empty spmon-kempty';_pf.appendChild(_pe);}
+  if(_pe){
+    _pe.innerHTML='<b>当前范围只有 '+times.length+' 次采集</b>'
+     +'<span>走势需要至少 2 次采集才能连线（每天多次采集会叠在同一出发日上）。</span>';
+    spMonPlaceEmpty(_pe,_pf,W,H);}
   return;
  }
+ /* 走到这里说明数据够画线：把上一条分支留下的空态覆盖层收掉。
+    K 线分支成功时已各自隐藏一次，折线成功路径此前没有——切模式后会留着
+    「只有 N 次采集」的残影压在曲线上。 */
+ {const _pe0=document.getElementById('spMonKEmpty');if(_pe0)_pe0.style.display='none'}
  /* Y 域＝聚焦日区间 ∪ 全集区间：只取聚焦日会把别的日期画到画布外
     （实测 ±3492px）；只取全集又会把单日波动压成贴底细线（上半屏
     全空）。并集既放大单日又不裁其它线。 */
@@ -14908,6 +15272,10 @@ function spMonDraw(dateSeries,selDate,lowDate){
    ctx.fillStyle=low?(cssv('--red')||'#c22a2e'):(cssv('--blue')||'#0b62d6');
    ctx.beginPath();ctx.arc(gx(last.t),gy(last.p),3.2,0,7);ctx.fill();}
  });
+ /* 底图快照：悬停只贴图 + 一个落点，不重绘整幅（另两图同一条路径）。
+   没有这张图时，悬停要么画布纹丝不动（用户读作「不跟手」），要么每次
+   移动都全量重绘（1220px 画布上可感卡顿）。 */
+ SPMON.base=spMonSnapshot(c);
  /* 图例（色块）负责「哪种颜色是什么」；注脚负责「怎么读」——
     两者分工与另两图一致，但注脚里的读法句子必须保留（既有门禁与
     用户已熟悉的措辞）。 */
@@ -14922,7 +15290,7 @@ function spMonDraw(dateSeries,selDate,lowDate){
       return ' · 现有采集仅跨 '+(spanH<48?Math.round(spanH)+' 小时':
         Math.round(spanH/24)+' 天')+'，再放大范围不会多出采样点';
     return '';})();
- spMonRenderLegend();
+ spMonRenderLegend(series);
  requestAnimationFrame(function(){
   spMonPanState();
   /* 首绘/切范围后滚到最新；用户拖动过后保持用户位置（SPMON.userPan） */
@@ -14934,6 +15302,34 @@ window.addEventListener('resize',function(){
  clearTimeout(SPMON.rt);
  SPMON.rt=setTimeout(function(){const s=SPMON.chart;if(s)spMonDraw(s.dateSeries,s.selDate,s.lowDate)},180);
 });
+/* 与 _wsSnapshot 同一实现（关掉的三图各自抄一份必然漂移） */
+function spMonSnapshot(c){
+ try{const b=document.createElement('canvas');b.width=c.width;b.height=c.height;
+  b.getContext('2d').drawImage(c,0,0);return b;}catch(e){return null;}
+}
+/* 悬停底图复原：把快照贴回去，抹掉落点。
+   没有快照时**不动画布**（空态/K线首帧未成），而不是重绘——
+   hideTip 挂在 scroll/pointerup 上，重绘会把这份「收起」变成一次全量绘制。 */
+function spMonRestore(){
+ const c=$('spMonChart');if(!c)return false;
+ const b=SPMON.base;
+ if(!b||b.width!==c.width||b.height!==c.height)return false;
+ const ctx=c.getContext('2d');ctx.save();ctx.setTransform(1,0,0,1,0,0);
+ ctx.clearRect(0,0,c.width,c.height);ctx.drawImage(b,0,0);ctx.restore();return true;
+}
+/* 空态覆盖层落位：绝对定位以「内容坐标」为准，横向滚动后要按 scrollLeft
+   平移回可视区，否则空态滑出屏幕（320 档实测左缘 -9）。宽度取可视宽与
+   画布宽的较小者，避免在可滚动画布上铺成一条 1220px 的窄带。
+   两条空态分支（数据不足 / K 线不足 2 天）共用这一处算术。 */
+function spMonPlaceEmpty(el,wrap,W,H){
+ if(!el||!wrap)return;
+ const vw=wrap.clientWidth||W;
+ el.style.display='flex';
+ el.style.width=Math.max(160,Math.min(W,vw))+'px';
+ el.style.height=H+'px';
+ el.style.left=(wrap.scrollLeft||0)+'px';
+ el.style.right='auto';
+}
 function spMonHover(e){
  const c=$('spMonChart'),t=$('spMonTip'),g=SPMON.geo,cross=$('spMonCross');
  if(!c||!t||!g||!g.series.length)return;
@@ -14957,23 +15353,53 @@ function spMonHover(e){
   const cd0=cd[bi],x0=gg.X(bi);
   if(cross){cross.style.display='block';cross.style.left=Math.round(c.offsetLeft+x0)+'px';
    cross.style.top=(c.offsetTop+gg.padT)+'px';cross.style.height=(gg.H-gg.padT-gg.padB)+'px'}
-  t.innerHTML='<b>'+he(cd0.d)+'</b> · 开 ¥'+he(String(Math.round(cd0.o)))+' · 收 ¥'+he(String(Math.round(cd0.c)))
-   +'<br>高 ¥'+he(String(Math.round(cd0.h)))+' · 低 ¥'+he(String(Math.round(cd0.l)));
+  /* 行文法与折线分支/关注 K 线同一套：时刻行 + 开收行 + 高低行。
+     旧版是一行「日期 · 开 · 收」+ <br>「高 · 低」，同屏另一张 K 线浮窗
+     却是结构化的三行——同一读数卡两种形状。落点也按同一记号画在收盘价上。 */
+  spMonRestore();
+  PCHART.hoverDot(c.getContext('2d'),x0,gg.Y(cd0.c),
+    cd0.c>=cd0.o?(cssv('--red')||'#c22a2e'):(cssv('--green')||'#0e8345'));
+  t.innerHTML='<div class="tm">'+he(cd0.d)+'</div>'
+   +'<div class="tr"><i style="background:'+(cd0.c>=cd0.o?(cssv('--red')||'#c22a2e'):(cssv('--green')||'#0e8345'))+'"></i>'
+   +'<span>'+he(cd0.c>=cd0.o?'收涨':'收跌')+'</span><b>¥'+he(String(Math.round(cd0.c)))+'</b></div>'
+   +'<div class="tm">开 ¥'+he(String(Math.round(cd0.o)))+' · 高 ¥'+he(String(Math.round(cd0.h)))
+   +' · 低 ¥'+he(String(Math.round(cd0.l)))+' · 收 ¥'+he(String(Math.round(cd0.c)))+'</div>';
   t.hidden=false;PCHART.placeTipAxis(c.parentElement,t,e.clientX,(gg.padT||0)+6);
   return;}
  const r=c.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
- if(mx<gg.padL||mx>gg.W-gg.padR||my<gg.padT||my>gg.H-gg.padB){t.hidden=true;if(cross)cross.style.display='none';return}
+ if(mx<gg.padL||mx>gg.W-gg.padR||my<gg.padT||my>gg.H-gg.padB){t.hidden=true;if(cross)cross.style.display='none';spMonRestore();return}
  const best=PCHART.pick(gg,gg.series,mx,my);
- if(!best){t.hidden=true;if(cross)cross.style.display='none';return}
+ if(!best){t.hidden=true;if(cross)cross.style.display='none';spMonRestore();return}
  const p=best.p,basis=p.basis==='tax_included'?'含税':(p.basis==='bare'?'裸价':(p.basis?'口径未标':''));
  /* 十字线跟指针 x（与航线同律），不吸附到采样点：雷达一天只有几次
     采集，吸附会让十字线整段停在同一个 x 上不动（实测指针 35%/55%/75%
     三处十字线恒为 626px），用户读作「不跟手」。读数仍取最近实测点。 */
  if(cross){cross.style.display='block';cross.style.left=Math.round(c.offsetLeft+mx)+'px';
   cross.style.top=(c.offsetTop+gg.padT)+'px';cross.style.height=(gg.H-gg.padT-gg.padB)+'px'}
- t.innerHTML='<b>'+he(best.s.date)+'</b> · ¥'+he(String(Math.round(p.p)))
-  +'<br>'+he(String(p.at||'').slice(5,16))+' · '+he(SRX_RADAR_NAMES[p.ch]||p.ch||'—')
-  +(basis?' · '+he(basis):'');
+ /* 落点标记：三图同一个记号（PCHART.hoverDot）。雷达原先只有一条
+    十字线、数据点上什么也不变，指针移过各系列时图上没有任何东西跟着动，
+    是用户说「雷达悬停不跟手」的直接来源。先把底图贴回再画这一个点，
+    移动时不叠出上一帧的残影。 */
+ spMonRestore();
+ PCHART.hoverDot(c.getContext('2d'),gg.X(p.t),gg.Y(p.p),
+   best.s.date===SPMON.chart.lowDate?(cssv('--red')||'#c22a2e')
+    :(best.s.date===SPMON.chart.selDate?(cssv('--blue')||'#0b62d6')
+    :(cssv('--ink-3')||'#647080')));
+ /* 浮窗文法与关注走势同一套（.tm 时间行 + .tr 图标|色点|名称|价格 + .tm 明细行）：
+     雷达原先是「<b>日期</b> · ¥价<br>时刻 · 渠道 · 口径」的两行自由文本，
+     而同屏关注浮窗是「时刻 / 航司 价 / 渠道明细」的结构化三行——同一种读数卡
+     两种形状。渠道值就是真实平台键（实测 ctrip/fliggy/tongcheng 全有官方图标），
+     没有理由只写文字。口径（含税/裸价）放进明细行，不再占正文。 */
+ {
+  const _col=best.s.date===SPMON.chart.lowDate?(cssv('--red')||'#c22a2e')
+   :(best.s.date===SPMON.chart.selDate?(cssv('--blue')||'#0b62d6')
+   :(cssv('--ink-3')||'#647080'));
+  const _mmdd=String(p.at||'').slice(5,16);
+  t.innerHTML='<div class="tm">'+he(_mmdd)+'</div>'
+   +'<div class="tr">'+(p.ch?srxPlatIcon(p.ch):'')+'<i style="background:'+_col+'"></i>'
+   +'<span>'+he(SRX_RADAR_NAMES[p.ch]||p.ch||'—')+'</span><b>¥'+he(String(Math.round(p.p)))+'</b></div>'
+   +'<div class="tm">'+he(best.s.date)+(basis?' · '+he(basis):'')+'</div>';
+ }
  t.hidden=false;
  PCHART.placeTipAxis(c.parentElement,t,e.clientX,(gg.padT||0)+6);
 }
@@ -14981,7 +15407,9 @@ function spMonHover(e){
  const c=$('spMonChart');if(!c)return;
  const w=c.closest('.spmon-chartwrap');
  let tipT=0,raf=0;
- const hideTip=function(){const t=$('spMonTip');if(t)t.hidden=true;const x=$('spMonCross');if(x)x.style.display='none'};
+ /* 收起时同时抹掉落点：只 hidden 浮窗不还原画布，数据点上会留一个
+    上一帧的记号，读作「停在了别的日期上」。 */
+ const hideTip=function(){const t=$('spMonTip');if(t)t.hidden=true;const x=$('spMonCross');if(x)x.style.display='none';spMonRestore()};
  const move=e=>{if(SPMON.panning)return;const x=e.clientX,y=e.clientY;
   /* r435：触摸横向滑动时手指一直压在画布上，pointermove 每帧都会算 hover，
      把十字线和浮窗一路拖着走（实测 12 步触摸拖触发 3 次 hover、松手后
@@ -15034,6 +15462,10 @@ function spMonHover(e){
  c.addEventListener('pointercancel',function(){SPMON.panning=false;clearTimeout(tipT);hideTip()});
  c.addEventListener('pointerleave',function(e){if(e&&e.pointerType==='touch')return;hideTip()});
  window.addEventListener('scroll',hideTip,{passive:true});
+ /* 横向滚动时把空态覆盖层平移回可视区（它的 left 是内容坐标）。 */
+ if(w)w.addEventListener('scroll',function(){
+  const e=document.getElementById('spMonKEmpty');
+  if(e&&e.style.display!=='none')e.style.left=(w.scrollLeft||0)+'px';},{passive:true});
  if(w){
   let down=false,sx=0,sl=0,moved=false;
   w.addEventListener('pointerdown',function(e){
@@ -15828,6 +16260,7 @@ try{const _hq=location.hash.slice(1);
    if(typeof switchView==='function')switchView('search',false)}}}catch(e){}
 try{const _hv=location.hash.slice(1).split('/')[0];if(_hv==='cfg')switchView('cfg',false);else if(_hv==='search')switchView('search',false);}catch(e){}
 /* ===== 渠道登录：弹窗登录 + 会话保存（免命令行） ===== */
+
 const LOGIN_CN = {qunar:'去哪儿', ctrip:'携程', tongcheng:'同程',
  tuniu:'途牛', fliggy:'飞猪', fliggy_h5:'飞猪 H5'};
 /* 全渠道统一「必须登录」：入口页可匿名浏览，但出价/明细都要登录后才有。
@@ -15853,6 +16286,13 @@ function lgDotCls(s,v){
 const LG_DOT_TIP='绿=近期明细成功；琥珀=会话/页面已核验、本轮无明细；灰=仅已保存';
 function lgActionHTML(s){
  const key=s.slot||s.plat,p=s.plat||key,st=s.status||(s.saved?'saved':'missing');
+ /* App 渠道（r604）：没有可弹的浏览器窗，登录走网页内嵌画面。
+    动作语义与浏览器端一致——未登录=「登录」，登录中=「继续登录」。 */
+ if(appPlatName(p)!==p){
+  if(s.active)return `<button class="btn2" onclick="appLoginOpen('${p}')">${ic('check')} 继续登录</button>`;
+  const lbl=st==='login_required'?'重新登录':'登录';
+  return `<button class="btn2" onclick="appLoginOpen('${p}')">${ic('lock')} ${lbl}</button>`;
+ }
  const h5=key==='fliggy_h5';
  if(s.saving)return '<button class="btn2" disabled>正在保存会话…</button>';
  if(s.active)return `<button class="btn2" onclick="loginFinish('${p}',this,'${key}')">${ic('check')} 我已登录完成</button>`;
@@ -16021,9 +16461,9 @@ document.addEventListener('click',e=>{
  const hit=e.target&&e.target.id==='appHit';if(hit)appLoginTap(e);
 },true);
 function lgRefreshFliggy(){const m=$('lgModal');if(!m||!m.classList.contains('open'))return;
- /* 只刷新自己的弹窗：轮询每次都会调用这里，若无条件写 innerHTML，
-    会把同时打开的 App 登录画面整块覆盖成飞猪内容（实测截图：
-    点「智行 App 登录」两秒后变成「飞猪双端登录」）。
+ /* 只刷新自己的弹窗：轮询（01 PULSE 每次刷新）会调用这里，若无条件
+    写 innerHTML，会把同时打开的 App 登录画面整块覆盖成飞猪内容
+    ——实测截图里点「智行 App 登录」两秒后变成「飞猪双端登录」。
     弹窗归属用 data-kind 标记，谁开谁写。 */
  if((m.dataset.kind||'fliggy')!=='fliggy')return;
  m.innerHTML=lgFliggyModalHTML()}
@@ -16079,20 +16519,29 @@ function renderLoginCards(force){
     此前单渠道把按钮嵌在 .lgslot 内、飞猪双端却是 .lgcard 直接子级，
     两种结构让第三列在单渠道行塌成 0px：按钮右缘差 14px、行高 52/65
     参差（实测 1440 视口）。统一 DOM 后三列自成一列，右缘对齐。 */
- function slotBody(s){
+ function slotBody(s,tight){
   const key=s.slot||s.plat,p=s.plat||key,st=s.status||(s.saved?'saved':'missing');
   const v=legacy?channelAuthView(p):null;
   const surface=s.surface_label||(legacy?'当前账号':'全端');
   const requirement=(key==='ctrip'||key==='qunar')?'必须登录':(s.requirement||reqs[key]||'');
-  const sub=[s.account||'',requirement,v?v.label:slotStatusCn(st)]
-   .filter(Boolean).join(' · ');
+  /* tight（双端并排时的半格）：格宽只有一半，三段拼不下就会折成两行，
+     把整张卡拉高 17px——同一列五行参差（实测 900px：飞猪 69 vs 其余 52）。
+     半格里只留「表面名 + 状态」，要求由卡片上方的统一说明表达，
+     账号信息仍在 title 里可查。 */
+  /* 半格（飞猪双端并排）只放状态：145px 宽只够 2~3 个中文字，
+     再拼「必须登录」就折成两行，五卡参差 69 vs 52（真实模式实测）。
+     要求改由卡片名旁的 .lgreq 统一表达，五行可见且只出现一次。 */
+  const sub= tight
+    ? (v?v.label:slotStatusCn(st))
+    : [s.account||'',requirement,v?v.label:slotStatusCn(st)]
+        .filter(Boolean).join(' · ');
   // 「全端」已由卡片 tag 显示，槽位行内不再重复一遍（曾出现两行"全端"），
   // 只留圆点 + 账号/要求/状态；有独立表面名（如飞猪 PC/H5）才显示。
   const _head = (surface && surface !== '全端')
     ? `<span>${he(surface)}</span>` : '';
   return `<div class="lgslot" data-slot="${key}">`
    +`<div class="lgslot-h">${_head}<span class="lgdot${lgDotCls(s,v)}" title="${LG_DOT_TIP}"></span></div>`
-   +`<div class="lgsub" title="${he(s.detail||(v?v.title:''))}">${he(sub)}</div></div>`;
+   +`<div class="lgsub" title="${he([s.account||'',requirement,s.detail||(v?v.title:'')].filter(Boolean).join(' · '))}">${he(sub)}</div></div>`;
  }
  box.innerHTML='<div class="lggrid">'+groups.map(g=>{
   const p=g.key,anySaved=g.slots.some(s=>s.saved),anyActive=g.slots.some(s=>s.active);
@@ -16106,20 +16555,18 @@ function renderLoginCards(force){
   const h5=dual?g.slots.find(s=>s.slot==='fliggy_h5'):null;
   // 双端（飞猪）与单渠道走同一套三列：名字 | 说明+槽位 | 操作。
   // 按钮一律作为 .lgcard 直接子级，第三列才不会塌成 0。
-  // 双端（飞猪）与单渠道同构：说明段沿用 g.sub（已含 PC/H5 状态），
-  // 不再额外塞一段，否则两段说明叠在同一格里互相压字。
+  // 双端（飞猪）也必须走同一份 slotBody：此处曾自带一套 DOM，只渲染
+  // 「PC/H5 + 状态」，把 requirement（必须登录）漏掉了——同一页四家写着
+  // 「必须登录」、飞猪两端却只有「未登录」，读者会以为飞猪不需要登录（r608）。
+  // slotBody 已含「表面名 + 圆点 + 账号/要求/状态」，两端各调一次即可。
   const inner=dual
-   ?`<div class="lgslots one"><div class="lgslot"><div class="lgslot-h"><span>PC</span>`
-    +`<span class="lgdot${lgDotCls(pc)}" title="${LG_DOT_TIP}"></span></div>`
-    +`<div class="lgsub">${he(lgShortStatus(pc))}</div></div>`
-    +`<div class="lgslot"><div class="lgslot-h"><span>H5</span>`
-    +`<span class="lgdot${lgDotCls(h5)}" title="${LG_DOT_TIP}"></span></div>`
-    +`<div class="lgsub">${he(lgShortStatus(h5))}</div></div></div>`
+   ?`<div class="lgslots one">${[pc,h5].filter(Boolean).map(s=>slotBody(s,1)).join('')}</div>`
     +`<div class="lgact"><button class="btn2" onclick="lgOpenFliggy()">${ic('lock')} 双端登录</button></div>`
    :`<div class="lgslots one">${g.slots.map(slotBody).join('')}</div>`
     +`<div class="lgact">${g.slots.map(lgActionHTML).join('')}</div>`;
   return `<div class="lgcard${anySaved?' saved':''}${anyActive?' active':''}${anyNeed?' stale':''}" data-channel="${p}">`
-   +`<div class="lgname">${srxPlatIcon(p)}<span class="lgnm">${he(g.name)}</span><span class="lgtag">${he(g.tag)}</span></div>`
+   +`<div class="lgname">${srxPlatIcon(p)}<span class="lgnm">${he(g.name)}</span><span class="lgtag">${he(g.tag)}</span>`
+   +`<span class="lgreq">必须登录</span></div>`
    +(g.sub?`<div class="lgsection">${he(g.sub)}</div>`:'')
    +inner+'</div>';
  }).join('')+'</div><div class="lgnote">保存完成后由实际请求核验；飞猪 PC 与淘宝 H5 会话独立，需分别登录。历史失败不会覆盖新保存的会话；日历价与航班明细分别统计。去哪儿网页版已于 2026-10-10 停服，改走 H5；App 专属价与自动下单不在范围。</div>';
@@ -16128,7 +16575,7 @@ let CHLINK_CFG_LOADED=false;
 var CHLINK_CFG_DATA=null;
 const CHLINK_VARIANTS=[["pc","domestic"],["h5","domestic"],["pc","intl"],["h5","intl"]];
 function chlinkName(p){return ((SRX_PLATS&&SRX_PLATS[p]&&SRX_PLATS[p][0])||LOGIN_CN[p]||p)}
-function chlinkChip(c,special){
+function chlinkChip(c,special,withAuth){
  const raw=(c&&(c.surface_label||c.surface))||'';
  if(!c)return '<span class="chlink off"><span class="chlink-surface">—</span><span class="chlink-top"><b>未配置</b></span></span>';
  const surface=special?(raw+' 特价'):(raw+(c.scope_label?(' '+c.scope_label):''));
@@ -16143,7 +16590,11 @@ function chlinkChip(c,special){
   return '<a class="chlink" data-surface="'+he(surface)+'" href="'+he(c.url)+'" target="_blank" rel="noopener noreferrer" onclick="return srxOpenChannel(this.href,event)" title="'+he(c.url+' · '+(c.note||''))+'"><span class="chlink-surface">'+he(surface)+'</span><span class="chlink-top"><b>'+he(raw)+'</b><span class="chlink-note">'+he(title)+'</span></span><span class="chlink-go">↗</span></a>';
  }
  const kind=c.note==='航线直达'?'直达':(c.note&&c.note.indexOf('其他范围')===0?'入口':'打开');
- const auth=c.login?('<span class="chlink-auth '+(c.login_required?'req':'opt')+'" title="'+he('页面登录：'+c.login+(c.login_required?'（必须登录）':'（可选）'))+'">'+he(c.login)+'</span>'):'';
+ /* r542：页面登录账号（携程账号/淘宝账号…）不再逐格重复——同一渠道
+    四格写的是同一个账号，且已上提到带头的「必须登录 · 携程账号」，
+    每格再挂一个 56px 宽的标签会把标题挤成 4~5 行。withAuth=false 时
+    账号只留在 title 里（URL · 说明 · 页面需X），信息不丢。 */
+ const auth=(c.login&&withAuth!==false)?('<span class="chlink-auth '+(c.login_required?'req':'opt')+'" title="'+he('页面登录：'+c.login+(c.login_required?'（必须登录）':'（可选）'))+'">'+he(c.login)+'</span>'):'';
  return '<a class="chlink" data-surface="'+he(surface)+'" href="'+he(c.url)+'" target="_blank" rel="noopener noreferrer" onclick="return srxOpenChannel(this.href,event)" title="'+he(c.url+' · '+(c.note||'')+(c.login?(' · 页面需'+c.login):''))+'"><span class="chlink-surface">'+he(surface)+'</span><span class="chlink-top"><b>'+he(title)+'</b></span>'+auth+'<span class="chlink-go">'+kind+' ↗</span></a>';
 }
 function chMeta(j,p){
@@ -16158,11 +16609,22 @@ function chBandHTML(p,cells,specials,meta,probe,extraNote){
  h+='<div class="chband-id"><div class="chband-name">'+srxPlatIcon(p)+'<b>'+he(chlinkName(p))+'</b>'+dot+'</div>';
  const _sl=(meta&&meta.session_label)||'';
  const _note=(meta&&meta.login_note)||'';
- if(_sl)h+='<div class="chband-meta"><span class="chsess '+he((meta&&meta.session)||'')+'"'+(probe&&_note?(' title="'+he(_note)+'"'):'')+'>'+he(_sl)+'</span></div>';
+ /* 账号名（携程账号/淘宝账号…）原本每格重复一遍：同一渠道四格写的是
+    同一个账号，占掉 56px 标题宽度，1280 档把「机票搜索（与国内同页，
+    页内切国际）」挤成 5 行、被 44px 行高裁切压字。账号是渠道级属性，
+    上提到带头的「必须登录」后面；长要求（飞猪/同程）本身已带括号说明，
+    不再追加，避免撑破 160px 标签列。 */
+ const _acc=((cells||[]).map(c=>c&&c.login).filter(Boolean)[0])||'';
+ /* 短要求（携程/去哪儿/途牛＝「必须登录」）接上账号名，占 112px 仍在
+    160px 标签列内；飞猪/同程的 meta 已带会话范围说明（154px），再拼
+    账号会撑破列宽，账号留给 title 与卡片 title。 */
+ const _mtxt=(_sl&&_acc&&_sl.length<=6)?(_sl+' · '+_acc):_sl;
+ if(_mtxt)h+='<div class="chband-meta"><span class="chsess '+he((meta&&meta.session)||'')+'" title="'+he([_sl,_note,_acc&&('登录账号 '+_acc)].filter(Boolean).join(' · '))+'"'+'>'+he(_mtxt)+'</span></div>';
  if(extraNote)h+='<div class="chband-note" title="'+he(extraNote)+'">'+he(extraNote)+'</div>';
  h+='</div><div class="chband-body">';
- if(cells)h+='<div class="chband-grid">'+cells.map(c=>chlinkChip(c)).join('')+'</div>';
- if(specials)h+='<div class="chband-specs"><span class="chspec-k">特价</span>'+specials.map(c=>chlinkChip(c,true)).join('')+'</div>';
+ const _auth=!(_sl&&((cells||[]).some(c=>c&&c.login)));
+ if(cells)h+='<div class="chband-grid">'+cells.map(c=>chlinkChip(c,false,_auth)).join('')+'</div>';
+ if(specials)h+='<div class="chband-specs"><span class="chspec-k">特价</span>'+specials.map(c=>chlinkChip(c,true,_auth)).join('')+'</div>';
  return h+'</div></div>';
 }
 function chBoardRefresh(){
@@ -16313,7 +16775,7 @@ async function loginStart(p,b,slot){
   else if(j.kind==='window_failed')toast('⚠ '+(j.err||'登录窗口没能打开')+'（可在「渠道健康 → 诊断卡 → 自检」确认浏览器是否可用）','err');
   else toast(heFriendly(j.err)||'启动失败','err');
  }catch(e){toast('请求失败','err');}
- b.classList.remove('busy');setTimeout(loadLogin,400);}
+ _restore();b.classList.remove('busy');setTimeout(loadLogin,400);}
 async function loginFinish(plat,b,slot){if(b&&b.classList.contains('busy'))return;
  if(b)b.classList.add('busy');   /* busy 期第二击直接忽略（连点曾发
   两次 finish，第二击落「没有进行中的登录」错误 toast） */
@@ -17311,7 +17773,7 @@ async function pathPreview(kind,inp,verbose){
   }
   if(verbose)toast(j.valid?'✅ 目标路径可用':'⚠ '+((j.warning)||'目标路径不可用'),j.valid?'ok':'err');
  }catch(e){if(pv)pv.innerHTML='<span class="warn">校验请求失败（服务不可达）</span>';}}
-/* 冷却剩余时长（r632）：原先一律「分:秒」，而 breaker.cap_s 上限是 24 小时，
+/* 冷却剩余时长（r632）：原先一律「分:秒」，而 breaker.cap_s 上限是 24h，
    于是长冷却显示成 `1440:00` / `480:00` / `120:00`——不是任何人读得懂的格式，
    用户判断不出「还要等 40 分钟还是 8 小时」。
    而且 `15:00` 这种写法在冷却语境里还会被读成**时刻**（15 点整），
@@ -17344,7 +17806,13 @@ async function paceReset(p){
  if(PACE_BUSY['reset:'+p])return;
  PACE_BUSY['reset:'+p]=1;
  const _rbtn=document.querySelector('[data-pk="'+p+':reset"]');
- if(_rbtn){_rbtn.disabled=true;_rbtn.setAttribute('aria-busy','true');}
+ /* 按钮文案必须换成「进行中」（r522）：解除要塞一个真查询回来后端才回答
+    「解了到底通没通」，全程 10–60 秒。只置灰的话读者看不出它在干活，
+    会以为点了没反应——同族的预热/自检都写了「XX 中…（约 N 秒）」，
+    只有这里漏了。保存原文案，finally 里原样还原。 */
+ const _rTxt=_rbtn?(_rbtn.textContent||'解除'):'';
+ if(_rbtn){_rbtn.disabled=true;_rbtn.setAttribute('aria-busy','true');
+  _rbtn.textContent='解除中…（约 10–60 秒）';}
  try{
   const j=await (await fetch('/api/pacing/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p})})).json();
   /* dup = 另一处正在解除并单查探测：既不是失败也不是成功，如实说清楚 */
@@ -17354,7 +17822,10 @@ async function paceReset(p){
  finally{
   delete PACE_BUSY['reset:'+p];
   const _rb=document.querySelector('[data-pk="'+p+':reset"]');
-  if(_rb){_rb.disabled=false;_rb.removeAttribute('aria-busy');}
+  if(_rb){_rb.disabled=false;_rb.removeAttribute('aria-busy');
+   /* 还原成「解除」；随后的 loadPacing() 会整块重建面板，
+      但重建前若有短暂间隙，按钮不能停在「解除中…」。 */
+   if(_rTxt)_rb.textContent=_rTxt;}
  }
  loadPacing();
 }
@@ -17882,6 +18353,10 @@ async function loadPacing(force){
     const _worst=[];
     ['dom','intl'].forEach(sk=>{
      const s1=sc[sk];if(!s1)return;
+     const _qa3=_n(s1.query_attempts_live!=null?s1.query_attempts_live
+                   :s1.query_attempts);
+     const _qr3=(s1.query_rate_live!=null?s1.query_rate_live:s1.query_rate);
+     if(!_qa3||_qr3==null||parseFloat(_qr3)>=0.85)return;   /* 域健康不列 */
      Object.keys(s1.paths||{}).forEach(pp=>{
       const q=s1.paths[pp]||{};
       const n=parseInt(q.attempts)||0;
@@ -17965,13 +18440,19 @@ async function loadPacing(force){
     const _qr=(s1.query_rate_live!=null?s1.query_rate_live:s1.query_rate);
     return label+' '+(_qr==null?'—':_rate(_qr));
    };
+   /* 失败分类与渠道健康同一口径（r602），只在 >0 时附注。 */
    const pws=[];
    Object.keys(pw).forEach(pp=>{
     if(dead.indexOf(pp)>=0)return;
     const w=pw[pp]||{};if(!(parseInt(w.attempts)||0))return;
     const det=_n(w.detail_ok),cal=_n(w.calendar_ok);
-    pws.push(pp+' '+(det===0&&cal>0?('×'+cal):_rate(w.rate)));
+    const _pf=[];
+    if((parseInt(w.login)||0)>0)_pf.push('需登录 '+w.login);
+    if((parseInt(w.soft)||0)>0)_pf.push('软拒 '+w.soft);
+    pws.push(pp+' '+(det===0&&cal>0?('×'+cal):_rate(w.rate))
+      +(_pf.length?'（'+_pf.join(' · ')+'）':''));
    });
+   dead.forEach(pp=>pws.push(pp+' 退役'));
    dead.forEach(pp=>pws.push(pp+' 退役'));
    const pathTxt=_maskSynth?'':[scoped('dom','国内'),scoped('intl','国际')]
     .concat(pws).filter(Boolean).join(' · ');
@@ -18151,7 +18632,7 @@ async function loadPacing(force){
   /* —— 复发：可跟踪的问题 —— */
   const recs=(j.recurrences||[]).slice(0,5);
   const _recHtml=recs.length
-   ?('<div class="pace-sec">反复出现<span class="pace-sub">近 24h 同一渠道 × 通路 × 状态 ≥3 次</span>'
+   ?('<div class="pace-sec"><b>反复出现</b><span class="pace-sub">近 24h 同一渠道 × 通路 × 状态 ≥3 次</span>'
       +'<span class="sp"></span></div><div class="pace-recs">'+recs.map((x,i)=>{
       const k=x.kindLabel||x.kind||x.status;
       const tone=x.recovered?'ok':((x.kind==='soft'||x.autoHeal)?'warn':'bad');
@@ -18241,7 +18722,7 @@ async function loadPacing(force){
     +'<span class="sp"></span><button type="button" data-pk="refresh" onclick="loadPacing(true)" title="立即重新读取">'
     +(_hms?('刷新 · '+_hms):'刷新')+'</button></div>'
    +'<div class="pace-ch">'+chips+'</div>'
-   +'<div class="pace-sec">本轮节流<span class="pace-sub">计划 ＝ 快档 ＋ 慢档 ＋ TTL 内跳过</span></div>'
+   +'<div class="pace-sec"><b>本轮节流</b><span class="pace-sub">计划 ＝ 快档 ＋ 慢档 ＋ TTL 内跳过</span></div>'
    +_stats+_rail+_kv
    +_recHtml
    +'<div class="pace-sec"><b>干预</b><span class="pace-sub" title="预热养会话 · 自检当场取数，都只读不改配置">预热养会话 · 自检当场取数，都只读不改配置</span>'
@@ -18419,36 +18900,6 @@ function buildForm(){if(!CFG)return;let h='',gh='';
   +'<div style="display:flex;align-items:center;gap:10px;margin:2px 0 4px;flex-wrap:wrap">'
   +'<button class="btn2" onclick="exitCheck(this)">出口自检 · 取公网 IP</button>'
   +'<span id="exitOut" style="font-size:12px;color:var(--mut)">换手机热点 / 重播宽带后点一下，确认出口 IP 真的变了（只发一次请求）</span></div>'
-  +'<div id="glThrottle" style="scroll-margin-top:calc(var(--hdh,54px) + 24px)"></div>'
-  +glsec('🧯 节流 · 熔断（1–5 区 · 保存即热生效）')
-  +'<div class="glgrid">'
-  +glcell('静默起','glbQs','GLB.scan_quiet_start=(this.value||"").trim()',esc(GLB.scan_quiet_start||''),'凌晨停扫起点（HH:MM，留空=关闭）。只管抓取，不影响推送','text',null,'01:00')
-  +glcell('静默止','glbQe','GLB.scan_quiet_end=(this.value||"").trim()',esc(GLB.scan_quiet_end||''),'与「静默起」成对；跨零点自动识别（如 23:00–07:00）','text',null,'07:00')
-  +glcell('快层 TTL','glbFast','GLB.fast_ttl_min=Math.max(5,Math.min(1440,parseInt(this.value)||15))',esc(GLB.fast_ttl_min==null?15:GLB.fast_ttl_min),'贴近心理价位的查询多久抓一次；越短越灵敏、请求越多',null,'分钟')
-  +glcell('慢层 TTL','glbSlow','GLB.slow_ttl_min=Math.max(5,Math.min(1440,parseInt(this.value)||120))',esc(GLB.slow_ttl_min==null?120:GLB.slow_ttl_min),'远离阈值的查询降频到此间隔（自动钳到 ≥ 快层）',null,'分钟')
-  +glcell('邻近比','glbNear','GLB.near_ratio=Math.max(0,Math.min(1,parseFloat(this.value)||0))',esc(GLB.near_ratio==null?0.15:GLB.near_ratio),'|现价−阈值|÷阈值 ≤ 此值即算「贴近」，进快层；0=完全相等才算',null,'0.15')
-  +glcell('起跑错峰','glbStg','GLB.stagger_seconds=Math.max(0,Math.min(120,parseInt(this.value)||0))',esc(GLB.stagger_seconds||0),'同轮各渠道起跑拉开的秒数（5 家均分），避免同一秒齐发',null,'秒')
-  +glcell('最小间隔','glbGap','GLB.min_gap_s=Math.max(0,Math.min(300,parseFloat(this.value)||0))',esc(GLB.min_gap_s||0),'同一渠道两次请求的最小间隔；0=不限（去哪儿内部另有 8s）',null,'秒')
-  +glcell('每分钟上限','glbRpm','GLB.per_minute=Math.max(0,Math.min(600,parseInt(this.value)||0))',esc(GLB.per_minute||0),'同一渠道每分钟最多几次；0=不限（滑动窗口，不对齐整分钟）',null,'次')
-  +glcell('熔断','glbBrk','GLB.breaker_enabled=this.checked',GLB.breaker_enabled!==false,'命中 429/风控/验证后停手冷却，而不是换姿势重试','check')
-  +glcell('成功率保护','glbHpen','GLB.health_penalty_enabled=this.checked',GLB.health_penalty_enabled!==false,'近 24h 成功率低于「合格线」时自动拉长该渠道 TTL。关掉后仍统计成功率、但不再自动降频——只在「宁可多打也不接受变慢」时才关','check')
-  +glcell('合格线','glbHok','GLB.health_ok_ratio=Math.max(0.05,Math.min(1,parseFloat(this.value)||0.7))',esc(GLB.health_ok_ratio==null?0.7:GLB.health_ok_ratio),'成功率 ≥ 此值不降频（默认 0.7）；低于它才拉长 TTL',null,'比率')
-  +glcell('降频线','glbHslow','GLB.health_slow_ratio=Math.min(GLB.health_ok_ratio||0.7,Math.max(0,parseFloat(this.value)||0.4));glbClamp(this,\'glbHslow\',GLB.health_slow_ratio,\'降频线不能高于合格线（\'+GLB.health_ok_ratio+\'），已按合格线生效\')',esc(GLB.health_slow_ratio==null?0.4:GLB.health_slow_ratio),'成功率 ≥ 此值只轻降频，更低则重降频（默认 0.4）；自动钳到 ≤ 合格线',null,'比率')
-  +glcell('轻降频倍数','glbHsf','GLB.health_slow_factor=Math.max(1,Math.min(10,parseFloat(this.value)||1.5))',esc(GLB.health_slow_factor==null?1.5:GLB.health_slow_factor),'成功率落在降频线与合格线之间时的 TTL 倍数（默认 1.5）',null,'倍')
-  +glcell('重降频倍数','glbHslf','GLB.health_slowest_factor=Math.max(GLB.health_slow_factor||1.5,Math.min(20,parseFloat(this.value)||3));glbClamp(this,\'glbHslf\',GLB.health_slowest_factor,\'重降频倍数不能低于轻降频倍数（\'+GLB.health_slow_factor+\'），已按轻降频倍数生效\')',esc(GLB.health_slowest_factor==null?3:GLB.health_slowest_factor),'成功率低于降频线时的 TTL 倍数（默认 3）；自动钳到 ≥ 轻降频倍数',null,'倍')
-  +glcell('判定样本下限','glbHms','GLB.health_min_samples=Math.max(1,Math.min(200,parseInt(this.value)||5))',esc(GLB.health_min_samples==null?5:GLB.health_min_samples),'近 24h 样本少于此次数不判定，避免首轮波动就被降频（默认 5）',null,'次')
-  +glcell('熔断起步','glbBbs','GLB.breaker_base_s=Math.max(30,Math.min(3600,parseInt(this.value)||300))',esc(GLB.breaker_base_s||300),'首次冷却秒数；连续命中按 2 倍阶梯递增',null,'秒')
-  +glcell('熔断封顶','glbBcs','GLB.breaker_cap_s=Math.max(120,Math.min(86400,parseInt(this.value)||3600));glbClamp(this,\'glbBcs\',GLB.breaker_cap_s,\'熔断封顶低于起步值（\'+GLB.breaker_base_s+\' 秒）时会先撞封顶，请调高封顶\')',esc(GLB.breaker_cap_s||3600),'单次冷却上限：封太死会掩盖渠道已经恢复的事实',null,'秒')
-  +glcell('首页预热','glbWarm','GLB.warmup_enabled=this.checked',GLB.warmup_enabled!==false,'每轮每渠道先打一次首页再查深链：抹掉「无 referer / 无风控 cookie」这个最强机器指纹','check')
-  /* 能预热的渠道由后端按「真的声明了入口」派生（r627）：原先提示只说
-     「只对声明了入口的渠道生效」，用户填 ctrip 后按钮可点却什么也不做。
-     现在直接列出可填的几家，并把已填但会被忽略的点名。 */
-  +glcell('预热渠道','glbWarmP','GLB.warmup_platforms=(this.value||"").trim()',esc(GLB.warmup_platforms||''),
-    (GLB.warmup_ignored&&GLB.warmup_ignored.length
-      ?('⚠ '+GLB.warmup_ignored.join('、')+' 没有预热入口（打首页下不发可用会话），保存时会被忽略；可填：'+(GLB.warmable||[]).join('、'))
-      :('逗号分隔，可填：'+((GLB.warmable||[]).join('、')||'（无）')+'；留空=不预热')),
-    'text',null,'qunar, fliggy, tuniu')
-  +'</div>'
   +glsec('通用 · 保存即热生效')
   +'<div class="glgrid">'
   +glcell('浏览器 User-Agent（空=内置默认）','glbUa','GLB.user_agent=this.value',esc(GLB.user_agent||''),'全渠道共用的桌面 UA；风控策略变化时无需改码即可更换','text',null,'留空 = 内置桌面 UA')
@@ -18461,8 +18912,6 @@ function buildForm(){if(!CFG)return;let h='',gh='';
   +glcell('TLS 指纹（空=默认）','glbTls','GLB.tls_impersonate=this.value',esc(GLB.tls_impersonate||''),'飞猪等走 curl_cffi 的渠道使用的浏览器指纹标识','text',null,'留空 = 库默认')
   +glcell('调试目录','glbDbgDir','GLB.debug_dir=this.value',esc(GLB.debug_dir||''),'抓取失败时的现场快照落盘位置；相对路径按程序根解析','text',null,'留空 = debug')
   /* 熔断登录冷却 / 近邻天数 / 渠道节奏（r523 补齐）：原先也只能改文件。 */
-  +glcell('登录墙冷却','glbLcd','GLB.login_cooldown_s=Math.max(60,Math.min(86400,parseInt(this.value)||900))',esc(GLB.login_cooldown_s||900),'命中登录墙后该渠道固定冷却秒数（不随命中次数增长）','number',null,'900')
-  +glcell('邻近天数','glbNearD','GLB.near_days=Math.max(0,Math.min(30,parseInt(this.value)||3))',esc(GLB.near_days==null?3:GLB.near_days),'「邻近日期」比价窗口（前后各 N 天）','number',null,'3')
   +glcell('登录窗口可见','glbLgd','GLB.login_desktop=this.checked',GLB.login_desktop!==false,'弹登录窗时显示浏览器界面（容器内无图形环境时应关闭）','check')
   +'</div>'
   +glsec('渠道出口 · 按渠道绑代理 · 保存即热生效')
@@ -18637,7 +19086,7 @@ function buildForm(){if(!CFG)return;let h='',gh='';
     +_dateRowHTML(i,j,'d')
     +(_rtOn(r)?_dateRowHTML(i,j,'r'):'')
     +`
-    <div class="srow"><div class="slab"><b>心理价</b><div class="shint">低于即触发强提醒 · 0=关（按明细展示价判定，含税渠道已含税）</div></div><div class="sctl" style="flex-wrap:wrap;justify-content:flex-end;gap:6px"><span class="sunit" style="font-weight:700">￥直飞</span><input type="number" min="0" step="10" class="keyin" value="${esc(r.alert_direct||0)}" onchange="setRoute(${i},${j},'alert_direct',this.value)"><span class="chip schip${r.direct_only?' on':''}" title="只盯直飞：关闭中转提醒并收起中转价，再点恢复" onclick="toggleDirectOnly(${i},${j},this)">只要直飞</span><span class="sunit trlab" style="display:${r.direct_only?'none':''}">/ ￥中转</span><input type="number" min="0" step="10" class="trprice" style="width:88px;display:${r.direct_only?'none':''}" value="${esc(r.alert_transfer||0)}" onchange="setRoute(${i},${j},'alert_transfer',this.value)"></div></div>
+    <div class="srow"><div class="slab"><b>心理价</b><div class="shint">低于即触发强提醒 · 0=关（按明细展示价判定，含税渠道已含税）</div></div><div class="sctl" style="flex-wrap:wrap;justify-content:flex-end;gap:6px"><span class="sunit" style="font-weight:700">￥直飞</span><input type="number" min="0" step="10" class="keyin" value="${esc(r.alert_direct||0)}" onchange="setRoute(${i},${j},'alert_direct',this.value)"><span class="chip schip${r.direct_only?' on':''}" title="只盯直飞：关闭中转提醒并收起中转价，再点恢复" onclick="toggleDirectOnly(${i},${j},this)">只要直飞</span><span class="sunit trlab" style="display:${r.direct_only?'none':''}">/ ￥中转</span><input type="number" min="0" step="10" class="trprice" style="width:88px;display:${r.direct_only?'none':''}" value="${esc(r.alert_transfer||0)}" onchange="setRoute(${i},${j},'alert_transfer',this.value)"><span class="sunit" style="font-weight:700">￥总阈值</span><input type="number" min="0" step="10" class="keyin" style="width:88px" title="旧版单一总阈值：命中即提醒，不分直飞/中转。0=关。新配置建议用左侧分项" value="${esc(r.alert_threshold||0)}" onchange="setRoute(${i},${j},'alert_threshold',this.value)"></div></div>
     <div class="rthead" role="button" tabindex="0" aria-expanded="false" onclick="foldRtadv(this)" title="智能预设/航司白名单(!排除)/排除廉航/经停/共享/行李直挂/衔接窗口/最晚到达/价格上限/最长飞行时长/排除跨天/出发与到达时段——精准需求展开微调，默认值即可用"><b>筛选与时段约束</b><span class="rfsum" id="rfsum-${i}-${j}">${esc(_rfSummary(r))}</span><span class="rfltbadge" id="rfdcnt-${i}-${j}" style="display:${_rfCount(r)?'':'none'}">${_rfCount(r)?'筛 '+_rfCount(r)+' 项':''}</span><span class="chev">▾</span></div>
     <div class="rfpresets"><span class="rfl">智能预设</span>
      <span class="chip schip${_presetOn(r,'easy')?' on':''}" title="只看直飞：关闭中转提醒并剔除经停/共享/廉航" onclick="applyRoutePreset(${i},${j},'easy',this)">省心直飞</span>
@@ -18785,7 +19234,7 @@ function buildForm(){if(!CFG)return;let h='',gh='';
     和端口/路径/UA 混在一起，用户找不到也分不清哪一项该为「被限流」负责。
     独立成「渠道节流」分区后，与「监控 · 渠道健康」的实时状态/干预
     形成一静一动的对照。控件本体与保存链路不变（同一批 GLB 键）。 */
- const gp='<div class="glsecwrap">'
+ const gp=''
   +'<div id="glThrottle" style="scroll-margin-top:calc(var(--hdh,54px) + 24px)"></div>'
   +glsec('🧯 节流 · 熔断（1–5 区 · 保存即热生效）')
   +'<div class="glgrid">'
@@ -18857,7 +19306,7 @@ try{loadPacing();_paceStartAuto();}catch(e){}
 /* ===== 子卡折叠：分区(A-D)/航线卡/通道卡 点击标题行收展。
    display 切换零 DOM 插拔（翻译/比价扩展免疫）；状态 localStorage 记忆。
    默认态：分区展开、航线卡与通道卡收起（标题行已含关键摘要） ===== */
-let FOLD={sec:{},route:{},ch:{}};
+let FOLD={sec:{},route:{},ch:{},sub:{}};
 try{const _f=JSON.parse(localStorage.getItem('jpcfgfold'));if(_f)FOLD=_f;}catch(e){}
 FOLD.sec=FOLD.sec||{};FOLD.route=FOLD.route||{};FOLD.ch=FOLD.ch||{};FOLD.rtadv=FOLD.rtadv||{};
 function saveFold(){try{localStorage.setItem('jpcfgfold',JSON.stringify(FOLD))}catch(e){}}
@@ -18916,6 +19365,18 @@ function cfgFoldAll(){
     aria-expanded 永远是 true，拿它判「还有敞着的」会把开关永久钉在
     「收齐」档，第二击照样没反应。 */
  let _anyOpen=false;
+ /* r530：参数分区（`#cfgglobals` 的「只读参数说明」等）没有 grouplab /
+    rline / chcard / uhead2，旧选择器一个都命中不了——实测点「全部收齐」
+    后可见字段 52→52、整页 432→432 纹丝不动，按钮却换成「已收齐 19」、
+    aria-expanded=false。**按钮在报一个没发生的状态**，正是用户说的
+    「各个 tab 展开状态没有办法一键全部收齐」，也是 [[feedback-data-honesty]]
+    那类「说错状态」的缺陷。
+    这里把 .subsec 小标题 + 其后的兄弟块也算作一类可折叠单元。 */
+ const _subsecBodies=h=>{const body=[];let n=h.nextElementSibling;
+  while(n&&!n.classList.contains('grouplab')&&!n.classList.contains('subsec')
+        &&!n.classList.contains('danger')){
+   body.push(n);n=n.nextElementSibling;}
+  return body;};
  panels.forEach(panel=>{
   panel.querySelectorAll('.grouplab[data-sec]').forEach(g=>{
    if(_foldSibs(g).some(b=>!b.classList.contains('grouplab')&&
@@ -18929,7 +19390,9 @@ function cfgFoldAll(){
   panel.querySelectorAll('.uhead2[data-u]').forEach(h=>{
    const b=h.nextElementSibling;
    if(b&&!b.classList.contains('grouplab')&&!b.querySelector('.grouplab')&&
-      b.style.display!=='none')_anyOpen=true;});});
+      b.style.display!=='none')_anyOpen=true;});
+  panel.querySelectorAll('.subsec').forEach(h=>{
+   if(_subsecBodies(h).some(b=>b.style.display!=='none'))_anyOpen=true;});});
  const hide=_anyOpen;
  let n=0,_ufold=0;
  /* r459b：分组标题本身必须留在屏幕上——实测「全部收齐」后 6 个
@@ -18973,6 +19436,14 @@ function cfgFoldAll(){
     _setFold(h,[body],true);_ufold++;}
    else{h.setAttribute('aria-expanded','true');
     const c=h.querySelector('.chev');if(c)c.classList.add('open');}});
+  /* r530：参数分区的小标题（.subsec「只读参数说明」「推送行为」等）——
+    它们没有 grouplab/rline/chcard/uhead2，旧循环一个都碰不到。
+    收标题下的兄弟块，标题本身留在屏上（回到内容的入口）。
+    key 用「分区 id + 标题文字」：subsec 没有稳定 id，重建后要能对上。 */
+  panel.querySelectorAll('.subsec').forEach(h=>{
+   const body=_subsecBodies(h);if(!body.length)return;
+   _setFold(h,body,hide);
+   FOLD.sub[panel.id+'|'+h.textContent.trim()]=hide;n++;});
  });
  if(hide){if(_ufold)setOpenUser(-1);n+=_ufold;}
  saveFold();
@@ -18998,7 +19469,14 @@ function applyFolds(){
  /* 航线卡高级约束折叠（r339）：默认收起（无存档即 fold）——
     低频项（行李直挂/最短衔接/最晚到达/出发时段）默认值即用 */
  document.querySelectorAll('#cfgform .rthead').forEach(h=>
-  _setFold(h,_foldSibs(h),FOLD.rtadv[h.closest('.rline').dataset.rk]!==false));}
+  _setFold(h,_foldSibs(h),FOLD.rtadv[h.closest('.rline').dataset.rk]!==false));
+ /* r530：参数分区小标题的折叠存档（cfgFoldAll 收的），重建后按存档还原。
+    key 与写入侧同源：分区 id + 标题文字。 */
+ document.querySelectorAll('#cfgform .cfpanel .subsec').forEach(h=>{
+  const panel=h.closest('.cfpanel');
+  const k=(panel?panel.id:'')+'|'+h.textContent.trim();
+  if(FOLD.sub && FOLD.sub[k]!=null)
+   _setFold(h,_subsecBodies(h),!!FOLD.sub[k]);});}
 function expandFolds(){/* 搜索态临时全开，清空后 cfgSearchClear 还原。
    用户卡头也纳入：容器壳扫会按命中可见性强展折叠卡 body，头若不
    随动即「头报收起、内容却显示」的状态分裂——aria/chev 由 _setFold
@@ -19057,6 +19535,26 @@ function glAbs(k,emptyTip){/* 绝对路径只读展示（r341 一切配置透明
  const a=_m.abs||(GLB_ABS||{})[k]||'';
  if(!a)return '<div class="glabs">'+(emptyTip||'')+'</div>';
  return '<div class="glabs" title="'+esc(a)+'">→ 绝对路径：'+esc(a)+'</div>';}
+/* 夹取反馈（r605）：控件里有隐式夹取（降频线 ≤ 合格线、重降频倍数 ≥ 轻降频
+   倍数、熔断封顶 ≥ 起步）。这些约束后端同样会施加，但界面上输入框会留着
+   用户键入的原值，而保存下去的是夹取后的值——「我配了 0.9，实际跑 0.7」，
+   不报错也不提示，用户无从发现。这里统一回写真实生效值并说明原因。
+   只在对用户可见的输入框上调用；state 同步由调用方先完成。 */
+function glbClamp(el,id,applied,reason){
+ if(!el)return;
+ const box=document.getElementById(id+'Err');
+ if(!box)return;
+ const txt=String(applied);
+ if(String(el.value)!==txt){
+  el.value=txt;
+  box.textContent=reason;
+  /* 样式表里 `.glcell .verr{display:none}` 优先于空串，必须显式给 block，
+     否则回写发生了、解释却永远看不见（实测 display 仍是 none）。 */
+  box.style.display='block';
+  clearTimeout(el.__clampT);
+  el.__clampT=setTimeout(()=>{box.style.display='none'},6000);
+ }else{box.style.display='none';}
+}
 function glbHlChk(el){GLB.headless=el.checked;
  const t=$('glbHlTxt');if(t)t.textContent=el.checked?'后台静默采集':'弹窗可见调试';}
 function chSync(el,i,key){const c=el.closest('.chcard');if(!c)return;
@@ -19699,7 +20197,7 @@ function setRoute(i,j,k,v){CFG[i].routes[j][k]=_coerce(CFG[i].routes[j][k],v);
   if(a.code){r.from=a.code;r.from_name=a.name}
   if(b.code){r.to=b.code;r.to_name=b.name}}
  if(k==='from_name'||k==='to_name'||k==='from'||k==='to'
-   ||k==='alert_direct'||k==='alert_transfer'
+   ||k==='alert_direct'||k==='alert_transfer'||k==='alert_threshold'
    ||k==='dep_time_min'||k==='dep_time_max'||k==='arr_time_min'
    ||k==='arr_time_max'||k==='ret_date')syncRouteHead(i,j);
  syncFilterHead(i,j);}
@@ -20314,14 +20812,51 @@ const GLB_RANGES=[
    return (!isNaN(dn)&&!isNaN(dx)&&dn>dx)?'错峰延迟「自」须 ≤「至」':null;}},
  {id:'glbDx',min:0,max:120,label:'错峰延迟须为 0-120 秒',
   chk:()=>{const dn=parseInt($('glbDn').value),dx=parseInt($('glbDx').value);
-   return (!isNaN(dn)&&!isNaN(dx)&&dn>dx)?'错峰延迟「自」须 ≤「至」':null;}}];
+   return (!isNaN(dn)&&!isNaN(dx)&&dn>dx)?'错峰延迟「自」须 ≤「至」':null;}},
+ /* r606：下面这批原先不在表里，而 glcell 对**所有**数字输入都挂了
+    oninput=glbCheck —— 查不到就静默放行：键入越界值时输入框留着原值，
+    onchange 里的 Math.min/max 把它夹掉，用户看不出自己填的没生效。
+    这里按各自 onchange 的实际边界逐项登记（含小数类用 dec:1）。
+    校验只拦「越界」，不拦「会被别的键夹取」——后者由 glbClamp 负责说明。 */
+ {id:'glbJt',min:0,max:10080,label:'随机扰动须为 0-10080 分钟'},
+ {id:'glbFast',min:5,max:1440,label:'快 TTL 须为 5-1440 分钟'},
+ {id:'glbSlow',min:5,max:1440,label:'慢 TTL 须为 5-1440 分钟'},
+ {id:'glbNear',min:0,max:1,dec:1,label:'邻近比例须为 0-1'},
+ {id:'glbStg',min:0,max:120,label:'错峰抖动须为 0-120 秒'},
+ {id:'glbGap',min:0,max:300,dec:1,label:'最小间隔须为 0-300 秒'},
+ {id:'glbRpm',min:0,max:600,label:'每分钟请求上限须为 0-600（0 = 不限）'},
+ {id:'glbHok',min:0.05,max:1,dec:1,label:'合格线须为 0.05-1'},
+ {id:'glbHslow',min:0,max:1,dec:1,label:'降频线须为 0-1'},
+ {id:'glbHsf',min:1,max:10,dec:1,label:'轻降频倍数须为 1-10'},
+ {id:'glbHslf',min:1,max:20,dec:1,label:'重降频倍数须为 1-20'},
+ {id:'glbHms',min:1,max:200,label:'判定样本下限须为 1-200'},
+ {id:'glbBbs',min:30,max:3600,label:'熔断起步须为 30-3600 秒'},
+ {id:'glbBcs',min:120,max:86400,label:'熔断封顶须为 120-86400 秒'},
+ {id:'glbSessMax',min:0,max:365,label:'会话最长可用天数须为 0-365'},
+ {id:'glbMaxConc',min:0,max:16,label:'并发上限须为 0-16'},
+ {id:'glbLcd',min:60,max:86400,label:'登录墙冷却须为 60-86400 秒'},
+ {id:'glbNearD',min:0,max:30,label:'邻近天数须为 0-30'},
+ {id:'glbAndVm',min:0,max:64,label:'多开实例序号须为 0-64'},
+ {id:'glbAndBoot',min:10,max:600,label:'冷启动超时须为 10-600 秒'},
+ {id:'glbAndAct',min:5,max:900,label:'单命令超时须为 5-900 秒'}];
 /* 输入即校验：越界标红边+行内提示（verr），改对即清；returnMsg=true
    返回错误消息供 saveCfg 复用（不打 UI）。空串不标红——onchange 的
    钳位兜底接管；错峰「自/至」互为联动键，一方改对时姊妹键同步重判 */
-function glbCheck(el,returnMsg){const r=GLB_RANGES.find(x=>x.id===el.id);
+/* 动态生成的控件不逐一登记：按 id 前缀给同一套边界（r606）。
+   渠道节奏 `glbCad_<平台>` 是 map 出来的，逐个写进表里迟早漏一个。 */
+const GLB_RANGES_DYN=[
+ {pre:'glbCad_',min:0,max:10080,label:'渠道节奏须为 0-10080 分钟'}];
+function glbRangeOf(id){
+ const r=GLB_RANGES.find(x=>x.id===id);
+ if(r)return r;
+ const d=GLB_RANGES_DYN.find(x=>id.indexOf(x.pre)===0);
+ return d?{id:id,min:d.min,max:d.max,dec:d.dec,label:d.label}:null;}
+function glbCheck(el,returnMsg){const r=glbRangeOf(el.id);
  if(!r)return null;
  const errDiv=$(el.id+'Err');const v=el.value.trim();let m=null;
- if(v!==''){const n=parseInt(v);
+ /* 比率/倍数类是小数字段（0.05–1、1.5 倍…）：用 parseInt 会把 0.05 读成 0
+    → 永远判「越界」。按表里的 dec 标记选解析方式（r606）。 */
+ if(v!==''){const n=r.dec?parseFloat(v):parseInt(v);
   if(isNaN(n)||n<r.min||n>r.max)m=r.label;
   else if(r.chk)m=r.chk(el);}
  if(!returnMsg&&m==null){
@@ -20347,6 +20882,13 @@ async function saveCfg(){
  for(const r of GLB_RANGES){const el=$(r.id);
   const _m=el?glbCheck(el,true):null;
   if(_m){cfgErr('❌ '+_m);return;}}
+ /* 动态前缀控件（渠道节奏 glbCad_*）同样要拦：它们不在静态表里，
+    保存侧漏掉就等于「输入时标红、保存时放行」两套结论（r606）。 */
+ for(const el of document.querySelectorAll('#cfgform .glcell input[type=number]')){
+  if(!el.id||GLB_RANGES.some(x=>x.id===el.id))continue;
+  if(!glbRangeOf(el.id))continue;
+  const _md=glbCheck(el,true);
+  if(_md){cfgErr('❌ '+_md);return;}}
  // 城市中文名 → 三字码（wizard 同款归一：剥「市」后缀再查表；
  // 名字槽直写三字码同样合法；名字槽空而码槽为合法三字码的存量行
  // 以码即名放行——外部 yaml/手写来源的航线不被守卫卡死）。命中即
@@ -22577,7 +23119,7 @@ function srxMirrorHTML(){
  const host=(f&&f.view)?f.view.replace(/^https?:\/\//,'').split('/')[0]:(lk&&lk.url?lk.url.replace(/^https?:\/\//,'').split('/')[0]:'原页深链未供（渠道本态）');
  const rail=chans.map(c=>'<button type="button" class="srx-mtab'+(c===ch?' on':'')+(cnt[c]?'':' off')+'" data-mch="'+c+'" style="--pc:'+SRX_PLATS[c][1]+'" aria-pressed="'+(c===ch)+'"><span class="p" aria-hidden="true">'+srxPlatIcon(c)+'</span>'+SRX_PLATS[c][0]+'<span class="n">'+cnt[c]+'</span></button>').join('');
  const body=SRX.mview==='detail'?srxMirrorDetailHTML(f,ch):srxMirrorListHTML(ch,rows);
- return '<div class="srx-mrail">'+rail+'<button type="button" class="srx-foldbtn" style="margin-left:6px" data-foldtarget="srxMirror" onclick="srxFold(this.dataset.foldtarget,this)" aria-expanded="true">收起镜像</button><span class="srx-mtools"><button type="button" class="'+(SRX.mview==='list'?'on':'')+'" data-mview="list" aria-pressed="'+(SRX.mview==='list')+'">列表</button><button type="button" class="'+(SRX.mview==='detail'?'on':'')+'" data-mview="detail" aria-pressed="'+(SRX.mview==='detail')+'">详情</button><button type="button" data-mview="four" aria-pressed="'+(SRX.mview==='four')+'" title="四源同屏">四源</button>'+(lk&&lk.url?'<button type="button" data-openlink="'+he(lk.url)+'">打开原页</button>':'')+'</span></div>'
+ return '<div class="srx-mrail">'+rail+'<span class="srx-mtools"><button type="button" class="'+(SRX.mview==='list'?'on':'')+'" data-mview="list" aria-pressed="'+(SRX.mview==='list')+'">列表</button><button type="button" class="'+(SRX.mview==='detail'?'on':'')+'" data-mview="detail" aria-pressed="'+(SRX.mview==='detail')+'">详情</button><button type="button" data-mview="four" aria-pressed="'+(SRX.mview==='four')+'" title="四源同屏">四源</button>'+(lk&&lk.url?'<button type="button" data-openlink="'+he(lk.url)+'">打开原页</button>':'')+'</span><button type="button" class="srx-foldbtn" data-foldtarget="srxMirror" onclick="srxFold(this.dataset.foldtarget,this)" aria-expanded="true">收起镜像</button></div>'
   +'<div class="srx-mchrome"><span class="dots"><i></i><i></i><i></i></span><span class="host">'+he(host)+'</span><span class="tag">原页镜像 · 结构重绘</span></div>'
   +'<div class="srx-mbody"><div class="srx-msearch"><b>'+he(srxPairName(...(SRX.pair||'|').split('|')))+'</b><span>'+he(SRX.date||'全部日期')+'</span><span>'+he(nm)+'</span><span class="go" style="--pc:'+pc+'">镜像</span></div>'
   +'<div class="srx-mfilt"><span>'+he(nm)+'</span><span>'+rows.length+' 行</span><span>'+he(srxChAge(ch,rows))+'</span><span>与左侧同源 /api/state · 本渠道全量</span></div>'
@@ -24512,15 +25054,6 @@ class _State:
     # 闸门锁（r481）：判断与占位必须原子。Handler 是多线程并发的，
     # 先判断再占位会让两个标签页同时通过（负控实测：插入让出点即双跑探测）。
     reset_lock = threading.Lock()
-    job = None
-    report_push = None
-    reload_cb = None
-    config_path = "config.yaml"
-    version = ""
-    listen = ""
-    started_at = ""
-    logger = logging.getLogger("ticket-monitor")
-    lock = threading.Lock()
     # App 渠道登录会话（r604）：与浏览器登录的 login_sessions 并列，
     # 但载体不同——那边是 Playwright 窗口，这边是 adb 帧流。
     app_login = None   # 惰性创建 AppLoginRegistry
@@ -24530,6 +25063,86 @@ class _State:
     login_pending = {}    # plat -> finish 时刻（保存→下轮采集验证的过渡窗，
     #                          窗内卡片词面「验证中」不再说「建议重登」——
     #                          刚点完登录就被建议重登是词面自相矛盾）
+    job = None
+    report_push = None
+    reload_cb = None
+    config_path = "config.yaml"
+    version = ""
+    listen = ""
+    started_at = ""
+    logger = logging.getLogger("ticket-monitor")
+    lock = threading.Lock()
+
+
+# ── App 渠道登录（r604）──────────────────────────────────────────
+# 包一层，把 webui 的配置/日志接到 core.android.login_api 上；
+# login_api 本身不 import webui，避免循环依赖。
+APP_LOGIN_PACKAGES = {"app_zhixing": "cn.suanya.zhixing"}
+
+
+def _app_login_registry():
+    from core.android.login_session import AppLoginRegistry
+    if _State.app_login is None:
+        with _State.lock:
+            if _State.app_login is None:
+                _State.app_login = AppLoginRegistry()
+    return _State.app_login
+
+
+def _app_login_ctx():
+    """构造 login_api 需要的上下文：运行时工厂 + 校验 + 快照。"""
+    from core.android.runtime import get_runtime
+
+    cfg = _State.cfg or {}
+
+    def _runtime():
+        if not (cfg.get("android") or {}).get("enabled"):
+            return None
+        return get_runtime(cfg, _State.logger)
+
+    def _verify():
+        """dump 首页判断是否真的登录了（只认明确的登录墙文案）。"""
+        rt = _runtime()
+        dev = rt.device() if rt else None
+        if dev is None:
+            return True, "无法校验（设备不可用）"
+        xml = dev.dump()
+        if not xml:
+            return True, "无法校验（未取到页面）"
+        try:
+            from crawlers.app_zhixing_parse import detect_state
+            st = detect_state(xml)
+        except Exception:
+            st = "unknown"
+        if st == "login":
+            return False, "页面仍是登录墙，请完成登录后再试"
+        return True, "已离开登录墙"
+
+    def _snapshot():
+        rt = _runtime()
+        dev = rt.device() if rt else None
+        if dev is None:
+            return False, "设备不可用"
+        try:
+            from core.android.snapshot import SnapshotManager, SnapshotStore
+            # 快照与浏览器登录态同放 user_data 下：同为本地凭证，
+            # 同受「资料目录整体搬迁」那套启动级逻辑管理。
+            # 必须用 _anchored 锚到仓库根：相对路径直接 join 会随 cwd
+            # 漂移，而采集端是按仓库根解析的——两边各找一处，导出了也
+            # 永远恢复不到（「登录一次永久复用」就是这么失效的）。
+            udir = _anchored(
+                str((cfg.get("crawler") or {}).get("user_data_dir")
+                    or "user_data"), "user_data")
+            store = SnapshotStore(os.path.join(udir, "android_snapshots"))
+            mgr = SnapshotManager(dev, store, "cn.suanya.zhixing")
+            return mgr.export("app_zhixing")
+        except Exception as e:
+            return False, f"快照失败：{type(e).__name__}"
+
+    return {"packages": APP_LOGIN_PACKAGES,
+            "runtime_factory": _runtime,
+            "verify": _verify,
+            "snapshot": _snapshot}
 
 
 def _test_email_launch() -> str:
@@ -25844,9 +26457,9 @@ def _probe_search(frm, to, date, plats, legs=None, task=None, cancel=None,
     globals()["_PROBE_LAST"] = _now0
     cfg = (_State.cfg or {})
     crawler_cfg = dict(cfg.get("crawler") or {})
-    # 探测与定时采集必须拿到同一份 android 段（r630）：这里自建爬虫实例，
-    # 少了这一段时 App 渠道一律报 runtime not ready: disabled——
-    # 「渠道自检」点了永远失败，而定时采集其实正常。
+    # 探针与定时采集必须拿到同一份 android 段（r630）：这里自建爬虫实例，
+    # 少了这一段时 App 渠道会一律报 runtime not ready: disabled——
+    # 「渠道自检」按钮点了永远失败，而定时采集其实正常。
     crawler_cfg["android"] = cfg.get("android") or {}
     t0 = _time.time()
     batch = raw_legs is not None
@@ -28425,7 +29038,11 @@ def _state_restore_once():
 def _state_signature():
     """当前 /api/state 缓存签名；DB 不可读时返回 None（禁用缓存路径）。"""
     st = _State
-    db = _anchored((st.cfg.get("output") or {}).get("db_path"),
+    # cfg 未加载时是 None（例如直接挂 _Handler 起服务、配置还没读盘）——
+    # 曾在这里 `st.cfg.get(...)` 直接抛 AttributeError，导致首屏
+    # /api/state 整个 500，界面拿不到任何状态（实测两个 500）。
+    cfg = st.cfg if isinstance(st.cfg, dict) else {}
+    db = _anchored((cfg.get("output") or {}).get("db_path"),
                    "data/prices.db")
     try:
         sst = os.stat(db)
@@ -28447,11 +29064,16 @@ def _build_state(sig):
     etag/gz 原子成对（撕裂修复语义不变）。并发双构建无害：
     单飞旗标已挡重入，即便穿透也是先完成者先发布、后完成者整体覆盖。"""
     st = _State
-    users = st.users or [{"name": "default", "routes": st.cfg.get("routes") or []}]
+    # 同一容错：cfg 未加载时按空配置出「无用户/无航线」的空状态，
+    # 而不是让整个 /api/state 500（首屏看不到任何东西）。
+    # 只在这两个函数里用局部别名：不能回写 st.cfg，否则配置随后加载
+    # 时会被这份空字典盖掉。
+    _cfg = st.cfg if isinstance(st.cfg, dict) else {}
+    users = st.users or [{"name": "default", "routes": _cfg.get("routes") or []}]
     states = [_user_state(u) for u in users if u.get("routes")]
     # 更新时间取 DB 最新一条
     import sqlite3 as sq
-    db = _anchored((st.cfg.get("output") or {}).get("db_path"),
+    db = _anchored((_cfg.get("output") or {}).get("db_path"),
                    "data/prices.db")
     updated = ""
     try:
@@ -28463,7 +29085,7 @@ def _build_state(sig):
     except Exception:
         pass
     out = {"updated": updated, "users": states,
-           "suspended": _suspended_users(users, st.cfg.get("users") or []),
+           "suspended": _suspended_users(users, _cfg.get("users") or []),
            "next_run": _next_run(), "version": st.version,
            "demo": bool(DEMO["on"]),
            # 页脚「本地服务」实际监听地址（热切换/自定义 host 下页脚
@@ -28834,6 +29456,14 @@ def _demo_paths_from_rounds(rounds):
 
 def _attach_demo_paths(out: dict) -> None:
     """把分通路账挂到演示 /api/health 载荷上（与 /api/paths 同源）。"""
+    # r538：演示态必须让**卡片自己**说明数据来源。原先只有页头那行
+    # 「DEMO · 合成健康」带标识，诊断卡仍逐张写「最近一轮正常」——
+    # 与真实环境一模一样的措辞，用户读作「补位数据很奇怪」。
+    # 演示走的是轻路径（不经 _health_decorate），故标志在这里落。
+    out["demo"] = True
+    for _c in out.get("diag") or []:
+        if isinstance(_c, dict) and _c.get("label"):
+            _c["label"] = "演示 · " + str(_c["label"])
     try:
         paths = _demo_paths_from_rounds(out.get("rounds") or [])
         if paths:
@@ -28848,6 +29478,15 @@ def _health_decorate(out: dict) -> dict:
     plats = (rounds[-1].get("plats") if rounds else {}) or {}
     out["diag"] = classify_round(plats, cookie=_cookie_states())
     out["diag_at"] = rounds[-1].get("ts", "") if rounds else ""
+    # r538：演示态必须让**卡片自己**说明数据来源。原先只有页头那行
+    # 「DEMO · 合成健康」带标识，诊断卡仍然逐张写「最近一轮正常」——
+    # 与真实环境的结论一模一样的措辞，用户读作「补位数据很奇怪」。
+    # 这里把 demo 标志与口径一并下发，前端据此改写状态词。
+    out["demo"] = bool(DEMO["on"])
+    if DEMO["on"]:
+        for _c in out["diag"] or []:
+            if isinstance(_c, dict) and _c.get("label"):
+                _c["label"] = "演示 " + str(_c["label"])
     # 诊断卡也要多会话维度（r430）。此处在 _health_state 调用栈内，
     # 必须置重入标志，否则 _login_state_view 再调 _health_state 会递归。
     global _IN_HEALTH_DECORATE
@@ -29448,73 +30087,6 @@ class _Srv(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
-# ── App 渠道登录（r604）──────────────────────────────────────────
-# 包一层，把 webui 的配置/日志接到 core.android.login_api 上；
-# login_api 本身不 import webui，避免循环依赖。
-APP_LOGIN_PACKAGES = {"app_zhixing": "cn.suanya.zhixing"}
-
-
-def _app_login_registry():
-    from core.android.login_session import AppLoginRegistry
-    if _State.app_login is None:
-        with _State.lock:
-            if _State.app_login is None:
-                _State.app_login = AppLoginRegistry()
-    return _State.app_login
-
-
-def _app_login_ctx():
-    """构造 login_api 需要的上下文：运行时工厂 + 校验 + 快照。"""
-    from core.android.runtime import get_runtime
-
-    cfg = _State.cfg or {}
-
-    def _runtime():
-        if not (cfg.get("android") or {}).get("enabled"):
-            return None
-        return get_runtime(cfg, _State.logger)
-
-    def _verify():
-        """dump 首页判断是否真的登录了（只认明确的登录墙文案）。"""
-        rt = _runtime()
-        dev = rt.device() if rt else None
-        if dev is None:
-            return True, "无法校验（设备不可用）"
-        xml = dev.dump()
-        if not xml:
-            return True, "无法校验（未取到页面）"
-        try:
-            from crawlers.app_zhixing_parse import detect_state
-            st = detect_state(xml)
-        except Exception:
-            st = "unknown"
-        if st == "login":
-            return False, "页面仍是登录墙，请完成登录后再试"
-        return True, "已离开登录墙"
-
-    def _snapshot():
-        rt = _runtime()
-        dev = rt.device() if rt else None
-        if dev is None:
-            return False, "设备不可用"
-        try:
-            from core.android.snapshot import SnapshotManager, SnapshotStore
-            # 快照与浏览器登录态同放 user_data 下：同为本地凭证，
-            # 同受「资料目录整体搬迁」那套启动级逻辑管理。
-            udir = str((cfg.get("crawler") or {}).get("user_data_dir")
-                       or "user_data")
-            store = SnapshotStore(os.path.join(udir, "android_snapshots"))
-            mgr = SnapshotManager(dev, store, "cn.suanya.zhixing")
-            return mgr.export("app_zhixing")
-        except Exception as e:
-            return False, f"快照失败：{type(e).__name__}"
-
-    return {"packages": APP_LOGIN_PACKAGES,
-            "runtime_factory": _runtime,
-            "verify": _verify,
-            "snapshot": _snapshot}
-
-
 class _Handler(BaseHTTPRequestHandler):
     # HTTP/1.1 才走 keep-alive/条件请求：HTTP/1.0（默认）下 Chromium
     # 不缓存 /api/state，也不会发 If-None-Match，304 分支形同虚设
@@ -29914,6 +30486,7 @@ class _Handler(BaseHTTPRequestHandler):
                         _attach_diag_slots(out)
                     finally:
                         _IN_HEALTH_DECORATE = _prevd
+                    out["enabled_platforms"] = _enabled_platforms()
                     self._json(out)
                 else:
                     _hp = _health_state()
@@ -29936,6 +30509,7 @@ class _Handler(BaseHTTPRequestHandler):
                             _hp["last_seen_at"] = ""
                     except Exception:
                         _hp["last_seen_at"] = ""
+                    _hp["enabled_platforms"] = _enabled_platforms()
                     self._json(_hp)
             except Exception as e:
                 self._json({"err": str(e)}, 500)
@@ -30582,8 +31156,25 @@ class _Handler(BaseHTTPRequestHandler):
                                 "login_desktop": bool(
                                     (cfg.get("crawler") or {}).get(
                                         "login_desktop", False)),
-                                # Android 真机通道（r603）：后端真读
-                                # （core/android/config.py），配置页同键可改。
+                                # r523：接管原先「只能在文件里改」的其余键。
+                                "mobile_user_agent": str(
+                                    (cfg.get("crawler") or {}).get(
+                                        "mobile_user_agent", "") or ""),
+                                "debug_dir": str(
+                                    (cfg.get("crawler") or {}).get(
+                                        "debug_dir", "") or ""),
+                                "login_cooldown_s": int(
+                                    ((cfg.get("crawler") or {}).get("breaker")
+                                     or {}).get("login_cooldown_s", 900) or 900),
+                                "near_days": int(
+                                    (cfg.get("schedule") or {}).get(
+                                        "near_days", 3) or 3),
+                                "cadence": dict(
+                                    (cfg.get("crawler") or {}).get(
+                                        "cadence") or {}),
+                                # Android 真机通道（r603）：此后端已真读
+                                # （core/android/config.py），但配置页
+                                # 一个控件都没有——用户只能改文件。
                                 "android": dict(cfg.get("android") or {}),
                                 "run_on_start": bool(
                                     (cfg.get("schedule") or {}).get(
@@ -30614,6 +31205,11 @@ class _Handler(BaseHTTPRequestHandler):
                                 # 发现层出口统一走它（保存热生效）
                                 "proxy": str((cfg.get("crawler") or {}).get(
                                     "proxy", "") or ""),
+                                # 按渠道绑出口（r600）：一家被限流不牵连
+                                # 另一家；空 = 该渠道回全局 proxy
+                                "proxy_map": dict(
+                                    (cfg.get("crawler") or {}).get(
+                                        "proxy_map") or {}),
                                 "debug": bool((cfg.get("crawler") or {}).get(
                                     "debug", False)),
                                 # 指纹一致性（L3）：抹掉 navigator.webdriver
@@ -30837,6 +31433,13 @@ class _Handler(BaseHTTPRequestHandler):
                     if _px and not re.match(r"^https?://[^\s/]+:\d+$", _px):
                         _px = ""
                     _crw["proxy"] = _px
+                # 按渠道绑出口（r600）：与全局 proxy 同一套形态校验——
+                # 漏 scheme 的手滑输入会让该渠道 httpx 抛 InvalidURL，
+                # 而故障表现是「这一家全红」，最难归因回配置笔误。
+                if isinstance(glb.get("proxy_map"), dict):
+                    _crw["proxy_map"] = _proxy_map_clean(glb["proxy_map"])
+                # Android 真机通道（r603）：字段范围与 core/android/config.py
+                # 的钳制逐项一致，避免界面能填出后端会悄悄改掉的值。
                 if isinstance(glb.get("android"), dict):
                     _and = glb["android"]
                     _a0 = dict(cfg.get("android") or {})
@@ -30928,6 +31531,46 @@ class _Handler(BaseHTTPRequestHandler):
                     except (TypeError, ValueError):
                         _bc = 3600
                     _brk0["cap_s"] = max(120, min(86400, _bc))
+                # r523：把原先「只能在文件里改」的采集细节落盘（热生效）。
+                _crw2 = cfg.setdefault("crawler", {})
+                for _ck, _cd, _lo, _hi in (
+                        ("session_max_days", 0, 0, 365),
+                        ("max_concurrency", 0, 0, 16)):
+                    if glb.get(_ck) is not None:
+                        try:
+                            _crw2[_ck] = max(_lo, min(_hi, int(glb[_ck])))
+                        except (TypeError, ValueError):
+                            _crw2[_ck] = _cd
+                for _sk2 in ("mobile_user_agent", "tls_impersonate",
+                             "debug_dir"):
+                    if glb.get(_sk2) is not None:
+                        _crw2[_sk2] = str(glb[_sk2] or "").strip()[:300]
+                if glb.get("login_desktop") is not None:
+                    _crw2["login_desktop"] = bool(glb["login_desktop"])
+                if glb.get("login_cooldown_s") is not None:
+                    try:
+                        _lc2 = int(glb["login_cooldown_s"])
+                    except (TypeError, ValueError):
+                        _lc2 = 900
+                    _brk0["login_cooldown_s"] = max(60, min(86400, _lc2))
+                if glb.get("near_days") is not None:
+                    try:
+                        _nd2 = int(glb["near_days"])
+                    except (TypeError, ValueError):
+                        _nd2 = 3
+                    cfg.setdefault("schedule", {})["near_days"] = max(
+                        0, min(30, _nd2))
+                if isinstance(glb.get("cadence"), dict):
+                    _cad0 = _crw2.setdefault("cadence", {})
+                    for _cp, _cv in glb["cadence"].items():
+                        if _cp not in ("qunar", "fliggy", "ctrip",
+                                       "tongcheng", "tuniu"):
+                            continue
+                        try:
+                            # 与 core/pacing.py 同口径：整数分钟、0..10080。
+                            _cad0[_cp] = max(0, min(10080, int(_cv)))
+                        except (TypeError, ValueError):
+                            pass
                 # win_toast 缺省即开启——保存时落显式布尔进 config.yaml
                 for u0 in (cfg["users"] or []):
                     n0 = u0.get("notifier") or {}

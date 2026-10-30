@@ -80,3 +80,53 @@ def test_path_reset_clears():
 def test_login_url_is_abstract():
     c = _crawler()
     assert c.login_url() == "app://dummy"
+
+
+# ---- r639：登录态快照必须能在下次采集前自动恢复 ----
+def test_restore_runs_once_per_process():
+    """一个进程只尝试恢复一次，且没有快照时静默跳过、不记失败。"""
+    import logging
+    import os
+    import tempfile
+    from crawlers.app_zhixing import AppZhixingCrawler
+
+    d = tempfile.mkdtemp()
+    c = AppZhixingCrawler(
+        {"android": {"enabled": True, "snapshot": True},
+         "user_data_dir": d}, logging.getLogger("t"))
+
+    class Dev:
+        pass
+
+    assert c.restore_login_snapshot(Dev()) is False
+    assert c._snapshot_restored is True, "没快照也该标记为「试过了」"
+    assert not [p for p in c.paths if p["path"] == "snap-restore"], \
+        "没有快照时不该记任何失败"
+
+
+def test_restore_skipped_when_snapshot_disabled():
+    """android.snapshot=false 时不得动设备。"""
+    import logging
+    from crawlers.app_zhixing import AppZhixingCrawler
+
+    c = AppZhixingCrawler(
+        {"android": {"enabled": True, "snapshot": False}}, logging.getLogger("t"))
+    assert c._snapshot_manager(object()) is None
+    assert c.restore_login_snapshot(object()) is False
+
+
+def test_snapshot_dir_matches_between_export_and_restore():
+    """导出端与恢复端必须解析到同一个目录。
+
+    实测踩过：配置页按相对路径 join（随 cwd 漂移），采集端按仓库根
+    解析——两边各找一处，导出了也永远恢复不到，表现为「登录过还要重登」。
+    """
+    import os
+    import re
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    w = open(os.path.join(root, "webui.py"), encoding="utf-8",
+             newline="").read()
+    i = w.index("android_snapshots")
+    seg = w[i - 700:i + 60]
+    assert "_anchored(" in seg, (
+        "登录完成导出快照时没有锚定仓库根，会与采集端解析出不同目录")

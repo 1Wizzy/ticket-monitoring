@@ -54,6 +54,53 @@ class AppCrawler:
         root = str(self.config.get("user_data_dir") or "user_data").strip() \
             or "user_data"
         self.user_data_root = os.path.abspath(os.path.join(_REPO_ROOT, root))
+        # 登录态快照：进程内只尝试恢复一次（每个渠道各一次）。
+        # 只导出不恢复等于白存——用户「登录一次」后换次进程又得重登。
+        self._snapshot_restored = False
+
+    # ---------- 登录态快照 ----------
+    def _snapshot_manager(self, dev):
+        """构造快照管理器；配置关闭或包名为空时返回 None。"""
+        android = self.config.get("android") or {}
+        if android.get("snapshot") is False:
+            return None
+        if not self.package:
+            return None
+        try:
+            from core.android.snapshot import SnapshotManager, SnapshotStore
+            store = SnapshotStore(
+                os.path.join(self.user_data_root, "android_snapshots"))
+            return SnapshotManager(dev, store, self.package)
+        except Exception:
+            return None
+
+    def restore_login_snapshot(self, dev) -> bool:
+        """首次采集前恢复登录态；返回 True 表示这次真的恢复了。
+
+        - 没有快照、配置关闭、设备不可用，都**静默跳过**（不是错误）；
+        - 一个进程内只尝试一次，避免每轮都重启 App 白花时间；
+        - 恢复失败要留痕：`snap-restore` 记一条，用户能看到是「恢复失败」
+          而不是「明明登录过却还要重登」。
+        """
+        if self._snapshot_restored:
+            return False
+        self._snapshot_restored = True
+        mgr = self._snapshot_manager(dev)
+        if mgr is None:
+            return False
+        try:
+            if not mgr.store.exists(self.name):
+                return False
+            ok, detail = mgr.restore(self.name)
+        except Exception as e:
+            ok, detail = False, f"{type(e).__name__}: {e}"
+        if ok:
+            self.logger.info("[%s] 已恢复登录态快照（%s）", self.name, detail)
+            self.path_note("snap-restore", "ok", detail=detail)
+            return True
+        self.logger.warning("[%s] 登录态快照恢复失败：%s", self.name, detail)
+        self.path_note("snap-restore", "error", detail=str(detail)[:150])
+        return False
 
     # ---------- 账本（与 BaseCrawler 同形）----------
     def path_reset(self):
