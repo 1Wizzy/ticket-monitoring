@@ -576,7 +576,8 @@ def test_calendar_path_label_is_not_doubled():
     """
     src = open("webui.py", encoding="utf-8").read()
     assert "'日历'+cal" not in src, "通路名与台数重复拼「日历」"
-    i = src.index("pws.push(pp+' '")
+    # r659 起通路名统一走 pathCN()，锚点跟着改；守的仍是「台数以 ×N 出现」
+    i = src.index("pws.push(pathCN(pp)+' '")
     seg = src[i:i + 120]
     assert "'×'+cal" in seg, "日历通路台数未改成 ×N 形态"
 
@@ -736,7 +737,8 @@ def test_retired_path_is_marked_not_silently_dropped():
     合约：退役通路 push 成「<名> 退役」，且不得再当成在用通路算一次成功率。
     """
     seg = _pacing_seg()
-    assert "dead.forEach(pp=>pws.push(pp+' 退役'))" in seg, \
+    # r659：通路名走 pathCN()，锚点跟着改；守的仍是「退役留在行内并标退役」
+    assert "dead.forEach(pp=>pws.push(pathCN(pp)+' 退役'))" in seg, \
         "退役通路未在速览里标出"
     i = seg.index("Object.keys(pw).forEach(pp=>{")
     block = seg[i:i + 260]
