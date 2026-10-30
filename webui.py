@@ -21271,7 +21271,12 @@ function srxPlatIcon(p,cls,lazy){
    ||(SRX_PLATS[p]&&SRX_PLATS[p][0])||(p||'渠道');
  const nm=_cn;
  const c='bic bic-ota '+(cls||'');
- if(!im)return '<span class="'+c+' bic-fb" data-plat="'+he(p)+'" style="--pc:'+(SRX_PLATS[p]?SRX_PLATS[p][1]:'#5a6c7d')+'" title="'+he(nm)+' · 官方图标未收录" aria-hidden="true">'+he(String(nm).slice(0,1))+'</span>';
+ /* 无官方图标时，字符牌只在「它不能从名字里猜出来」时才画：
+    牌面取名字首字，若名字本身就以这个字开头（「智 智行 App」
+    「携 携程」），牌面等于把第一个字抄一遍，纯噪声。
+    英文 id 的旧表现更糟——渲染成光秃秃的「a 智行 App」。
+    不画牌时用同尺寸占位，保证同一列的图标位仍对齐。 */
+ if(!im)return '';
  return '<img class="'+c+'" data-plat="'+he(p)+'" src="'+srxLogoURL(im)+'"'+(lazy?' loading="lazy"':'')+' decoding="async" alt="" aria-hidden="true" title="'+he(nm)+' · 官方图标" onerror="srxIconErr(this)">';
 }
 /* 图片解码/加载失败回退到与「未收录」一致的字符牌，避免破图与

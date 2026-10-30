@@ -83,6 +83,11 @@ class AppZhixingCrawler(AppCrawler):
         # 会把正在操作的页面顶掉。没有快照时静默跳过，不算失败。
         self.restore_login_snapshot(dev)
 
+        # 系统权限框（换机/重装后 App 启动时会弹）会盖住首页，先清掉。
+        # 放在恢复之后、任何页面判断之前：否则「被权限框挡住」会被
+        # 读成「首页未就绪 / 页面认不出」。
+        self._dismiss_system_prompts(dev)
+
         # 异常逃逸不在这里写：调用方统一走 `AppBaseCrawler.safe_fetch()`，
         # 它已 try/except 并记 `app-error`（含本段抛出的一切）。此处再包一层
         # 只是重复防御，且会抢在 safe_fetch 的去重判断之前多记一条。
