@@ -2535,7 +2535,7 @@ def _daily_ops_notes(user_platforms, seen, names, date, mkt_t=None,
     if missing:
         notes.append("%s %s 当轮无数据：%s" % (
             rs, ds,
-            "、".join(Alerter.PLATFORM_CN.get(p, p) for p in missing)))
+            "、".join(Alerter.plat_cn(p) for p in missing)))
     if (str(transfer_baggage or "") == "direct" and (mkt_t or [])
             and not any(_tie_grp_flagged(f) for f in (mkt_t or []))):
         notes.append(f"{rs} {ds} "
@@ -2545,7 +2545,7 @@ def _daily_ops_notes(user_platforms, seen, names, date, mkt_t=None,
         for p, v in xphans:
             byp[p] = min(byp.get(p, 9e9), v if v else 9e9)
         xnames = "、".join(
-            f"{Alerter.PLATFORM_CN.get(p, p)}￥{v:.0f}"
+            f"{Alerter.plat_cn(p)}￥{v:.0f}"
             for p, v in sorted(byp.items(), key=lambda kv: kv[1]))
         notes.append(f"{rs} {ds} "
                      f"孤低价拦截×{len(xphans)}：{xnames}")
@@ -2673,7 +2673,7 @@ def _daily_market_fallback(pmins, best_rows=None):
     for pl, (v, _dtl) in (pmins or {}).items():
         if not isinstance(v, (int, float)):
             continue
-        cn = Alerter.PLATFORM_CN.get(pl, pl)
+        cn = Alerter.plat_cn(pl)
         # 截断补 (截) 留痕（与告警兜底/运维对账行同纪律）：截痕自身
         # 进预算量宽，静默截尾=读者不知有截。截断基准=40−地板（地板
         # 随价格词面 _brief_floor：国内 5 位价=32，6 位国际价词面 9
@@ -3242,7 +3242,7 @@ def build_and_push(cfg, logger, notifier, user=""):
             # except 吞成静默，🔍 链接自引入从未产出过（72 条日报 0 次）
             _vu = Alerter._build_view_url(None, _vs, date, _plat)
             if _vu:   # 空 URL 剥壳出纯文本曾产出死链 [文字]()，直接跳过
-                _pcn = Alerter.PLATFORM_CN.get(_plat, _plat)
+                _pcn = Alerter.plat_cn(_plat)
                 _link = f"[🔍 打开{_pcn}查现价]({_vu})\n\n"
                 sec.append(_link)
         except Exception as _vu_exc:

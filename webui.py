@@ -26836,7 +26836,7 @@ def _probe_search(frm, to, date, plats, legs=None, task=None, cancel=None,
                             "isCal": not (dep and arr),   # r386：只认时刻（无航班号中转行是真班次）
                             "probeIdx": raw_ix, "synthetic": synthetic,
                             "intl": 1 if _is_intl(fc, tc) else 0,
-                            "plat": _A.PLATFORM_CN.get(p, p), "platKey": p,
+                            "plat": _A.plat_cn(p), "platKey": p,
                             "from": fc, "to": tc,
                             "fetchedAt": _dt.now().strftime("%Y-%m-%d %H:%M:%S"),
                             "stale": 0, "qual": False, "near": False, "brk": False,
@@ -29113,9 +29113,9 @@ def _user_state(u):
                                            (bd_brief or {}).get("date")),
                   "transfer": _delta_vs_prev(xt_brief, "transfer",
                                              (xt_brief or {}).get("date"))},
-        "minsTxt": " ｜ ".join(f"{Alerter.PLATFORM_CN.get(k, k)} ￥{v:.0f}"
+        "minsTxt": " ｜ ".join(f"{Alerter.plat_cn(k)} ￥{v:.0f}"
                               for k, v in sorted(plat_min.items(), key=lambda kv: kv[1])),
-        "minsArr": [[Alerter.PLATFORM_CN.get(k, k), round(v)]
+        "minsArr": [[Alerter.plat_cn(k), round(v)]
                     for k, v in sorted(plat_min.items(), key=lambda kv: kv[1])],
         "flights": sorted(out, key=lambda x: x["price"]),
         "history": {"direct": h_d, "transfer": h_t},
