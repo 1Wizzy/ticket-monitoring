@@ -28961,7 +28961,7 @@ def _user_state(u):
                 "GROUP BY platform"):
             try:
                 t = datetime.strptime(ts[:19], "%Y-%m-%d %H:%M:%S")
-                plat_age[Alerter.PLATFORM_CN.get(p, p)] = round(
+                plat_age[Alerter.plat_cn(p)] = round(
                     (datetime.now() - t).total_seconds() / 3600, 1)
             except Exception:
                 pass

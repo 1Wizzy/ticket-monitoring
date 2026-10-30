@@ -1095,6 +1095,16 @@ class Alerter:
         "qunar": "去哪儿", "fliggy": "飞猪", "ctrip": "携程",
         "tongcheng": "同程", "tuniu": "途牛",
     }
+    # **只用于显示**的补充名字表：App 渠道的中文名。
+    # 不能直接塞进上面的 PLATFORM_CN——那张表是「默认渠道全集」的来源
+    # （`self.platforms = list(PLATFORM_CN)`），加进去会让没启用 App 渠道
+    # 的用户每轮都被记「智行 App 当轮无数据」的缺勤告警。
+    PLATFORM_CN_EXTRA = {"app_zhixing": "智行 App"}
+
+    @classmethod
+    def plat_cn(cls, p: str) -> str:
+        """渠道 id → 显示名；未知渠道原样返回。"""
+        return cls.PLATFORM_CN.get(p) or cls.PLATFORM_CN_EXTRA.get(p) or p
     # 渠道×域结构性零供给面（渠道调研全库史实证）：国际面无供给的
     # 渠道——运维对账注缺勤判定豁免（国际航线段逐轮判缺勤会把真
     # 缺勤信号稀释成恒真噪音；never-supplied 特征非断链）。渠道国际
@@ -2217,7 +2227,7 @@ class Alerter:
                     notes.append(
                         f"{self._route_short(route)} "
                         f"{self._date_short(s['date'])} 当轮无数据："
-                        + "、".join(self.PLATFORM_CN.get(p, p)
+                        + "、".join(self.plat_cn(p)
                                     for p in missing))
         for route_bg, secs_bg in rs_list:
             if str(getattr(route_bg, "transfer_baggage", "")
@@ -2241,7 +2251,7 @@ class Alerter:
                 for p, v in xp:
                     byp[p] = min(byp.get(p, 9e9), v if v else 9e9)
                 names = "、".join(
-                    f"{self.PLATFORM_CN.get(p, p)}￥{v:.0f}"
+                    f"{self.plat_cn(p)}￥{v:.0f}"
                     for p, v in sorted(byp.items(), key=lambda kv: kv[1]))
                 notes.append(
                     f"{self._route_short(route)} "
@@ -3033,7 +3043,7 @@ class Alerter:
             # 降档缺席；裸词省 4 半角恒落位，钉钉 markdown 链接蓝字
             # 可点语义不变）
             plat_key = self._pref_platform(f, s.get("all_flights") or [f])
-            plat_cn = self.PLATFORM_CN.get(plat_key, plat_key)
+            plat_cn = self.plat_cn(plat_key)
             rd = f"{self._route_short(route)} {self._date_short(s['date'])}"
             # 展示价差额文案共用 _low_txt（税前注 pad>0 条件单源，两版
             # 曾分叉）；pad=0（重标定）标注自动消失
@@ -3448,7 +3458,7 @@ class Alerter:
                 trans = f"（经停{sc}）"
             elif f.get("stopover"):
                 trans = "（经停）"
-        plat = cls.PLATFORM_CN.get(f.get("_platform", ""), f.get("_platform", ""))
+        plat = cls.plat_cn(f.get("_platform", ""))
         if f.get("_platform") == "fliggy" and FLIGGY_TAX_PAD > 0:
             plat += "·税前"    # PC 页展示价为税前（达标判定已加税垫）
         # 同价多渠道合并行（_dedup_tie）：渠道名价值最低（同价时点哪家
@@ -3758,7 +3768,7 @@ class Alerter:
                 fallbacks=["> " + base_seg + (f" {via}" if via else ""),
                            "> " + base_seg])
             plat_key = self._pref_platform(f, s_h.get("all_flights") or [f])
-            plat_cn = self.PLATFORM_CN.get(plat_key, plat_key)
+            plat_cn = self.plat_cn(plat_key)
             # 差额文案与 multi 版共用 _low_txt（收口：本行曾漏
             # pad 条件恒挂「(税前)」假警示，两版分叉）
             low = _low_txt(f["price"], th, f.get("_platform"))
@@ -3814,7 +3824,7 @@ class Alerter:
         # 尾值航班配 hits[0] 日期池——多 hit 时渠道与日期错配）
         hit_plat = self._pref_platform(f0, s0.get("all_flights") or [f0])
         _hit_url = self._build_view_url(route, s0["date"], hit_plat)
-        _hit_cn = self.PLATFORM_CN.get(hit_plat, hit_plat)
+        _hit_cn = self.plat_cn(hit_plat)
         if _hit_url:
             desp += f"[👉 在{_hit_cn}查看详情]({_hit_url})\n\n"
         else:
@@ -4053,8 +4063,7 @@ class Alerter:
                 "stopCity": re.sub(r"[(（]中国[)）]$", "", next(
                     (f.get("stopCity") for f in fs if f.get("stopCity")),
                     "")),
-                "chain": [(cls.PLATFORM_CN.get(
-                            f.get("_platform", ""), "?"),
+                "chain": [(cls.plat_cn(f.get("_platform", "")) or "?",
                            f["price"],
                            _cabin_cn(cabin_clean(f))) for f in fs],
                 # 第七批：公务舱最低价随行入比价组（qunar H5
@@ -4099,10 +4108,10 @@ class Alerter:
                 cn = _cabin_cn(cabin_clean(f))
                 return f"({cn})" if cn else ""
             chain = "→".join(
-                f"{cls.PLATFORM_CN.get(f.get('_platform', ''), '?')}"
+                f"{(cls.plat_cn(f.get('_platform', '')) or '?')}"
                 f"￥{f['price']:.0f}{_cabin_tag(f)}" for f in show)
             chain_nc = "→".join(
-                f"{cls.PLATFORM_CN.get(f.get('_platform', ''), '?')}"
+                f"{(cls.plat_cn(f.get('_platform', '')) or '?')}"
                 f"￥{f['price']:.0f}" for f in show)
             # >3 家只展两端：链尾补家数注（图挂兜底语境中间渠道价在
             # 文本不可恢复，(等N家) 是「链非全量」的对账锚；mini 档
@@ -4111,7 +4120,7 @@ class Alerter:
             chain += _more
             chain_nc += _more
             # 辅行终极降级形态：最低价渠道 + 家数（价格链整条放不下时）
-            mini = (f"　{cls.PLATFORM_CN.get(best.get('_platform', ''), '?')}"
+            mini = (f"　{(cls.plat_cn(best.get('_platform', '')) or '?')}"
                     f"￥{best['price']:.0f} 等{len(fs)}家")
             name = best.get("name") or best.get("code", "同班")
             date_tag = (f"（{cls._date_short(cdate)}）"
@@ -4194,7 +4203,7 @@ class Alerter:
                 # ≤40（多日期 _dpre 另扣；
                 # 正常渠道名 5 半角零回归）；截断发生补 (截) 留痕
                 # （预算回扣 4 半角，与运维对账行截断标记同纪律）
-                _cn_full = self.PLATFORM_CN.get(p, p)
+                _cn_full = self.plat_cn(p)
                 cn = _clip_dw(_cn_full, max(2, 23 - _disp_dw(_dpre)))
                 if cn != _cn_full:
                     cn = (_clip_dw(_cn_full,
@@ -4260,7 +4269,7 @@ class Alerter:
                 # 与主链路「无数据渠道」同款行宽守卫（渠道多时整行曾
                 # 超 20 全角窄屏折行）；行间 \n\n 独立成段
                 heads = "⚠️ 本轮无数据渠道："
-                names = "、".join(self.PLATFORM_CN.get(p, p)
+                names = "、".join(self.plat_cn(p)
                                   for p in missing)
                 # else 段同走守卫（推送审校 P2）：5 渠道长名
                 # ≈44 半角直出曾超 20 全角窄屏折行失控；地板档
@@ -4871,7 +4880,7 @@ class Alerter:
         )
         # 未知平台 _build_view_url 返回空：跳过链接行（不给空壳坏链）
         if view_url:
-            desp += (f"[👉 在{self.PLATFORM_CN.get(plat, plat)}"
+            desp += (f"[👉 在{self.plat_cn(plat)}"
                      f"查看详情]({view_url})\n\n")
         return self.notifier.send(sanitize_desp(title), sanitize_desp(desp))
 
@@ -4900,14 +4909,14 @@ class Alerter:
             f"- **日期**：{date}\n\n"
             f"- **当前最低价**：￥{p.price:.0f}\n\n"
             f"- **设定阈值**：￥{route.alert_threshold:.0f}\n\n"
-            f"- **来源**：{self.PLATFORM_CN.get(p.platform, p.platform)}\n\n"
+            f"- **来源**：{self.plat_cn(p.platform)}\n\n"
             f"- **抓取时间**：{p.fetched_at}\n\n"
         )
         if last is not None:
             desp += f"- **上次推送价**：￥{last:.0f}\n\n"
         # 未知平台 _build_view_url 返回空：跳过链接行（不给空壳坏链）
         if view_url:
-            desp += (f"[👉 在{self.PLATFORM_CN.get(p.platform, p.platform)}"
+            desp += (f"[👉 在{self.plat_cn(p.platform)}"
                      f"查看详情]({view_url})\n\n")
         return self.notifier.send(sanitize_desp(title), sanitize_desp(desp))
 
@@ -5080,5 +5089,5 @@ def _ensure_jump_link(desp: str, route, section: dict,
     # 查价」曾让读者猜是哪家的链接。
     # 前置剥尾换行：desp 尾 \n\n 后再拼 \n 产三连换行
     # （钉钉折叠为空白段）
-    cn = Alerter.PLATFORM_CN.get(plat, plat)
+    cn = Alerter.plat_cn(plat)
     return desp.rstrip("\n") + f"\n\n[→ 打开{cn}查价]({url})\n\n"
