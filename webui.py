@@ -16761,8 +16761,13 @@ async function loadAppLoginState(){
                        {cache:'no-store'});
    const j=await r.json();
    const sess=(j&&j.session)||null;
+   /* 没有进行中的会话时，后端在顶层报「是否已存过快照」。不读它的话，
+      用户登录完、会话结束后卡片永远显示「未保存会话」——刚登好却像没存上。 */
+   const snapSaved=!!(j&&j.saved);
    out[p]=sess?{status:sess.status||'',detail:sess.detail||'',
-                saved:!!sess.saved,active:!!sess.active}:{};
+                saved:!!sess.saved||snapSaved,active:!!sess.active,
+                saved_at:Number(sess.saved_at||(j&&j.saved_at)||0)}
+             :{saved:snapSaved,saved_at:Number((j&&j.saved_at)||0)};
   }catch(e){out[p]={};}
  }
  APP_LOGIN_STATE=out;
@@ -25224,6 +25229,25 @@ def _app_login_ctx():
             return False, "页面仍是登录墙，请完成登录后再试"
         return True, "已离开登录墙"
 
+    def _snapshot_info(plat: str = "") -> dict:
+        """快照文件是否存在（含 mtime），供登录卡显示「已保存」。
+
+        不需要设备：只读本地文件。没有它时用户登录完、会话结束后卡片
+        一直显示「未保存会话」，与事实相反。
+        """
+        try:
+            udir = _anchored(
+                str((cfg.get("crawler") or {}).get("user_data_dir")
+                    or "user_data"), "user_data")
+            p = os.path.join(udir, "android_snapshots",
+                             (plat or "app_zhixing") + ".tar.gz")
+            if not (os.path.isfile(p) and os.path.getsize(p) > 0):
+                return {"exists": False}
+            return {"exists": True, "mtime": os.path.getmtime(p),
+                    "size": os.path.getsize(p)}
+        except OSError:
+            return {"exists": False}
+
     def _snapshot():
         rt = _runtime()
         dev = rt.device() if rt else None
@@ -25248,7 +25272,8 @@ def _app_login_ctx():
     return {"packages": APP_LOGIN_PACKAGES,
             "runtime_factory": _runtime,
             "verify": _verify,
-            "snapshot": _snapshot}
+            "snapshot": _snapshot,
+            "snapshot_info": _snapshot_info}
 
 
 def _test_email_launch() -> str:

@@ -115,12 +115,29 @@ def handle_key(registry, plat: str, body: dict) -> Tuple[dict, int]:
     return {"ok": True}, 200
 
 
-def handle_state(registry, plat: str) -> Tuple[dict, int]:
-    """GET /api/app-login/state?plat=x"""
+def handle_state(registry, plat: str, snapshot_info=None) -> Tuple[dict, int]:
+    """GET /api/app-login/state?plat=x
+
+    没有进行中的会话时也要报出「是否已保存过快照」：否则用户登录完、
+    会话结束后，配置页会一直显示「未保存会话」——他刚登好却看到没存上。
+    """
     sess = registry.get(plat)
+    saved, snap_at = False, 0.0
+    if snapshot_info is not None:
+        try:
+            info = snapshot_info(plat) or {}
+            saved = bool(info.get("exists"))
+            snap_at = float(info.get("mtime") or 0)
+        except Exception:
+            saved, snap_at = False, 0.0
     if sess is None:
-        return {"ok": True, "session": None}, 200
-    return {"ok": True, "session": sess.view()}, 200
+        return {"ok": True, "session": None,
+                "saved": saved, "saved_at": snap_at}, 200
+    view = dict(sess.view())
+    # 会话内 saved 只在 finish 之后为真；快照文件才是跨进程的事实。
+    view["saved"] = bool(view.get("saved")) or saved
+    view["saved_at"] = snap_at
+    return {"ok": True, "session": view}, 200
 
 
 def handle_finish(registry, plat: str, verify=None,
@@ -173,7 +190,7 @@ def dispatch(registry, method: str, path: str, query: dict,
         if sub == "frame":
             return handle_frame(registry, plat)
         if sub == "state":
-            return handle_state(registry, plat)
+            return handle_state(registry, plat, ctx.get("snapshot_info"))
         return _err("未知子路径", 404)
 
     if method == "POST":
