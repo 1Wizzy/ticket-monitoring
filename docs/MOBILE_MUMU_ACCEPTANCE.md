@@ -7,7 +7,7 @@
 
 | 项 | 结果 |
 | --- | --- |
-| MuMu 安装 | 一次人工向导完成，装到 `D:\Program Files\Netease\MuMu`；**装完并建实例后实测 7.1 GB**（安装器本体约 3.6 GB，实例镜像再占约一倍） |
+| MuMu 安装 | 一次人工向导完成，装到 `D:\Program Files\Netease\MuMu`；**装完并建实例、再装两个 App 后实测 9.3 GB**（安装器本体约 3.6 GB，实例镜像再占约一倍） |
 | 引擎与 Hyper-V 共存 | ✅ `hyperv_enabled: true`，实例正常运行（VBS/HVCI 开启下） |
 | adb 免人工 | ✅ **装完即通**：`adb connect 127.0.0.1:16384` → `device`，全程未点任何界面 |
 | 实例控制可脚本 | ✅ `MuMuManager.exe control -v 0 launch/shutdown`、`info -v 0`、`setting -v 0` |

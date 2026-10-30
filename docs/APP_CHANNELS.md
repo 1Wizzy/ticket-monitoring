@@ -17,7 +17,7 @@ Android 模拟器（MuMu），由框架通过 adb 驱动。
 | 项 | 要求 |
 | --- | --- |
 | 系统 | Windows（MuMu 仅 Windows；Linux/macOS 上 App 渠道自动不可用） |
-| 模拟器 | MuMu 12（本机实测 `D:\Program Files\Netease\MuMu`，约 7.1 GB） |
+| 模拟器 | MuMu 12（本机实测 `D:\Program Files\Netease\MuMu`，约 9.3 GB；装两个 App 后继续增长） |
 | 虚拟化 | 需开启 VT；MuMu 与 Hyper-V/VBS 可共存（实测 `hyperv_enabled: true`） |
 | 磁盘 | 引擎 + 实例约 5 GB 起 |
 
