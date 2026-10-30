@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 PLATFORMS = ("ctrip", "fliggy", "qunar", "tongcheng", "tuniu")
 # App 渠道（可选）：需要独立节奏 key，但**不属于**内置浏览器渠道集合。
 # 清单来自零依赖的 core/channels.py（曾在此本地另写一份，加渠道必然漏改）。
-from core.channels import APP_CHANNELS  # noqa: E402
+from core.channels import APP_CHANNELS, path_cn  # noqa: E402
 
 _HHMM = re.compile(r"^(\d{1,2}):(\d{2})$")
 
@@ -810,6 +810,9 @@ def advise(plat, ch=None, paths=None, now=None, node=None,
     for _sk, _sv in scopes.items():
         _sp = (_sv or {}).get("paths") or {}
         for _name, _v in _sp.items():
+            # 提示里给人看的名字：账本键名对 App 渠道是英文 id
+            # （app-list/android-runtime），原样入句读者不知道卡在哪一步。
+            _shown = path_cn(_name)
             _n = int((_v or {}).get("attempts") or 0)
             _valid = max(0, _n - int((_v or {}).get("empty") or 0)
                          - int((_v or {}).get("unsupported") or 0))
@@ -853,7 +856,7 @@ def advise(plat, ch=None, paths=None, now=None, node=None,
                         "hint": "%s %s 近 24h 被登录墙拦 %d/%d 次、仅 %d 次"
                                 "出数——根因是会话失效，限流与换路都无效；"
                                 "点「去登录」重存该渠道会话"
-                                % (_dom, _name, _login_n, _n, _okish),
+                                % (_dom, _shown, _login_n, _n, _okish),
                         "eta_s": 0}
             # 登录拦截占多数、但这条路其他航线仍在正常出数 → 会话是好的，
             # 是航线级拦截。不要提重登（无效），如实说明并给可行动作。
@@ -864,7 +867,7 @@ def advise(plat, ch=None, paths=None, now=None, node=None,
                         "hint": "%s %s 有 %d/%d 次被登录墙拦，但同一会话其他"
                                 "航线仍在出数（%d 次）——会话是好的，属航线级"
                                 "拦截；先点「自检」核实，别急着重登"
-                                % (_dom, _name, _login_n, _n, _okish),
+                                % (_dom, _shown, _login_n, _n, _okish),
                         "eta_s": 0}
             # r388：只对"最近真的在试"的路下结论。某条兜底路径可能几小时
             # 没被用到（主路径一直成功就不走它），拿半天前的旧样本报
@@ -882,7 +885,7 @@ def advise(plat, ch=None, paths=None, now=None, node=None,
                         "hint": "%s %s 近 24h 有效率 %.0f%%（%d 次有效）"
                                 "——已在日志记录路径偏好（影子模式，暂不改变"
                                 "采集顺序）；可点「自检」验证这条域的路"
-                                % (_dom, _name, float(_raw) * 100, _valid),
+                                % (_dom, _shown, float(_raw) * 100, _valid),
                         "eta_s": 0}
     bad = None
     for name, v in paths.items():

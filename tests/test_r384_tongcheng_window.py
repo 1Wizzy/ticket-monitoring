@@ -315,7 +315,10 @@ def test_advise_still_reports_other_degraded_paths():
     }
     a = advise("tongcheng", {}, paths, now=None, node=_deg_node(paths))
     assert a["state"] == "path_degraded"
-    assert "H5列表" in a["hint"]
+    # r658：提示里给人看的是中文通路名（H5列表 → 「H5 列表」），
+    # 断言走同一个显示名函数，别把中文字面量钉死。
+    from core.channels import path_cn
+    assert path_cn("H5列表") in a["hint"]
 
 
 # ---- 复审回归：缓存不得短路过期/换锚；定时面不得启浏览器 ----

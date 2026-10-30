@@ -32,3 +32,47 @@ CHANNEL_CN = {
 def plat_cn(p: str) -> str:
     """渠道 id → 显示名；未知渠道原样返回。"""
     return CHANNEL_CN.get(p) or p
+
+
+# 采集通路（fetch_paths.entry_path）→ 显示名。
+#
+# 账本里这张表的值是各 crawler 自己写的字面量：浏览器渠道大多已是中文
+# （日历/H5/PC/窗历/往返/H5·API），App 渠道却是英文 id（app-list /
+# android-runtime / snap-restore …）。健康卡的「分通路」小标和
+# core.pacing 的路径劣化提示都直接把这些键名打到屏幕上，读者看到
+# 「android-runtime 无有效样本」根本不知道是哪一步卡住。
+#
+# 键必须与 path_note() 的实参逐字一致（test_r658 会扫源码对账）：
+# 新增通路时这里不同步，界面就退回裸 id。
+PATH_CN = {
+    # 浏览器渠道
+    "H5": "H5",                 # 已是行业通用写法，保留
+    "PC": "PC",
+    "H5/API": "H5 · API",
+    "日历": "日历",
+    "窗历": "窗历",
+    "往返": "往返",
+    "航班明细": "航班明细",
+    "PC可见": "PC 可见",
+    # 其余散落在单个 crawler 里的通路名（r658 门禁扫 path_note 字面量
+    # 对账时补出，此前没人意识到它们也会上屏）
+    "H5列表": "H5 列表",
+    "API": "API 直连",
+    "QUERY": "查询请求",
+    "TRIP": "往返查询",
+    # App 渠道（智行）：这条真机链路分段入账，每段都可能成为瓶颈
+    "app-route": "App 设航线",
+    "app-list": "App 航班列表",
+    "app-blocker": "App 拦路弹窗",
+    "app-dump": "App 界面快照",
+    "app-error": "App 解析",
+    "android-runtime": "模拟器运行时",
+    "android-device": "模拟器设备",
+    "snap-restore": "登录态快照恢复",
+}
+
+
+def path_cn(p: str) -> str:
+    """通路 id → 显示名；未知通路原样返回（宁缺勿错，不编造名字）。"""
+    return PATH_CN.get(p) or p
+
