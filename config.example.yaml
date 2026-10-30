@@ -149,6 +149,14 @@ crawler:
   #    （低于 40% 拉 3 倍，样本不足 5 次不判）。关掉后仍统计成功率，
   #    但不再自动降频——只在「宁可多打也不接受变慢」时才关。
   health_penalty_enabled: true
+  # 上面那组阈值（成功率≥ok 不降频、<ok 且 ≥slow 拉 slow_factor 倍、
+  # <slow 拉 slowest_factor 倍、样本 < min_samples 不判）全部可调；
+  # 留空即用默认 0.7 / 0.4 / 1.5 / 3.0 / 5。
+  health_min_samples: 5
+  health_ok_ratio: 0.7
+  health_slow_ratio: 0.4
+  health_slow_factor: 1.5
+  health_slowest_factor: 3.0
   # ── 首页预热（L1/L3）：每轮每渠道先打一次首页再查深链 ──────────
   # 深链直入是最强的机器指纹（无 referer、无风控下发的 cookie）。
   # 只对声明了 warmup_url 的渠道生效；ctrip 与同程在 fetch 内部自带预热。
