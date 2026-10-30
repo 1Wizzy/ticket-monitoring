@@ -3644,10 +3644,10 @@ overflow-wrap:anywhere;margin-top:2px;opacity:.95}   /* r342：未定义的 --tx
  .airmeta{font-size:10px;color:var(--mut)}
  /* 存储与迁移：路径卡是「配置透明化」的主承载——文件在哪/多大/是否
    存在/改到哪/何时生效一屏可读，打开文件与文件夹是动作而非文案 */
- #cfgglobals .glgrid{grid-template-columns:repeat(3,minmax(0,1fr))}
- #cfgglobals .glgrid .glcell:only-child{grid-column:1/-1}
- @media(max-width:1099px){#cfgglobals .glgrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
- @media(max-width:700px){#cfgglobals .glgrid{grid-template-columns:minmax(0,1fr)}}
+ #cfgglobals .glgrid,#cfgpacing .glgrid{grid-template-columns:repeat(3,minmax(0,1fr))}
+ #cfgglobals .glgrid .glcell:only-child,#cfgpacing .glgrid .glcell:only-child{grid-column:1/-1}
+ @media(max-width:1099px){#cfgglobals .glgrid,#cfgpacing .glgrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+ @media(max-width:700px){#cfgglobals .glgrid,#cfgpacing .glgrid{grid-template-columns:minmax(0,1fr)}}
  .storagesec{margin-top:8px}
  .storehead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;
    border:1px solid var(--line);border-radius:var(--r2);background:var(--headbg);margin-bottom:8px}
@@ -5972,10 +5972,10 @@ html[data-theme="dark"] .bic-plane{filter:none!important}
  #searchview .srx-dhead>.srx-dacts{flex:1 1 100%;justify-content:flex-end}
  @media(max-width:600px){#searchview .srx-dhead>.srx-dacts{justify-content:flex-start}}
  @media(min-width:701px){
-  #cfgglobals .glgrid .glcell:only-child{display:grid;grid-template-columns:260px minmax(0,1fr);column-gap:18px;align-items:center}
-  #cfgglobals .glgrid .glcell:only-child>.glab{grid-column:1;grid-row:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
-  #cfgglobals .glgrid .glcell:only-child>div:not(.glab):not(.gsub){grid-column:2;grid-row:1}
-  #cfgglobals .glgrid .glcell:only-child>.gsub{grid-column:2;grid-row:2;margin-top:2px}
+  #cfgglobals .glgrid .glcell:only-child,#cfgpacing .glgrid .glcell:only-child{display:grid;grid-template-columns:260px minmax(0,1fr);column-gap:18px;align-items:center}
+  #cfgglobals .glgrid .glcell:only-child>.glab,#cfgpacing .glgrid .glcell:only-child>.glab{grid-column:1;grid-row:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+  #cfgglobals .glgrid .glcell:only-child>div:not(.glab):not(.gsub),#cfgpacing .glgrid .glcell:only-child>div:not(.glab):not(.gsub){grid-column:2;grid-row:1}
+  #cfgglobals .glgrid .glcell:only-child>.gsub,#cfgpacing .glgrid .glcell:only-child>.gsub{grid-column:2;grid-row:2;margin-top:2px}
  }
  @media(max-width:900px){
   /* 平板固定 56px 日格：14 天总宽恒超容器，保留可发现的横滑暗示 */
@@ -9287,7 +9287,7 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
   <span><b style="background:repeating-linear-gradient(45deg,var(--red) 0 2px,var(--redbg) 2px 4px)"></b>失败</span>
   <span><b class="hlh"></b>维护</span>
   <span><b style="background:transparent;box-shadow:inset 0 0 0 1px var(--line2)"></b>未扫描</span></div>
- <div class="hpace"><div class="hpace-h"><b>节流与干预</b><span class="hpacer">限额、冷却、静默窗、可干预项；参数在 <button type="button" class="hlink" onclick="cfgGoThrottle()">配置 · 全局参数 · 节流</button> 里调</span></div>
+ <div class="hpace"><div class="hpace-h"><b>节流与干预</b><span class="hpacer">限额、冷却、静默窗、可干预项；参数在 <button type="button" class="hlink" onclick="cfgGoThrottle()">配置 · 渠道节流</button> 里调</span></div>
   <div id="paceBox" role="status" aria-live="polite" class="pace"></div></div></div>
 </div><!-- /montab-health -->
 </div><!-- /monview -->
@@ -9528,6 +9528,7 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
   <div class="cfghit" id="cfgHits"></div>
   <span class="cnav on" data-p="login"><svg class="ic" aria-hidden="true"><use href="#i-lock"></use></svg>渠道登录<i class="cnavn" id="navN-login">—</i></span>
   <span class="cnav" data-p="users"><svg class="ic" aria-hidden="true"><use href="#i-users"></use></svg>用户与航线<i class="cnavn" id="navN-users">—</i></span>
+  <span class="cnav" data-p="pacing"><svg class="ic" aria-hidden="true"><use href="#i-shield"></use></svg>渠道节流<i class="cnavn" id="navN-pacing">—</i></span>
   <span class="cnav" data-p="globals"><svg class="ic" aria-hidden="true"><use href="#i-sliders"></use></svg>全局参数<i class="cnavn" id="navN-globals">—</i></span>
   <div class="cnavst" id="cfgNavFoot"><b>配置透明化</b><br>启动级路径、迁移与重启待办见顶部状态。</div>
  </aside>
@@ -9562,6 +9563,11 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
   <span class="secnote">按用户独立配置航班/渠道/目标/启停；价格只读真实落库行</span></div>
  <div id="cfgWatch"><span class="muted">加载中…</span></div></div>
  </div><!-- /panel-watch -->
+ <div class="cfpanel" id="panel-pacing" style="display:none">
+ <div class="ucard" id="sec-pacing-card"><div class="uhead"><span class="seclab inline"><span class="secicon"><svg class="ic" aria-hidden="true"><use href="#i-shield"></use></svg></span><span class="zh">渠道节流</span></span>
+  <span class="secnote">全部保存即热生效 · 这里有「量」的开关：TTL、限速、熔断、成功率保护；实时状态与干预在「监控 · 渠道健康」</span></div>
+ <div id="cfgpacing"><span class="muted">加载中…</span></div></div>
+ </div><!-- /panel-pacing -->
  <div class="cfpanel" id="panel-globals" style="display:none">
  <div class="ucard" id="sec-globals-card"><div class="uhead"><span class="seclab inline"><span class="secicon"><svg class="ic" aria-hidden="true"><use href="#i-sliders"></use></svg></span><span class="zh">全局参数</span></span>
   <span class="secnote">全部保存即热生效（端口原地切换，零重启）；仅数据库/日志路径需重启</span></div>
@@ -13667,12 +13673,13 @@ async function srcAccessState(force){return loadChannelState(!!force);}
 /* 从渠道健康直达「配置 · 全局参数 · 节流」分区：节流面板搬到健康卡后，
    参数仍在配置页；原来那句「参数在…里调」是死文字，用户还得自己翻。 */
 function cfgGoThrottle(){
+ /* r638：节流参数已从「全局参数」拆到独立分区「渠道节流」。
+    这里仍从渠道健康卡直达，只是落点换成新分区。 */
  try{switchView('cfg')}catch(e){}
  setTimeout(()=>{try{
-  showCfgPanel('globals');
-  const t=$('glThrottle');
-  if(t){t.scrollIntoView({block:'start',behavior:'smooth'});
-   setTimeout(()=>{const c=$('glbQs');if(c&&c.focus)c.focus({preventScroll:true});},320);}
+  showCfgPanel('pacing');
+  const t=$('glbQs');
+  if(t&&t.focus)t.focus({preventScroll:true});
  }catch(e){}},90);
 }
 async function health(){srcAccessState(false);try{const r=await fetch('/api/health',{headers:HL_ETAG?{'If-None-Match':HL_ETAG}:{}});
@@ -17124,6 +17131,10 @@ function refreshCfgChrome(){const s=CFG?_cfgStats():{users:0,routes:0,on:0,off:0
  _txt($('navN-users'),s.users+' 用户');
  _txt($('navN-watch'),CFG_WATCH.loadedAt?(CFG_WATCH.list.length+' 关注'):'—');
  _txt($('navN-globals'),p?p+' 待重启':'无需重启');
+ /* 计数按真实控件派生（r638）：写死「23 项」在加/删节流键后会静默说谎 */
+ {const _px=$('cfgpacing');
+  const _n=_px?[..._px.querySelectorAll('.glcell')].length:0;
+  _txt($('navN-pacing'),_n?_n+' 项':'—');}
  const nf=$('cfgNavFoot');
  if(nf){const root=((RUNTIME&&RUNTIME.root)||'');
   const sig=(RUNTIME&&RUNTIME.version==='demo')?'演示模式 · 不读取本机路径':root;
@@ -18769,7 +18780,59 @@ function buildForm(){if(!CFG)return;let h='',gh='';
   }
   setTimeout(()=>{try{radarCfgLoadLinks(OPEN_USER)}catch(e){}},0);
  }
- $('cfgglobals').innerHTML=gh;
+  /* 渠道节流独立分区（r638）：这 22 项是「量」的开关——TTL、限速、
+    熔断、成功率保护、预热、每渠道节奏。原先全部塞在「全局参数」里，
+    和端口/路径/UA 混在一起，用户找不到也分不清哪一项该为「被限流」负责。
+    独立成「渠道节流」分区后，与「监控 · 渠道健康」的实时状态/干预
+    形成一静一动的对照。控件本体与保存链路不变（同一批 GLB 键）。 */
+ const gp='<div class="glsecwrap">'
+  +'<div id="glThrottle" style="scroll-margin-top:calc(var(--hdh,54px) + 24px)"></div>'
+  +glsec('🧯 节流 · 熔断（1–5 区 · 保存即热生效）')
+  +'<div class="glgrid">'
+  +glcell('静默起','glbQs','GLB.scan_quiet_start=(this.value||"").trim()',esc(GLB.scan_quiet_start||''),'凌晨停扫起点（HH:MM，留空=关闭）。只管抓取，不影响推送','text',null,'01:00')
+  +glcell('静默止','glbQe','GLB.scan_quiet_end=(this.value||"").trim()',esc(GLB.scan_quiet_end||''),'与「静默起」成对；跨零点自动识别（如 23:00–07:00）','text',null,'07:00')
+  +glcell('快层 TTL','glbFast','GLB.fast_ttl_min=Math.max(5,Math.min(1440,parseInt(this.value)||15))',esc(GLB.fast_ttl_min==null?15:GLB.fast_ttl_min),'贴近心理价位的查询多久抓一次；越短越灵敏、请求越多',null,'分钟')
+  +glcell('慢层 TTL','glbSlow','GLB.slow_ttl_min=Math.max(5,Math.min(1440,parseInt(this.value)||120))',esc(GLB.slow_ttl_min==null?120:GLB.slow_ttl_min),'远离阈值的查询降频到此间隔（自动钳到 ≥ 快层）',null,'分钟')
+  +glcell('邻近比','glbNear','GLB.near_ratio=Math.max(0,Math.min(1,parseFloat(this.value)||0))',esc(GLB.near_ratio==null?0.15:GLB.near_ratio),'|现价−阈值|÷阈值 ≤ 此值即算「贴近」，进快层；0=完全相等才算',null,'0.15')
+  +glcell('起跑错峰','glbStg','GLB.stagger_seconds=Math.max(0,Math.min(120,parseInt(this.value)||0))',esc(GLB.stagger_seconds||0),'同轮各渠道起跑拉开的秒数（5 家均分），避免同一秒齐发',null,'秒')
+  +glcell('最小间隔','glbGap','GLB.min_gap_s=Math.max(0,Math.min(300,parseFloat(this.value)||0))',esc(GLB.min_gap_s||0),'同一渠道两次请求的最小间隔；0=不限（去哪儿内部另有 8s）',null,'秒')
+  +glcell('每分钟上限','glbRpm','GLB.per_minute=Math.max(0,Math.min(600,parseInt(this.value)||0))',esc(GLB.per_minute||0),'同一渠道每分钟最多几次；0=不限（滑动窗口，不对齐整分钟）',null,'次')
+  +glcell('熔断','glbBrk','GLB.breaker_enabled=this.checked',GLB.breaker_enabled!==false,'命中 429/风控/验证后停手冷却，而不是换姿势重试','check')
+  +glcell('成功率保护','glbHpen','GLB.health_penalty_enabled=this.checked',GLB.health_penalty_enabled!==false,'近 24h 成功率低于「合格线」时自动拉长该渠道 TTL。关掉后仍统计成功率、但不再自动降频——只在「宁可多打也不接受变慢」时才关','check')
+  +glcell('合格线','glbHok','GLB.health_ok_ratio=Math.max(0.05,Math.min(1,parseFloat(this.value)||0.7))',esc(GLB.health_ok_ratio==null?0.7:GLB.health_ok_ratio),'成功率 ≥ 此值不降频（默认 0.7）；低于它才拉长 TTL',null,'比率')
+  +glcell('降频线','glbHslow','GLB.health_slow_ratio=Math.min(GLB.health_ok_ratio||0.7,Math.max(0,parseFloat(this.value)||0.4));glbClamp(this,\'glbHslow\',GLB.health_slow_ratio,\'降频线不能高于合格线（\'+GLB.health_ok_ratio+\'），已按合格线生效\')',esc(GLB.health_slow_ratio==null?0.4:GLB.health_slow_ratio),'成功率 ≥ 此值只轻降频，更低则重降频（默认 0.4）；自动钳到 ≤ 合格线',null,'比率')
+  +glcell('轻降频倍数','glbHsf','GLB.health_slow_factor=Math.max(1,Math.min(10,parseFloat(this.value)||1.5))',esc(GLB.health_slow_factor==null?1.5:GLB.health_slow_factor),'成功率落在降频线与合格线之间时的 TTL 倍数（默认 1.5）',null,'倍')
+  +glcell('重降频倍数','glbHslf','GLB.health_slowest_factor=Math.max(GLB.health_slow_factor||1.5,Math.min(20,parseFloat(this.value)||3));glbClamp(this,\'glbHslf\',GLB.health_slowest_factor,\'重降频倍数不能低于轻降频倍数（\'+GLB.health_slow_factor+\'），已按轻降频倍数生效\')',esc(GLB.health_slowest_factor==null?3:GLB.health_slowest_factor),'成功率低于降频线时的 TTL 倍数（默认 3）；自动钳到 ≥ 轻降频倍数',null,'倍')
+  +glcell('判定样本下限','glbHms','GLB.health_min_samples=Math.max(1,Math.min(200,parseInt(this.value)||5))',esc(GLB.health_min_samples==null?5:GLB.health_min_samples),'近 24h 样本少于此次数不判定，避免首轮波动就被降频（默认 5）',null,'次')
+  +glcell('熔断起步','glbBbs','GLB.breaker_base_s=Math.max(30,Math.min(3600,parseInt(this.value)||300))',esc(GLB.breaker_base_s||300),'首次冷却秒数；连续命中按 2 倍阶梯递增',null,'秒')
+  +glcell('熔断封顶','glbBcs','GLB.breaker_cap_s=Math.max(120,Math.min(86400,parseInt(this.value)||3600));glbClamp(this,\'glbBcs\',GLB.breaker_cap_s,\'熔断封顶低于起步值（\'+GLB.breaker_base_s+\' 秒）时会先撞封顶，请调高封顶\')',esc(GLB.breaker_cap_s||3600),'单次冷却上限：封太死会掩盖渠道已经恢复的事实',null,'秒')
+  +glcell('登录墙冷却','glbLcd','GLB.login_cooldown_s=Math.max(60,Math.min(86400,parseInt(this.value)||900))',esc(GLB.login_cooldown_s||900),'命中登录墙后该渠道固定冷却秒数（不随命中次数增长）','number',null,'900')
+  +glcell('邻近天数','glbNearD','GLB.near_days=Math.max(0,Math.min(30,parseInt(this.value)||3))',esc(GLB.near_days==null?3:GLB.near_days),'「邻近日期」比价窗口（前后各 N 天）','number',null,'3')
+  +glcell('首页预热','glbWarm','GLB.warmup_enabled=this.checked',GLB.warmup_enabled!==false,'每轮每渠道先打一次首页再查深链：抹掉「无 referer / 无风控 cookie」这个最强机器指纹','check')
+  /* 能预热的渠道由后端按「真的声明了入口」派生（r627）：原先提示只说
+     「只对声明了入口的渠道生效」，用户填 ctrip 后按钮可点却什么也不做。
+     现在直接列出可填的几家，并把已填但会被忽略的点名。 */
+  +glcell('预热渠道','glbWarmP','GLB.warmup_platforms=(this.value||"").trim()',esc(GLB.warmup_platforms||''),
+    (GLB.warmup_ignored&&GLB.warmup_ignored.length
+      ?('⚠ '+GLB.warmup_ignored.join('、')+' 没有预热入口（打首页下不发可用会话），保存时会被忽略；可填：'+(GLB.warmable||[]).join('、'))
+      :('逗号分隔，可填：'+((GLB.warmable||[]).join('、')||'（无）')+'；留空=不预热')),
+    'text',null,'qunar, fliggy, tuniu')
+  +'</div>'
+  +glsec('渠道节奏 · 保存即热生效')
+  +'<div class="glgrid">'
+  /* 每渠道独立节奏（cadence）：语义是「该渠道单独的最小采集间隔（分钟）」，
+     0 = 跟随全局。后端按 `int()` 取整（core/pacing.py 里 min 0 / max 10080），
+     所以控件也必须是整数分钟——写成「倍率/小数」会与解析结果对不上。 */
+  +['qunar','fliggy','ctrip','tongcheng','tuniu'].map(p=>
+    glcell(({qunar:'去哪儿',fliggy:'飞猪',ctrip:'携程',tongcheng:'同程',tuniu:'途牛'}[p])+' 最小间隔',
+      'glbCad_'+p,
+      'GLB.cadence=Object.assign({},GLB.cadence||{},{'+p+':Math.max(0,Math.min(10080,parseInt(this.value)||0))})',
+      esc(((GLB.cadence||{})[p])||0),
+      '该渠道单独的最小采集间隔（分钟）；0 = 跟随全局 TTL', 'number', null, '0 = 跟随全局')).join('')
+  +'</div>'
+  +'</div>';
+$('cfgglobals').innerHTML=gh;
+ const _gpx=$('cfgpacing');if(_gpx)_gpx.innerHTML=gp;
  /* 多邮箱通道归位到渠道列表末尾（图床之后、添加按钮之前）：新增
     渠道不再插进列表中部；DOM 重排同时校正键盘 Tab 序。 */
  try{document.querySelectorAll('#cfgform .chgrid').forEach(g=>{

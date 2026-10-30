@@ -43,11 +43,25 @@ def test_config_cells_are_tinted_not_boxed_and_ua_is_not_blank():
     for needle in (
         "#cfgview .glcell{border-color:transparent;background:color-mix",
         "#cfgview .glcell input::placeholder",
-        "#cfgglobals .glgrid .glcell:only-child{display:grid",
-        "#cfgglobals .glgrid .glcell:only-child>.glab{grid-column:1;grid-row:1",
-        ">div:not(.glab):not(.gsub){grid-column:2;grid-row:1}",
     ):
         assert needle in STYLE, needle
+    # 单列格子的对齐排版：r638 把节流拆到 `#cfgpacing`，这两条规则变成
+    # 并列选择器（`#cfgglobals …, #cfgpacing …`），逐字匹配会误报。
+    # 这里**按 CSS 规则解析**：拆出每条规则的「选择器列表 → 声明」，
+    # 再逐容器要求它确实被某条规则覆盖到。
+    rules = {}
+    for m in re.finditer(r"([^{}]+)\{([^{}]*)\}", STYLE):
+        sels = [x.strip() for x in m.group(1).split(",")]
+        for sel in sels:
+            rules.setdefault(sel, []).append(m.group(2))
+    for scope in ("#cfgglobals", "#cfgpacing"):
+        key = scope + " .glgrid .glcell:only-child"
+        decl = " ".join(rules.get(key, []))
+        assert "display:grid" in decl, "%s 缺单列格子对齐规则" % scope
+        lab = key + ">.glab"
+        assert any("grid-column:1" in d and "grid-row:1" in d
+                   for d in rules.get(lab, [])), "%s 缺标签列定位" % scope
+    assert ">div:not(.glab):not(.gsub){grid-column:2;grid-row:1}" in STYLE
     assert "glcell=(lab,id,onch,val,sub,type,unit,ph)" in SRC
     assert "+(ph?' placeholder=\"'+esc(ph)+'\"':'')" in SRC
     assert "'text',null,'留空 = 内置桌面 UA'" in SRC
