@@ -28823,7 +28823,7 @@ def _user_state(u):
             "route": rt_label,
             "dur": f.get("totalDuration") or "",
             "durM": _dur_min(f.get("totalDuration")),
-            "plat": Alerter.PLATFORM_CN.get(f.get("_platform", ""), ""),
+            "plat": Alerter.plat_cn(f.get("_platform", "")),
             "platKey": f.get("_platform", ""),
             # 补位行 age 可能 <0.5h：保留一位小数并设 0.1 地板，
             # 不再四舍五入成 0 冒充本轮；isStale 是显式布尔门。

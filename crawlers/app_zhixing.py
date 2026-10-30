@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import json
 from typing import List
 
 from core.models import FlightPrice
@@ -25,6 +26,20 @@ import time
 # 日历条上的日期是 MM-DD；换算年需要上下文（跨年时 12-31 → 01-01）
 _APP_PKG = "cn.suanya.zhixing"
 _APP_LABEL = "智行旅行"
+
+
+def _cal_extra(price: float, ymd: str) -> str:
+    """日历价行 → **单元素航班数组**（与五个浏览器渠道同一种形状）。
+
+    旧实现把 extra 写成元信息对象（`{"calendar": true, ...}`），而所有
+    消费方（webui 列表池 / Alerter 推送池 / report.recent_platform_flights）
+    都是 `if not isinstance(obj, list): continue`——App 采到的日历价
+    在库里有、页面与推送里一条都看不到。
+    """
+    return json.dumps([{
+        "price": float(price), "name": "日历最低价", "code": "",
+        "depDate": ymd, "depTime": "", "arrTime": "", "calendar": True,
+    }], ensure_ascii=False)
 
 
 def _md_to_ymd(md: str, anchor: str) -> str:
@@ -298,8 +313,7 @@ class AppZhixingCrawler(AppCrawler):
                 platform=self.name,
                 from_city=from_city, to_city=to_city,
                 depart_date=ymd, price=float(price),
-                extra=('{"calendar": true, "masked": false, '
-                       '"source": "app-calendar-dialog"}'),
+                extra=_cal_extra(price, ymd),
                 prov=f"app:{_APP_PKG}:calendar-dialog",
             ))
 
@@ -435,21 +449,37 @@ class AppZhixingCrawler(AppCrawler):
 
     def _to_prices(self, rows: List[dict], from_city: str, to_city: str,
                    date: str) -> List[FlightPrice]:
-        out: List[FlightPrice] = []
+        """该日期全部航班 → **一条** FlightPrice（extra 携带全部航班）。
+
+        「一渠道一日期一行」是既有契约：webui 列表池按
+        (platform, 航线, 日期, real/cal) 去重，同日期多行会被整批丢掉；
+        浏览器五渠道也都是「一行 + extra 数组」。App 曾写成「每班一行
+        + extra 元信息对象」，两边都对不上——库里有数据，页面一条不见。
+        """
+        flights, best = [], None
         for r in rows or []:
             price = r.get("price")
             if price is None:
                 continue
-            out.append(FlightPrice(
-                platform=self.name,
-                from_city=from_city, to_city=to_city,
-                depart_date=date, price=float(price),
-                flight_no=r.get("flight_no", ""),
-                depart_time=r.get("depart_time", ""),
-                extra='{"calendar": false, "source": "app-list"}',
-                prov=f"app:{_APP_PKG}:list",
-            ))
-        return out
+            flight_no = r.get("flight_no", "")
+            dep, arr = r.get("depart_time", ""), r.get("arrive_time", "")
+            item = {"price": float(price), "code": flight_no,
+                    "name": flight_no, "depDate": date,
+                    "depTime": dep, "arrTime": arr}
+            flights.append(item)
+            if best is None or price < best["price"]:
+                best = item
+        if not flights:
+            return []
+        return [FlightPrice(
+            platform=self.name,
+            from_city=from_city, to_city=to_city,
+            depart_date=date, price=best["price"],
+            flight_no=best["code"], depart_time=best["depTime"],
+            arrive_time=best["arrTime"],
+            extra=json.dumps(flights, ensure_ascii=False),
+            prov=f"app:{_APP_PKG}:list",
+        )]
 
     def _emit_calendar(self, xml: str, from_city: str, to_city: str,
                        dates: List[str], ms: int) -> List[FlightPrice]:
@@ -489,8 +519,7 @@ class AppZhixingCrawler(AppCrawler):
                 platform=self.name,
                 from_city=from_city, to_city=to_city,
                 depart_date=ymd, price=float(price),
-                extra=('{"calendar": true, "masked": false, '
-                       '"source": "app-calendar"}'),
+                extra=_cal_extra(price, ymd),
                 prov=f"app:{_APP_PKG}:calendar",
             ))
 

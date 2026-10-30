@@ -249,10 +249,14 @@ def parse_flight_rows(xml: str) -> List[dict]:
         if not m:
             continue
         flight_no = m.group(1)
-        # 时刻：同航班行附近、水平在左侧的时刻节点。
+        # 时刻：同一行左右各一个——左=起飞、右=到达。
         # 行高实测约 150px（时刻 cy=308、航司/航班号 cy=535 是相邻两块），
         # 容差给 60 会把「起降时刻」漏掉，只剩航班号。
+        # 到达时刻必须一起取：下游 `_real_offer` 要求 depTime 与 arrTime
+        # **同时存在**才算真实班次，只给起飞会让 App 的所有行被剔出最优池
+        # ——库里明明有数据，页面却什么都看不到（实测踩过）。
         dep = ""
+        arr = ""
         best_dy = None
         for cand in nodes:
             if not _TIME_RE.match(cand.text):
@@ -264,6 +268,18 @@ def parse_flight_rows(xml: str) -> List[dict]:
                 continue
             if best_dy is None or dy < best_dy:
                 best_dy, dep = dy, cand.text
+        # 右侧最近的时刻 = 到达（同排、在航班号右边）
+        best_dx = None
+        for cand in nodes:
+            if not _TIME_RE.match(cand.text):
+                continue
+            if abs(cand.cy - n.cy) > 120:
+                continue
+            if cand.x1 <= n.x1:
+                continue
+            dx = cand.x1 - n.x1
+            if best_dx is None or dx < best_dx:
+                best_dx, arr = dx, cand.text
         # 价格：同航班行、水平在右侧
         price, masked = None, False
         best_dy = None
@@ -276,7 +292,7 @@ def parse_flight_rows(xml: str) -> List[dict]:
             if best_dy is None or dy < best_dy:
                 best_dy, price, masked = dy, value, is_mask
         rows.append({"flight_no": flight_no, "depart_time": dep,
-                     "price": price, "masked": masked})
+                     "arrive_time": arr, "price": price, "masked": masked})
     return rows
 
 
