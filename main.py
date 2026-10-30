@@ -279,6 +279,28 @@ if getattr(sys, "frozen", False):
     _REPO_ROOT = _app_root()
 
 
+def _open_console(url: str, logger=None) -> bool:
+    """首次使用时把控制台拉到用户面前。返回是否真的打开了。
+
+    不打开的话，双击 exe 的人只会看到一个黑窗口——他不知道要复制
+    一行 URL 到浏览器，最常见的反应是「点开没反应，关了」。
+    失败只记一句日志，绝不影响监控启动（无桌面环境/服务器上跑是正常的）。
+    """
+    try:
+        if os.environ.get("TICKET_NO_OPEN"):
+            return False            # 测试/服务器显式关闭
+        import webbrowser
+        ok = webbrowser.open(url, new=2)
+        if ok:
+            return True
+        raise RuntimeError("webbrowser 未接管")
+    except Exception as e:
+        if logger is not None:
+            logger.info("（未能自动打开浏览器：%s；请手动访问 %s）",
+                        type(e).__name__, url)
+        return False
+
+
 def _sent_state_path():
     """哨状态落盘路径（写入面生产资格门，与 notifier._append_push_history
     同构三§7）：pytest 入口有 conftest autouse 隔离，但 demo/重放/探针
@@ -3287,8 +3309,6 @@ def main():
         return users
 
     build_runtime()
-    if not rt["users"]:
-        logger.warning("配置中没有任何用户/航线——可通过 http://127.0.0.1:8765 配置")
 
     # 走势图生成（按航线按用户：各用户以自己的配置画自己的图）
     def charts_fn(fc, tc, d, user=""):
@@ -3507,6 +3527,19 @@ def main():
                 "proxy", "") or "").strip()
             # Android 通道启动态初值（热重载 diff 基准，r629）
             rt["android"] = dict(cfg.get("android") or {})
+            # 首次使用引导（r653）：没有航线时，用户双击打不开任何东西——
+            # 只有一个黑窗口，不知道下一步做什么。主动拉起控制台，
+            # 并在终端里写清「打开它 → 加航线 → 勾渠道 → 保存」。
+            if not rt["users"]:
+                _url = "http://127.0.0.1:%d" % rt["web_port"]
+                logger.info("=" * 52)
+                logger.info("首次使用：你的浏览器会自动打开配置页")
+                logger.info("  1) 在「用户与航线」里添加一条关注航线")
+                logger.info("  2) 勾选要用的渠道（含「智行 App」）")
+                logger.info("  3) 点「保存并生效」，采集即刻开始")
+                logger.info("打不开就手动访问：%s", _url)
+                logger.info("=" * 52)
+                _open_console(_url, logger)
         except Exception as e:
             logger.warning("控制台启动异常: %s", e)
 
