@@ -337,7 +337,12 @@ def test_demo_health_payload_stays_on_the_light_path():
         "演示分支又走重路径（会打开 PriceStorage）"
     # 两条路径共用同一份附加逻辑，避免二次分叉
     assert "def _attach_diag_slots(" in src
-    deco = src[src.index("def _health_decorate("):src.index("def _health_decorate(") + 900]
+    # 按**函数体边界**取，不按固定字数：曾写 `+900`，r538 给 _health_decorate
+    # 补了 7 行演示态说明注释后调用点被推到 900 字以外，门禁表现为「调用消失」，
+    # 而源码里调用一直在。钉「函数体内有调用」，不钉它离函数头多少字。
+    i0 = src.index("def _health_decorate(")
+    i1 = src.index("\ndef ", i0 + 10)
+    deco = src[i0:i1]
     assert "_attach_diag_slots(out)" in deco
 
 
@@ -953,11 +958,14 @@ def test_path_degraded_names_the_worst_path_with_samples():
     """
     seg = _pacing_seg()
     i = seg.index("else if(adv.state==='path_degraded')")
-    block = seg[i:i + 2200]
+    # 按**分支边界**截块，不用固定字符数：r635 在这段里补了口径说明与
+    # 重试分支，2200 字符窗口够不到后面的通路下钻，会误判成「未下钻」。
+    nxt = seg.find("else if(adv.state==='", i + 10)
+    block = seg[i:nxt if nxt > 0 else i + 4000]
     assert "s1.paths" in block, "未下钻到分域内的通路"
     assert "n>=5" in block, "未设样本门槛（3 次也当成劣化）"
     assert "0.6" in block, "未设劣化阈值"
-    assert "'%（'+n+' 次）'" in block or "（'+n+' 次）" in block, "未带样本数"
+    assert "（'+n+' 次）" in block, "未带样本数"
     assert "'国内':'国际'" in block, "未标明是哪个域"
 
 def test_intervention_buttons_are_idempotent_and_recover():
