@@ -8933,10 +8933,17 @@ html[data-theme="dark"] #opscard .opsbtns>button:first-child{color:#0b1220!impor
    同一行给两种口径，不再让一个「100%」掩盖另一维。 */
 .pace-row .ev{grid-area:ev;display:flex;align-items:baseline;gap:8px;min-width:0;
  font-size:12px;color:var(--r-ink-3)}
-.pace-row .ev .e1{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* r660：两半必须**可收缩**。原先 e2 是 `flex:none` + nowrap，765–1100 档
+   证据列只有 405–636px，而这一行读数要 762px——超出的部分被列宽直接
+   裁掉（实测 1024 档数字少了尾巴、768 档整段读数一个字都看不见；
+   `scrollWidth` 与把名字换回恒等函数时完全一致，与通路名长短无关）。
+   e2 不再 `flex:none`，并允许换行而不是被裁：读数是结论的主要证据，
+   宁可占两行，也不能变成省略号。e1 保持省略号收口。 */
+.pace-row .ev .e1{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pace-row .ev .e2k{font-style:normal;font-size:11px;color:var(--r-ink-3);
  opacity:.72;margin-right:5px;letter-spacing:.2px}
-.pace-row .ev .e2{flex:none;font-size:11px;color:var(--r-ink-3);white-space:nowrap;
+.pace-row .ev .e2{flex:0 1 auto;min-width:0;max-width:100%;overflow:hidden;
+ font-size:11px;color:var(--r-ink-3);white-space:normal;overflow-wrap:anywhere;
  font-variant-numeric:tabular-nums}
 .pace-row .ev .e2 b{font-family:var(--num);font-size:12px;font-weight:600;color:var(--r-ink-2)}
 .pace-row .ac{grid-area:ac;display:inline-flex;align-items:center;justify-content:flex-end;
