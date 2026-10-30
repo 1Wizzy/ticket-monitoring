@@ -23961,7 +23961,15 @@ function srxTaskProbe(j,rows,forceBatch){
   want:j.want||[],plans:ps,
   from:p0.from,from_name:p0.from_name,to:p0.to,to_name:p0.to_name,date:p0.date};
 }
-function srxPathCN(st){return st==='ok'?'明细':(st==='calendar'?'仅日历':(st==='login'?'登录拒绝':(st==='blocked'?'人机验证':(st==='timeout'?'超时':(st==='error'?'失败':'无结果')))))}
+/* 通路状态 → 中文（r670）：原先只认 ok/calendar/login/blocked/timeout/error，
+   其余一律落到兜底「无结果」——把「渠道不支持」「解析失败」「会话层软拒」
+   都说成「无结果」，与 core.pacing.FAILURE_KINDS 的语义打架。
+   empty 才是「无结果」；未知码如实显示原码，不编名字。 */
+const SRX_PATH_CN={ok:'明细',calendar:'仅日历',calendar_only:'仅日历',
+ login:'登录拒绝',blocked:'人机验证',timeout:'超时',error:'失败',
+ parse_error:'解析失败',soft_reject:'软拒',unsupported:'渠道不支持',
+ empty:'无票',stale:'数据陈旧',cancelled:'已取消',partial:'部分成功'};
+function srxPathCN(st){const k=String(st||'');return SRX_PATH_CN[k]||k}
 function srxTaskPaths(lg){
  const segs=[];
  /* 渠道清单按**本轮真的有数据的**渠道派生（r661），不再写死 5 家浏览器
