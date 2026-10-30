@@ -28,7 +28,7 @@ STEPS = (
 )
 
 
-def status(cfg: dict) -> dict:
+def status(cfg: dict, evidence=None) -> dict:
     """返回引导状态。未启用时立刻返回 disabled，不碰任何外部资源。"""
     android = (cfg or {}).get("android") or {}
     if not (android.get("enabled") or False):
@@ -76,6 +76,52 @@ def status(cfg: dict) -> dict:
                   for k, v in STEPS],
         "next": "",
     }
+
+    # 后两步必须真的检查：只看「模拟器起来了」就宣布 ready，会让
+    # 「安装智行 App / 验证可采集」永远不勾——用户照引导走完却发现
+    # 清单还是未完成，而实际 App 早就装好且在采数（真机实测如此）。
+    # 包名从渠道注册表派生，不在这里另写一份（同项目「名字单一源」约定）。
+    try:
+        from crawlers import APP_CHANNELS, REGISTRY
+        packages = [getattr(REGISTRY.get(p), "package", "")
+                    for p in APP_CHANNELS]
+        packages = [p for p in packages if p]
+    except Exception:
+        packages = []
+    try:
+        from .device import AdbDevice
+        dev = AdbDevice(mgr.adb_path, mgr.adb_serial(),
+                        timeout=ac.action_timeout_s)
+        installed = any(dev.app_installed(pkg) for pkg in packages) \
+            if packages else False
+    except Exception:
+        installed = False
+    done = {"check", "install", "boot"}
+    if installed:
+        done.add("apk")
+    state["steps"] = [{"key": k, "label": v, "done": k in done}
+                      for k, v in STEPS]
+    if not installed:
+        state["next"] = (f"实例已就绪，但未检测到智行 App"
+                         f"（{', '.join(packages)}）："
+                         f"在模拟器里装一次即可")
+        return state
+    # 「验证可采集」只认**真的采到过数**：光装着 App 不等于能采
+    # （登录墙、风控都会让采集失败）。evidence 回调由调用方注入，
+    # 不注入就保持未勾选——不猜。
+    verified = False
+    try:
+        verified = bool(evidence() if evidence else False)
+    except Exception:
+        verified = False
+    if verified:
+        done.add("verify")
+        state["steps"] = [{"key": k, "label": v, "done": k in done}
+                          for k, v in STEPS]
+        state["next"] = "五步已完成：App 渠道已可用"
+    else:
+        state["next"] = ("已就绪：在 配置 · 渠道登录 里登录智行 App；"
+                         "登录后跑一轮采集即会点亮「验证可采集」")
     return state
 
 

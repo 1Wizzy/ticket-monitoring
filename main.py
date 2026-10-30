@@ -3083,7 +3083,33 @@ def main():
         from core.android.bootstrap import status as _app_status
         _p = Path(args.config)
         _cfg = load_config(str(_p)) if _p.exists() else {}
-        _st = _app_status(_cfg)
+
+        def _app_evidence():
+            """「验证可采集」的判据：库里真有过 App 渠道的成功记录。
+
+            不看日志、不看配置——只认落库事实；读不到库就是没验证过，
+            保持未勾选，不猜。
+            """
+            try:
+                from core.storage import PriceStorage
+                _db = ((_cfg.get("output") or {}).get("db_path")
+                       or "data/prices.db")
+                import sqlite3
+                import os as _os
+                if not _os.path.exists(_db):
+                    return False
+                con = sqlite3.connect(_db)
+                try:
+                    row = con.execute(
+                        "SELECT COUNT(1) FROM flight_prices "
+                        "WHERE platform LIKE 'app_%'").fetchone()
+                    return bool(row and row[0] > 0)
+                finally:
+                    con.close()
+            except Exception:
+                return False
+
+        _st = _app_status(_cfg, evidence=_app_evidence)
         print(f"Android 运行时：{_st['state']}")
         print(f"  说明：{_st['detail']}")
         for _s in _st.get("steps") or []:
