@@ -130,3 +130,57 @@ def test_snapshot_dir_matches_between_export_and_restore():
     seg = w[i - 700:i + 60]
     assert "_anchored(" in seg, (
         "登录完成导出快照时没有锚定仓库根，会与采集端解析出不同目录")
+
+
+# ---- r641：系统权限弹窗必须自动点掉（换机/重装后首次启动会遇到） ----
+class _PD:
+    def __init__(self, frames):
+        self.frames = list(frames)
+        self.taps = []
+
+    def dump(self):
+        if self.frames:
+            return self.frames.pop(0)
+        return self.frames_last
+
+    def tap(self, x, y):
+        self.taps.append((x, y))
+        return True
+
+
+def _dlg(texts, ys):
+    cells = "".join(
+        '<node index="%d" text="%s" class="android.widget.Button"'
+        ' bounds="[0,%d][100,%d]" />' % (i, t, y, y + 60)
+        for i, (t, y) in enumerate(zip(texts, ys)))
+    return ('<?xml version="1.0"?><hierarchy rotation="0">'
+            '<node index="0" text="" class="android.widget.FrameLayout">'
+            + cells + '</node></hierarchy>')
+
+
+def test_permission_dialog_is_dismissed():
+    """权限框盖住首页时必须点「允许」，否则采集读成「首页未就绪」。"""
+    import logging
+    from crawlers.app_zhixing import AppZhixingCrawler
+
+    c = AppZhixingCrawler({"android": {"enabled": True}},
+                          logging.getLogger("t"))
+    d = _PD([_dlg(["要允许“智行旅行”向您发送通知吗？", "允许", "不允许"],
+                  [100, 200, 300])])
+    d.frames_last = _dlg(["机票查询"], [100])
+    n = c._dismiss_system_prompts(d)
+    assert n == 1, "没点掉权限框（handled=%s）" % n
+    assert len(d.taps) == 1
+
+
+def test_permission_dialog_not_confused_with_app_buttons():
+    """首页正常时不点任何东西——不能把普通按钮误当成权限确认。"""
+    import logging
+    from crawlers.app_zhixing import AppZhixingCrawler
+
+    c = AppZhixingCrawler({"android": {"enabled": True}},
+                          logging.getLogger("t"))
+    d = _PD([_dlg(["机票查询", "上海", "广州"], [100, 200, 300])])
+    d.frames_last = d.frames[0] if d.frames else _dlg(["机票查询"], [100])
+    assert c._dismiss_system_prompts(d) == 0
+    assert d.taps == [], "不该在正常页面上乱点"
