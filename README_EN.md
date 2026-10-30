@@ -186,7 +186,7 @@ The capability map follows **collect → push → visualize → configure**. Eac
 
 | Capability | What it does |
 |---|---|
-| **Panel config** | Left-side three partitions (channel login / users & routes / global), one section on screen; flight watch is inlined inside each user card (section D) and reached from the watch studio's Edit action; high-frequency route fields first, low-frequency constraints collapsed; every field explains itself and sections show live summaries. |
+| **Panel config** | Left-side four partitions (channel login / users & routes / channel pacing / global), one section on screen; flight watch is inlined inside each user card (section D) and reached from the watch studio's Edit action; high-frequency route fields first, low-frequency constraints collapsed; every field explains itself and sections show live summaries. |
 | **Global config center** | Schedule/crawler parameters hot-reload; startup-level paths (DB / log / login state / Chromium dir) are editable with 📂 open-folder and auto-migrate on change; illegal paths, four paths in one place, non-writable paths and illegal listen addresses are blocked before save; every channel has a real test button. |
 | **Hot reload** | Routes, thresholds, push, interval, **port rebind**, headless, timeouts, pacing, daily report hour and image host take effect on save; DB/log/login/Chromium/listen/scan-on-boot show an old→new diff and a restart prompt. |
 | **Search & import/export** | Field-level search; JSON export/import (credentials stay local); dirty-change count and validation before save; `Ctrl/⌘+S`. |

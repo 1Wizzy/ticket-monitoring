@@ -2885,13 +2885,15 @@ def test_config_partitions_documented_match_nav():
     j = WEBUI.find("</aside>", i)
     nav = WEBUI[i:j if j > 0 else i + 4000]
     nav_items = re.findall(r'class="cnav[^"]*" data-p="([a-z]+)"', nav)
-    assert nav_items == ["login", "users", "globals"], "左侧分区变化：%s" % nav_items
+    assert nav_items == ["login", "users", "pacing", "globals"], (
+        "左侧分区变化：%s" % nav_items)
     labels = [x.strip() for x in re.findall(r'</svg>([^<]+)<i class="cnavn"', nav)]
     assert len(labels) == len(nav_items), "分区名解析失败：%s" % labels
     nav_badge_labels = lambda: labels
     EN_PARTITION_ALIASES = {
         "channel login": "渠道登录", "users & routes": "用户与航线",
         "users and routes": "用户与航线", "global": "全局参数",
+        "channel pacing": "渠道节流", "pacing": "渠道节流",
     }
 
     # 面板数与分区数必须相等；多出来的面板只能是用户卡内联的关注面板
