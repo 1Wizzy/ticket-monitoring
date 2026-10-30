@@ -18453,7 +18453,7 @@ async function loadPacing(force){
          「0%」等于把「没跑起来」说成「跑了全失败」。 */
       const _rq2=q.rate_excl_empty;
       if(n>=5&&_rq2!=null&&parseFloat(_rq2)<0.6)
-       _worst.push((sk==='dom'?'国内':'国际')+' '+pp);
+       _worst.push((sk==='dom'?'国内':'国际')+' '+pathCN(pp));
      });
     });
     /* 只点**一条**最差通路，且不重复域级结论、不带长解释。原先最多两条、
@@ -18543,11 +18543,12 @@ async function loadPacing(force){
     const _pf=[];
     if((parseInt(w.login)||0)>0)_pf.push('需登录 '+w.login);
     if((parseInt(w.soft)||0)>0)_pf.push('软拒 '+w.soft);
-    pws.push(pp+' '+(det===0&&cal>0?('×'+cal):_rate(w.rate))
+    pws.push(pathCN(pp)+' '+(det===0&&cal>0?('×'+cal):_rate(w.rate))
       +(_pf.length?'（'+_pf.join(' · ')+'）':''));
    });
-   dead.forEach(pp=>pws.push(pp+' 退役'));
-   dead.forEach(pp=>pws.push(pp+' 退役'));
+   /* 退役标签同样走中文名（r659）：`dead.forEach` 原先连着写了两遍，
+     整段「H5 退役」在行里出现两次。 */
+   dead.forEach(pp=>pws.push(pathCN(pp)+' 退役'));
    const pathTxt=_maskSynth?'':[scoped('dom','国内'),scoped('intl','国际')]
     .concat(pws).filter(Boolean).join(' · ');
    /* 速览右半：查询级成功率 + 明细/日历拆分。路径成功不等于查询成功
