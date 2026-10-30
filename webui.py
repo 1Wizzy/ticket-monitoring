@@ -17989,7 +17989,7 @@ async function probeNow(p){
  try{
   const j=await (await fetch('/api/channel/probe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p,scope:_probeScope})})).json();
   if(!j.ok){out.innerHTML='<span style="color:var(--red)">'+esc(j.err||'自检失败')+'</span>';toast(p+' 自检失败');return;}
-  const ps=(j.paths||[]).map(x=>esc(x.path||'?')+' '+((x.status==='ok'||x.status==='calendar')?'<span style="color:#1a9e75">ok</span>':'<span style="color:var(--red)">'+esc(x.status||'?')+'</span>')+'×'+(x.rows||0)).join(' · ')||'无路径记录';
+  const ps=(j.paths||[]).map(x=>esc(pathCN(x.path||'?')||'?')+' '+((x.status==='ok'||x.status==='calendar')?'<span style="color:#1a9e75">ok</span>':'<span style="color:var(--red)">'+esc(x.status||'?')+'</span>')+'×'+(x.rows||0)).join(' · ')||'无路径记录';
   out.innerHTML=(j.rows>0?('<span style="color:#1a9e75">'+esc(p)+'/'+esc(j.scope||'auto')+' 出数 '+j.rows+' 条</span>'):('<span style="color:var(--red)">'+esc(p)+'/'+esc(j.scope||'auto')+' 未出数</span>'))
    +'（'+ps+'，'+(j.ms/1000).toFixed(1)+'s）'
    +((j.cookies&&j.cookies.length)?(' · cookie '+esc(j.cookies.join('/'))):'')
@@ -18756,7 +18756,7 @@ async function loadPacing(force){
       const _tailTxt=tail+(ev2.note?(' · '+String(ev2.note).slice(0,40)):'')
         +((ev2.http_status)?(' · HTTP '+String(ev2.http_status)):'');
       return '<div class="pace-rec"><span class="who"><span class="seq">'+(i+1)+'</span>'+esc(_tk(x.platform))+'</span>'
-       +'<span class="what">'+esc(x.path||'?')+' · '+rt+'<span class="st '+tone+'">'+esc(k)+'</span>'
+       +'<span class="what">'+esc(pathCN(x.path||'?')||'?')+' · '+rt+'<span class="st '+tone+'">'+esc(k)+'</span>'
         /* 备注单行截断；全文放 title，截断不等于丢信息。 */
         +'<span class="h" title="'+esc(_tailTxt+(ev2.note?(' ｜ '+String(ev2.note)):''))+'">'
         +esc(_tailTxt)+'</span></span>'
@@ -21723,8 +21723,8 @@ function srxEmptyInfo(){
  }
  if(!c.channel){
   const want=srxProbeWant();
-  const req=want.length?want.map(p=>(SRX_PLATS[p]||[p])[0]).join('/'):'（未记录）';
-  const rf=SRX.plats.length?SRX.plats.map(p=>(SRX_PLATS[p]||[p])[0]).join('/'):'全部';
+  const req=want.length?want.map(p=>platCN(p)).join('/'):'（未记录）';
+  const rf=SRX.plats.length?SRX.plats.map(p=>platCN(p)).join('/'):'全部';
   return {kind:'channel',title:'结果渠道筛选无匹配',
    body:'所选日期有 '+c.date+' 行，但结果渠道筛选「'+rf+'」无记录；任务请求渠道为「'+req+'」。任务日期与请求渠道未被改写。'};
  }
@@ -23104,7 +23104,7 @@ function srxRenderAbar(){
  let head='';
  if(SRX.probe){
   const want=srxProbeWant();
-  const ps=want.length?want.map(p=>(SRX_PLATS[p]||[p])[0]).join(' / '):'未记录';
+  const ps=want.length?want.map(p=>platCN(p)).join(' / '):'未记录';
   const plans=(SRX.probe.legs||[]).map(lg=>lg.date).filter(Boolean);
   const ds=[...new Set(plans)].join(' / ');
   head='<span class="srx-snap"><b>任务快照</b><span>'+(ds?ds+' · ':'')+'请求渠道 '+he(ps)+'</span><button type="button" onclick="srxFocusProbe()">发起新查询</button></span>';
@@ -23623,7 +23623,7 @@ function srxSessions(){try{return JSON.parse(localStorage.getItem('jpsrx_session
 function srxSaveSessions(a){try{localStorage.setItem('jpsrx_sessions',JSON.stringify(a.slice(0,20)))}catch(e){}}
 function srxOpenSessions(){
  const a=srxSessions();
- const rows=a.length?a.map((s,i)=>'<div class="srx-snap"><div><b>'+he((s.from_name||s.from)+'→'+(s.to_name||s.to)+' · '+s.date)+'</b><span>'+he(s.at||'')+' · '+he((s.plats||[]).map(p=>SRX_PLATS[p]?SRX_PLATS[p][0]:p).join('/'))+' · '+he(String(s.elapsed||0))+'ms · '+he(String(s.rows||0))+' 行 · 未入库</span><span>'+Object.entries(s.channels||{}).map(([p,c])=>he((SRX_PLATS[p]||[p])[0]+':'+(c.status==='ok'?'实时'+c.n:(c.status==='empty'?'未供':c.status)))).join(' · ')+'</span></div><button type="button" data-sessrestore="'+i+'">填入表单</button><button type="button" data-sessdel="'+i+'">删除</button></div>').join(''):'<div class="srx-mempty"><b>暂无探针会话</b>真实探针完成后写入本机，不伪造历史。</div>';
+ const rows=a.length?a.map((s,i)=>'<div class="srx-snap"><div><b>'+he((s.from_name||s.from)+'→'+(s.to_name||s.to)+' · '+s.date)+'</b><span>'+he(s.at||'')+' · '+he((s.plats||[]).map(p=>SRX_PLATS[p]?SRX_PLATS[p][0]:p).join('/'))+' · '+he(String(s.elapsed||0))+'ms · '+he(String(s.rows||0))+' 行 · 未入库</span><span>'+Object.entries(s.channels||{}).map(([p,c])=>he(platCN(p)+':'+(c.status==='ok'?'实时'+c.n:(c.status==='empty'?'未供':c.status)))).join(' · ')+'</span></div><button type="button" data-sessrestore="'+i+'">填入表单</button><button type="button" data-sessdel="'+i+'">删除</button></div>').join(''):'<div class="srx-mempty"><b>暂无探针会话</b>真实探针完成后写入本机，不伪造历史。</div>';
  srxOpenModal('探针会话','<div class="srx-cmpnote">仅记录本机真实探针的航线/日期/渠道状态/耗时/行数，不保存结果到监控库。</div><div class="srx-snaplist">'+rows+'</div><div class="srx-dacts" style="margin-top:8px"><button type="button" data-sessclear="1">清空本机会话</button></div>');
 }
 function srxOpenModal(title,html){
@@ -23642,7 +23642,7 @@ function srxRenderSnapList(){const el=$('srxSnapList');if(!el)return;const a=srx
 function srxProbeChHTML(p,c){
  const cls=c.status==='ok'?'':c.status==='empty'?'warn':'bad';
  const label=c.status==='ok'?'实时 '+c.n+' 行':(c.status==='empty'?'本态未供':(c.status==='timeout'?'超时':'失败'));
- return '<span class="ch '+cls+'" title="'+he(c.err||'')+'"><i></i>'+he((SRX_PLATS[p]||[p])[0])+' '+label+'</span>'}
+ return '<span class="ch '+cls+'" title="'+he(c.err||'')+'"><i></i>'+he(platCN(p))+' '+label+'</span>'}
 function srxProbeStatus(j){
  const box=$('srxProbeStatus');if(!box)return;
  if(!j){box.className='srx-probestatus';box.textContent='选择航线与日期后发起真实探针；结果不写入监控库。';return}
@@ -23901,7 +23901,7 @@ function srxTaskCond(j){
  const ps=(j&&j.plans)||[];
  if(!ps.length)return '—';
  const want=(j&&j.want)||[];
- const ch=want.length?(' · 渠道 '+want.map(p=>(SRX_PLATS[p]||[p])[0]).join('/')):'';
+ const ch=want.length?(' · 渠道 '+want.map(p=>platCN(p)).join('/')):'';
  if(ps.length===1){const p=ps[0];return p.from_name+'→'+p.to_name+' · '+p.date+ch}
  return ps.length+' 条航线/日期 · '+ps.map(p=>p.from_name+'→'+p.to_name+' '+p.date).slice(0,3).join(' / ')+(ps.length>3?' …':'')+ch;
 }
@@ -23934,12 +23934,20 @@ function srxTaskProbe(j,rows,forceBatch){
 function srxPathCN(st){return st==='ok'?'明细':(st==='calendar'?'仅日历':(st==='login'?'登录拒绝':(st==='blocked'?'人机验证':(st==='timeout'?'超时':(st==='error'?'失败':'无结果')))))}
 function srxTaskPaths(lg){
  const segs=[];
- SRX_PLAT_ORDER.forEach(p=>{
+ /* 渠道清单按**本轮真的有数据的**渠道派生（r661），不再写死 5 家浏览器
+    渠道：`SRX_PLAT_ORDER` 里没有 App 渠道，智行 App 的通路证据（
+    App 航班列表 / 模拟器运行时 …）在溯源里从不出现——看得见却查不到。
+    排序仍走 SRX_PLAT_ORDER，未知/App 渠道排在其后。 */
+ const _seen=Object.keys((lg&&lg.channels)||{});
+ _seen.sort((a,b)=>{
+  const ia=SRX_PLAT_ORDER.indexOf(a),ib=SRX_PLAT_ORDER.indexOf(b);
+  return (ia<0?99:ia)-(ib<0?99:ib)||String(a).localeCompare(String(b));});
+ _seen.forEach(p=>{
   const c=(lg.channels||{})[p];if(!c)return;
   (c.paths||[]).forEach(x=>{
    const k=(x.status==='ok'||x.status==='calendar')?'ok':(['login','blocked','error','timeout'].includes(x.status)?'bad':'warn');
-   const nm=(SRX_PLATS[p]||[p])[0];
-   segs.push('<span class="srx-tpath '+k+'" title="'+he((x.detail||'')+(x.ms?(' · '+x.ms+'ms'):''))+'"><em>'+he(nm)+'</em><i>'+he(x.path||'')+'</i>'+he(srxPathCN(x.status))+(x.rows?(' '+x.rows):'')+'</span>');
+   const nm=platCN(p);
+   segs.push('<span class="srx-tpath '+k+'" title="'+he((x.detail||'')+(x.ms?(' · '+x.ms+'ms'):''))+'"><em>'+he(nm)+'</em><i>'+he(pathCN(x.path||''))+'</i>'+he(srxPathCN(x.status))+(x.rows?(' '+x.rows):'')+'</span>');
   });
  });
  return segs.length?('<div class="srx-tpaths">'+segs.join('')+'</div>'):'';
@@ -24112,7 +24120,7 @@ function srxTaskRender(j){
     const c=lg.channels[p],cs=c.status||'queued';
     const k=cs==='running'?'run':(cs==='ok'?'ok':(cs==='queued'?'queued':(['error','timeout','parse_error','blocked','login_required','challenge','session_busy'].includes(cs)?'bad':(cs==='empty'||cs==='calendar_only'||cs==='partial'||cs==='cancelled'||cs==='unsupported'?'warn':'queued'))));
     const txt=srxChannelText(c);
-    return '<span class="srx-tch '+k+'" title="'+he((c.raw_n!=null?('渠道记录 '+c.raw_n+' · '):'')+(c.err||c.phase||''))+'"><span class="p">'+srxPlatIcon(p)+'</span>'+he((SRX_PLATS[p]||[p])[0])+' · '+he(txt)+'</span>'}).join('');
+    return '<span class="srx-tch '+k+'" title="'+he((c.raw_n!=null?('渠道记录 '+c.raw_n+' · '):'')+(c.err||c.phase||''))+'"><span class="p">'+srxPlatIcon(p)+'</span>'+he(platCN(p))+' · '+he(txt)+'</span>'}).join('');
    return '<div class="srx-tleg"><b>'+he(lg.from_name)+'→'+he(lg.to_name)+'</b><em>'+he(lg.date)+'</em><span class="st '+stc+'">'+he(word)+'</span>'+(lg.elapsed_ms?'<span>'+Math.round(lg.elapsed_ms/1000)+'s</span>':'')+chs+srxTaskPaths(lg)+'</div>';
   }).join('');
  }
@@ -24125,7 +24133,7 @@ function srxTaskRender(j){
   const plats=[...new Set(rawEvents.map(e=>e.plat).filter(Boolean))];
   if(platSel&&platSel.dataset.opts!==plats.join(',')){
    const cur=platSel.value;platSel.dataset.opts=plats.join(',');
-   platSel.innerHTML='<option value="">全部渠道</option>'+plats.map(p=>'<option value="'+he(p)+'">'+he((SRX_PLATS[p]||[p])[0])+'</option>').join('');
+   platSel.innerHTML='<option value="">全部渠道</option>'+plats.map(p=>'<option value="'+he(p)+'">'+he(platCN(p))+'</option>').join('');
    platSel.value=plats.includes(cur)?cur:'';
   }
   const phases=[...new Set(rawEvents.map(e=>e.phase).filter(Boolean))].slice(-24);
