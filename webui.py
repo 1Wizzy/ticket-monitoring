@@ -32000,6 +32000,29 @@ class _Handler(BaseHTTPRequestHandler):
                 _r = _la.dispatch(_app_login_registry(), "POST", _u.path,
                                   _pq(_u.query), _body, _app_login_ctx())
                 _obj, _code = _r
+                # App 登录也要入干预账（r646）：网页登录成功会写 relogin，
+                # App 这条链路原先只在内存里结束——账本里查不到，节流面板
+                # 的「上次干预 44%→100%」永远不会以 App 重登为分界，干预
+                # 成功率也算不到它。scope 写动作本身，after 留给后台采集填。
+                try:
+                    if (_u.path.rstrip("/") == "/api/app-login/finish"
+                            and isinstance(_obj, dict) and _obj.get("ok")):
+                        from core.storage import PriceStorage as _PSa
+                        _plata = str((_body or {}).get("plat")
+                                     or (_pq(_u.query).get("plat") or [""])[0])
+                        if _plata:
+                            _PSa(_anchored(
+                                ((_State.cfg or {}).get("output") or {}).get(
+                                    "db_path"), "data/prices.db")
+                            ).save_intervention(
+                                _plata, "relogin", ok=True, scope="app",
+                                before="login_wall",
+                                note="App 内登录并导出快照（真机画面）")
+                except Exception as _e:
+                    try:
+                        _State.logger.warning("[App登录] 干预入账失败：%s", _e)
+                    except Exception:
+                        pass
                 self._json(_obj, _code)
             except ValueError as e:
                 self._json({"ok": False, "err": str(e)}, 413)
