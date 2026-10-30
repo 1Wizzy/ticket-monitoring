@@ -19374,8 +19374,28 @@ function buildForm(){if(!CFG)return;let h='',gh='';
       'GLB.cadence=Object.assign({},GLB.cadence||{},{'+p+':Math.max(0,Math.min(10080,parseInt(this.value)||0))})',
       esc(((GLB.cadence||{})[p])||0),
       '该渠道单独的最小采集间隔（分钟）；0 = 跟随全局 TTL', 'number', null, '0 = 跟随全局')).join('')
-  +'</div>'
+  /* App 渠道（r654）：后端 cadence 按渠道 key 读，App 渠道本就支持；
+     但这里写死 5 家浏览器渠道，智行 App 永远配不到它自己的间隔——
+     同一套节流体系里少一个渠道，等于「看得见的渠道才能管」。
+     只在**已启用**时出现：没开 App 通道的人不该看到一个用不上的输入框。 */
+  +(function(){
+    var A=(typeof APP_PLAT_NAME!=='undefined')?APP_PLAT_NAME:{};
+    var on=(typeof APP_LOGIN_STATE!=='undefined'&&APP_LOGIN_STATE)||{};
+    var cur=(typeof CFG!=='undefined'&&CFG&&CFG[0]&&CFG[0].platforms)||[];
+    var list=Object.keys(A).filter(function(p){
+      return cur.indexOf(p)>=0||on[p];});
+    return list.map(function(p){
+      return glcell(A[p]+' 最小间隔','glbCad_'+p,
+        'GLB.cadence=Object.assign({},GLB.cadence||{},{'+p+':Math.max(0,Math.min(10080,parseInt(this.value)||0))})',
+        esc(((GLB.cadence||{})[p])||0),
+        '该渠道单独的最小采集间隔（分钟）；0 = 跟随全局 TTL',
+        'number',null,'0 = 跟随全局');}).join('');
+  })()
   +'</div>';
+/* r640c：gp 只有两个 .glgrid（节流区 + 渠道节奏），上面已各自闭合。
+   原先这里多写了一层 div 闭合标签 —— 全页 div 开合数 1240/1241，
+   门禁如实变红。浏览器会忽略多余的闭合，所以肉眼看不出来；
+   但源码契约破了，且后续在附近加容器时极易错位。 */
 $('cfgglobals').innerHTML=gh;
  const _gpx=$('cfgpacing');if(_gpx)_gpx.innerHTML=gp;
  /* 多邮箱通道归位到渠道列表末尾（图床之后、添加按钮之前）：新增
@@ -29606,11 +29626,40 @@ def _attach_demo_paths(out: dict) -> None:
         pass
 
 
+def _diag_platforms(seen_plats=None) -> tuple:
+    """诊断卡要覆盖的渠道：默认 5 家浏览器渠道 + 用户启用的 App 渠道。
+
+    只并入**用户 platforms 里配了的** App 渠道（或本轮真跑过的）：
+    没启用的人不该看到一张「本轮未扫描」的空卡。
+    """
+    from core.health_diag import PLATFORMS
+    out = list(PLATFORMS)
+    try:
+        from crawlers import APP_CHANNELS
+    except Exception:
+        APP_CHANNELS = ()
+    enabled = set(seen_plats or [])
+    try:
+        for u in (_State.users or []):
+            enabled |= set(u.get("platforms") or [])
+    except Exception:
+        pass
+    for p in APP_CHANNELS:
+        if p in enabled and p not in out:
+            out.append(p)
+    return tuple(out)
+
+
 def _health_decorate(out: dict) -> dict:
     from core.health_diag import classify_round
     rounds = out.get("rounds") or []
     plats = (rounds[-1].get("plats") if rounds else {}) or {}
-    out["diag"] = classify_round(plats, cookie=_cookie_states())
+    # 诊断卡只覆盖默认 5 家浏览器渠道；用户启用的 App 渠道（智行 App）
+    # 跑过也永远不出卡——「看得见的渠道才能干预」，于是它连自检入口
+    # 都没有。把「用户实际启用的渠道」并进去：没启用的不会多出空卡。
+    _plats = list(plats)
+    out["diag"] = classify_round(plats, cookie=_cookie_states(),
+                                 all_plats=_diag_platforms(_plats))
     out["diag_at"] = rounds[-1].get("ts", "") if rounds else ""
     # r538：演示态必须让**卡片自己**说明数据来源。原先只有页头那行
     # 「DEMO · 合成健康」带标识，诊断卡仍然逐张写「最近一轮正常」——
