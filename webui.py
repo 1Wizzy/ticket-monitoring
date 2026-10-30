@@ -18275,7 +18275,7 @@ async function loadPacing(force){
       +'<span>需要处理：'+esc(_act.join('；'))+'</span></div>'):'')
    +(_wait.length?('<div class="pace-note wait"><i class="dot warn" aria-hidden="true"></i>'
       +'<span>等待恢复（倒计时归零自动放行）：'+esc(_wait.join('；'))+'</span></div>'):'')
-   +(_auto.length?('<div class="pace-note ok"><i class="dot ok" aria-hidden="true"></i>'
+   +(_auto.length?('<div class="pace-note ok" title="自动类建议＝系统已按规则处理（记录路径偏好/延后），不需要你动手；想看具体做了什么，展开该行的「溯源」"><i class="dot ok" aria-hidden="true"></i>'
       +'<span>已自动处理 '+_auto.length+' 家：'+esc(_auto.map(a=>a.split('：')[0]).join('、'))
       +'，无需人工（依据见各行）</span></div>'):'')
    +(_unk.length?('<div class="pace-note"><i class="dot" aria-hidden="true"></i>'
