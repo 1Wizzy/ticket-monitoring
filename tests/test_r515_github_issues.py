@@ -170,3 +170,43 @@ def test_startup_failure_is_readable_when_launched_by_double_click():
     assert "traceback.print_exc()" in seg, "启动异常没有打印堆栈"
     assert "启动失败" in seg, "没有可读的失败结论"
     assert "isatty" in seg, "没有在可交互终端里停住（窗口会一闪而过）"
+
+
+def test_filter_summary_renders_category_svg_chip_without_escaping():
+    """#12：生效筛选分类标签（直飞/中转·达标等）必须渲染 SVG 图标，禁止转义为文本 <svg>。"""
+    from playwright.sync_api import sync_playwright
+    import pytest
+    import webui
+
+    w = _read("webui.py")
+    i = w.index("function renderFltSum()")
+    seg = w[i:i + 1200]
+    assert "g.html" in seg or "g.g==='cat'" in seg, \
+        "renderFltSum 没有保留分类项的 HTML/SVG 图标通道"
+
+    with sync_playwright() as drv:
+        if not os.path.exists(drv.chromium.executable_path):
+            pytest.skip("Chromium 未安装")
+        b = drv.chromium.launch()
+        try:
+            p = b.new_page()
+            p.set_content(webui.PAGE)
+            res = p.evaluate('''() => {
+                F = 'tq';
+                renderFltSum();
+                const box = document.getElementById('fltsum');
+                const chip = box ? box.querySelector('.fs-chip') : null;
+                return {
+                    hasSvgTag: box && box.querySelector('svg.gly') !== null,
+                    hasEscapedSvg: box && box.innerHTML.includes('&lt;svg'),
+                    chipTitle: chip ? chip.getAttribute('title') : '',
+                    chipText: chip ? chip.innerText.trim() : ''
+                };
+            }''')
+            assert res["hasSvgTag"] is True, "分类筛选 chip 未渲染出 svg.gly 元素"
+            assert res["hasEscapedSvg"] is False, "分类筛选 chip 出现转义的 &lt;svg 源码字符串"
+            assert "中转·达标" in res["chipTitle"], "chip 的 title 属性未正确包含纯文本标题"
+            assert "<svg" not in res["chipTitle"], "chip 的 title 属性不应包含 svg 代码"
+        finally:
+            b.close()
+

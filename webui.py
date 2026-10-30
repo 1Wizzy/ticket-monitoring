@@ -11022,7 +11022,8 @@ function _fltFlags(){const a=[];
  if(FLT.prate)a.push('准点≥'+FLT.prate+'%');if(FLT.age)a.push('机龄≤'+FLT.age+'年');
  if(FLT.bagkg)a.push('托运≥'+FLT.bagkg+'kg');return a;}
 function _fltGroups(){const out=[];
- if(F&&F!=='all')out.push({g:'cat',label:_fltCatLabel(F)});
+ if(F&&F!=='all')out.push({g:'cat',label:_fltCatLabel(F),html:_fltCatLabel(F),
+  title:{d:'直飞',tq:'中转·达标',t:'中转·全部',q:'仅达标',bag:'直挂'}[F]||F});
  if(FLT.plats.size)out.push({g:'plats',label:'渠道 '+FLT.plats.size});
  if(FLT.routes.size)out.push({g:'routes',label:'航线 '+FLT.routes.size});
  if(FLT.dates.size)out.push({g:'dates',label:'日期 '+FLT.dates.size});
@@ -11055,7 +11056,7 @@ function renderFltSum(){const box=$('fltsum');if(!box)return;
   +gs.map(g=>'<span class="fs-chip" role="button" tabindex="0" title="点击清除该组筛选'
    +esc(g.title?('：'+g.title):'')+'" onclick="clearFltGroup(\''+g.g+'\')"'
    +' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();clearFltGroup(\''+g.g+'\')}">'
-   +esc(g.label)+' ✕</span>').join('')
+   +(g.html||(g.g==='cat'?g.label:esc(g.label)))+' ✕</span>').join('')
   +'<span class="fs-clear" role="button" tabindex="0" onclick="resetFltUI()"'
   +' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();resetFltUI()}">清除全部</span>';}
 function syncFltInputs(){const set=(id,v)=>{const el=$(id);if(el)el.value=(v==null||v===0)?'':String(v);};
