@@ -120,3 +120,93 @@ def test_snapshot_paths_exclude_cache():
     assert "shared_prefs" in SNAP_PATHS
     assert "app_ctripwebapp6" not in SNAP_PATHS, \
         "128MB 网页缓存不属于登录态，不能打进快照"
+
+
+# ---- r640：恢复不能把设备上更新的登录态回滚 ----
+def test_restore_skipped_when_device_login_is_newer(tmp_path):
+    """设备上的用户信息库比快照新时，必须跳过恢复。
+
+    否则用户刚在 App 里登的新账号会被旧快照覆盖回去，且没有任何提示。
+    """
+    import os
+    import time
+    from core.android.snapshot import SnapshotManager, SnapshotStore
+
+    store = SnapshotStore(str(tmp_path))
+    store.save_bytes("app_zhixing", b"\x1f\x8b" + b"0" * 64)
+    snap = store.path_for("app_zhixing")
+    old = time.time() - 7200
+    os.utime(snap, (old, old))
+
+    class Dev:
+        adb_path = "adb"
+        serial = "x"
+
+        def _sh(self, *a, **k):
+            return "%d\n" % int(time.time())
+
+        def root(self):
+            return True
+
+        def app_stop(self, pkg):
+            return True
+
+    called = {"stop": 0}
+    d = Dev()
+
+    def stop(pkg):
+        called["stop"] += 1
+        return True
+
+    d.app_stop = stop
+    mgr = SnapshotManager(d, store, "cn.suanya.zhixing")
+    ok, detail = mgr.restore("app_zhixing")
+    assert ok is False, "不应覆盖更新的设备登录态"
+    assert "比快照新" in detail, detail
+    assert called["stop"] == 0, "跳过时必须完全不动 App（不要 force-stop）"
+
+
+def test_restore_proceeds_when_device_has_no_login(tmp_path):
+    """设备上没有登录库（换机/重装）时应正常恢复。"""
+    import os
+    import time
+    from core.android.snapshot import SnapshotManager, SnapshotStore
+
+    store = SnapshotStore(str(tmp_path))
+    store.save_bytes("app_zhixing", b"\x1f\x8b" + b"0" * 64)
+
+    class Dev:
+        adb_path = "adb"
+        serial = "x"
+
+        def _sh(self, *a, **k):
+            if "stat" in str(a):
+                return ""
+            if "tar xzf" in str(a) or "cd " in str(a):
+                return "DONE"
+            return ""
+
+        def root(self):
+            return True
+
+        def app_stop(self, pkg):
+            return True
+
+        def app_start(self, pkg):
+            return True
+
+    import core.android.device as devmod
+
+    class P:
+        returncode = 0
+        stdout = b""
+
+    orig = devmod._run
+    devmod._run = lambda *a, **k: P()
+    try:
+        mgr = SnapshotManager(Dev(), store, "cn.suanya.zhixing")
+        assert mgr.device_login_mtime() == 0
+        ok, detail = mgr.restore("app_zhixing")
+        assert ok is True, detail
+    finally:
+        devmod._run = orig

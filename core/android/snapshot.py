@@ -127,8 +127,31 @@ class SnapshotManager:
         return True, f"快照 {info['size'] / 1048576:.1f} MB"
 
     # ---------- 恢复 ----------
+    def device_login_mtime(self) -> int:
+        """设备上**登录态**的修改时间（epoch 秒）；不存在或读不到返回 0。
+
+        只认 `databases/zt_userInfo.db`（智行的账号信息库）。刻意不用
+        shared_prefs：App 一跑起来就会写它，拿它比较会让「设备永远更新」
+        从而永不恢复——恢复功能等于关掉。
+        """
+        dev = self.device
+        if dev is None:
+            return 0
+        out = dev._sh(
+            "shell",
+            f"stat -c '%Y' /data/data/{self.package}/databases/zt_userInfo.db"
+            " 2>/dev/null", timeout=30) or ""
+        try:
+            return int(out.strip().splitlines()[0])
+        except (ValueError, IndexError):
+            return 0
+
     def restore(self, plat: str) -> tuple:
-        """返回 (ok, detail)。没有快照时如实返回 False，不假装成功。"""
+        """返回 (ok, detail)。没有快照时如实返回 False，不假装成功。
+
+        设备侧已有**比快照更新**的登录态时不覆盖：那会把用户刚登的账号
+        回滚掉。设备上没有登录库（未登录/新装）时正常恢复。
+        """
         dev = self.device
         if dev is None:
             return False, "设备不可用"
@@ -136,6 +159,11 @@ class SnapshotManager:
             return False, "没有可恢复的快照"
         if not dev.root():
             return False, "无法获取 root"
+
+        snap_at = int(os.path.getmtime(self.store.path_for(plat)))
+        dev_at = self.device_login_mtime()
+        if dev_at and dev_at > snap_at:
+            return False, "设备上的登录态比快照新，已保留设备数据"
 
         data = self.store.load_bytes(plat)
         if not data:
