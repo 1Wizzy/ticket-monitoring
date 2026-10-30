@@ -155,7 +155,7 @@ def test_spec_line_refs_still_point_at_claim():
     # (文档锚点特征, 源文件, 行号, 该行必须包含的串)
     CHECKS = [
         ("PEP 604", "core/radar_alerts.py", 25, "float | None"),
-        ("PEP 604", "crawlers/ctrip.py", 1007, "float | None"),
+        ("PEP 604", "crawlers/ctrip.py", 1010, "float | None"),
         ("PEP 604", "crawlers/tongcheng.py", 1051, "float | None"),
     ]
     # 文档里实际出现的行号引用必须都在 CHECKS 里登记过——
@@ -1909,6 +1909,12 @@ def test_intl_design_core_contract_matches_code():
             con.close()
         except Exception:
             rows, bad_no = [], 0
+        # 库里一条途牛国际行都没有时，第 8 条无对象可查——跳过，不判红。
+        # 实测 2026-10-30：活动库 data/prices.db 的 tuniu 行为 0（本轮没跑
+        # 途牛），而旧备份里仍有 1362 行；门禁若把「没数据」写成「聚合为空」，
+        # 就会天天报一条与代码无关的红，掩盖真正的形态变化。
+        if tuniu_intl == 0:
+            pytest.skip("库里没有途牛国际行，形态判据无检查对象")
         assert rows, "库里有途牛国际行但按航线聚合为空，本门禁失去检查对象"
         # 实测四条航线**精确相等**（285/285、274/274、249/249、204/204）。
         # 容差只给 20%：>1.2× 就说明出现了"一轮落多行"（负控时注入 60 行同 fetched_at，
@@ -3096,9 +3102,14 @@ def test_security_policy_claims_match_code():
     assert "config.yaml" in doc, "SECURITY.md 未说明凭据存放位置"
 
     # 2) 监听地址：默认回环 + 可改绑，两者都要写，且不得写成"只监听"
-    code_default = re.search(
-        r'get\("host"\)\s*\n?\s*or\s*"(127\.0\.0\.1)"', WEBUI)
-    assert code_default, "未找到 web.host 的代码默认值，本门禁失去锚点"
+    # r675 起默认值由 _bind_host() 单源解析：config 显式值 → TM_WEB_HOST
+    # 环境变量 → 127.0.0.1。旧锚点写死 `get("host") or "127.0.0.1"` 的源码
+    # 形状，函数一抽出来就永远匹配不到——锚点失效不等于默认值改错。
+    # 这里按函数体取回环兜底那行，仍要求「回环是缺省」这一语义。
+    _bh = re.search(r"def _bind_host\(.*?\n(?=\S)", WEBUI, re.S)
+    assert _bh, "未找到 _bind_host()，本门禁失去锚点"
+    code_default = re.search(r'or\s*"(127\.0\.0\.1)"', _bh.group(0))
+    assert code_default, "web.host 缺省不再是回环 127.0.0.1，SECURITY.md 说法需复核"
     assert "默认只监听" in doc, (
         "SECURITY.md 必须写明控制台是「默认」监听回环（配置可改绑 0.0.0.0）")
     assert "0.0.0.0" in doc, "SECURITY.md 必须提示可改绑 0.0.0.0 及其无鉴权风险"

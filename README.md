@@ -267,10 +267,13 @@
 
 ```bash
 cp config.example.yaml config.yaml   # 首次：建配置（网页里配也行）
-docker compose up -d
+docker compose pull                  # 有预构建镜像时先拉（发布轮推 ghcr）
+docker compose up -d                 # 没有镜像则本地构建（build: .）
 ```
 
 浏览器打开 `http://NAS_IP:8765` 即用。配置、价格库（`data/`）、浏览器会话档案（`user_data/`）、日志全部落本地卷，容器升级/重建不丢数据；镜像内置 chromium 与中文字体（约 1.5GB，首启免下载内核）。Windows 右下角弹窗通道在容器内自动停用，钉钉/邮件推送不受影响。无 Docker 的 NAS 也可下载 `…-linux-x64.zip` 直接跑。
+
+镜像由 `release-build` 工作流的 `push_image` 开关在发行轮推送 `ghcr.io/dengmeiluan/ticket-monitoring:latest`（另有 `sha-<短哈希>` 供溯源）。**首次推送后需在 GitHub 该 package 的设置里把可见性改为 public**——否则匿名 `docker pull` 仍会 denied（GitHub 对「不存在/无权限」返回同一回执）。日常手动跑工作流只构建冒烟、不推送。镜像目前只出 `linux/amd64`；ARM（树莓派等）请用 `…-linux-x64.zip` 或本地 `build: .`。
 
 ## 特价机票监控
 
@@ -430,8 +433,11 @@ Docker、无桌面的 Linux、以及把服务装在另一台机器上的情况�
 或在该机器上执行 `python main.py --login <渠道>`。
 
 **Q：`docker pull ghcr.io/...` 报 denied？**
-A：本项目**不发布预构建镜像**（仓库没有推 ghcr 的流水线），那个标签不存在。
-请用 `docker compose up -d`（默认 `build: .` 本地构建），或直接下载 Release zip。
+A：两种原因，回执一样（GitHub 对「不存在/无权限」不区分）：
+① 该次提交还没在发行轮跑过带 `push_image` 的工作流——镜像尚不存在；
+② 镜像已推送、但 package 可见性还是 private。
+先用 `docker compose up -d`（没有本地镜像时走 `build: .` 本地构建）把服务跑起来；
+想用预构建镜像，先确认 package 已设为 public，再 `docker compose pull && docker compose up -d`。
 
 **Q：页面一直开着会很耗吗？**
 A：轮询带签名缓存 + ETag/304——数据没变时服务端零重算、浏览器零下载；页面隐藏自动暂停轮询，切回立即补一次。

@@ -51,7 +51,15 @@ def render_console_png(base_url: str, logger: logging.Logger,
     try:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            # 容器默认以 root 运行（Dockerfile 未降权）。Chromium 在 root
+            # 下不带 --no-sandbox 直接拒绝启动（"Running as root without
+            # --no-sandbox is not supported"），邮件快照会永远降级成轻壳；
+            # /dev/shm 在小内存容器里也常被压到 64MB。采集侧 browser()
+            # 一直带这两个参数，这里此前漏了——issue #10 评论里「docker
+            # 下邮箱通知报错」的一个可证差异就在这。
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage"])
             try:
                 # 700px = 邮箱正文栏典型宽度；页面自动进 ≤760 窄屏
                 # 响应式（adapt 不 amputate）；2x 缩放保文字锐度

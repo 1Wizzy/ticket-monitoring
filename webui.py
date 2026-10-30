@@ -556,8 +556,10 @@ def _startup_vals(cfg: dict) -> dict:
                 raw.strip() or defaults[k], defaults[k]))
     # r345：监听地址与启动即扫同样是启动级——保存后进程未重启不会生效，
     # 旧重启中心只列四路径，UI 的 ♻ 徽标因此悬空。
-    out["host"] = str(((cfg or {}).get("web") or {}).get("host")
-                      or "127.0.0.1").strip() or "127.0.0.1"
+    # r675：取**生效值**而非文件字面值——容器内 host 缺省时生效的是
+    # TM_WEB_HOST；拿文件缺省 127.0.0.1 比较会造出「保存后永远差一项」的
+    # 假待重启，也会让配置页把错误值写回文件。
+    out["host"] = _bind_host(cfg or {})
     out["run_on_start"] = bool(
         ((cfg or {}).get("schedule") or {}).get("run_on_start", True))
     return out
@@ -16334,6 +16336,12 @@ function lgActionHTML(s){
  if(s.active)return `<button class="btn2" onclick="loginFinish('${p}',this,'${key}')">${ic('check')} 我已登录完成</button>`;
  if(h5&&(st==='pending'||st==='saved'))
   return `<button class="btn2" onclick="loginVerify('${key}',this)">${ic('rotate')} 立即核验</button>`;
+ /* r676：非 H5 槽位也要能「立即核验」——此前只有飞猪 H5 有页面核验，
+    其余渠道保存后只能等下轮采集，用户读作「核验没效果、实际不能用」。
+    核验 = 真查询自检（/api/channel/probe）：出数才叫会话可用；被拦会
+    当场落登录/验证证据；空结果不冒充任何结论。 */
+ if(st==='pending'||st==='saved'||st==='page_ok')
+  return `<button class="btn2" data-pk="${key}:loginprobe" onclick="loginProbe('${p}',this)">${ic('rotate')} 立即核验</button>`;
  let act=h5?'淘宝登录':(key==='fliggy'?'飞猪登录':'弹窗登录');
  if(st==='challenge')act='打开验证';
  else if(st==='login_required')act=h5?'重新淘宝登录':'重新登录';
@@ -16846,6 +16854,35 @@ async function loginVerify(slot,b){
   if(j.ok)setTimeout(()=>loadLogin(null,true),9000);
  }catch(e){toast('核验请求失败','err');}
  if(b)b.classList.remove('busy');
+}
+/* 立即核验（r676）：跑一条真实查询（后端 /api/channel/probe），用
+   「出没出数 / 有没有被登录墙拦」给出结论，而不是拿首页可访问冒充
+   会话有效。出数为 0 且无拦截证据时只说「本次无数据」，不下失效结论。 */
+async function loginProbe(p,b){
+ const key='loginprobe:'+p;
+ if(PACE_BUSY[key])return;
+ PACE_BUSY[key]=1;
+ const _lb=b?b.textContent:'';
+ if(b){b.textContent='核验中…（真查询，约 10–60 秒）';b.disabled=true;b.setAttribute('aria-busy','true');}
+ try{const r=await fetch('/api/channel/probe',{method:'POST',
+   headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p})});
+  const j=await r.json();
+  if(!j.ok){toast('核验失败：'+(j.err||'未知原因'),'err');}
+  else{
+   const n=Number(j.rows||0),q=(j.query||[]).join('→');
+   if(n>0)toast('✅ 核验通过：'+q+' 真实查询出 '+n+' 条明细','ok');
+   else{const ps=(j.paths||[]).map(x=>x.status).filter(Boolean);
+    const bad=ps.find(x=>x==='login'||x==='blocked');
+    toast(bad?('核验未通过：'+(bad==='login'?'被登录墙拦':'被人机验证拦')+'，请重新登录或去验证')
+      :('核验完成：'+q+' 本次 0 条（'+((ps.join('/'))||'无路径证据')+'）——这不等于会话失效'),'');
+   }
+  }
+ }catch(e){toast('核验请求失败','err');}
+ finally{
+  delete PACE_BUSY[key];
+  if(b&&b.isConnected){b.textContent=_lb;b.disabled=false;b.removeAttribute('aria-busy');}
+  loadLogin(null,true);
+ }
 }
 async function loginStart(p,b,slot){
  if(b&&b.classList.contains('busy'))return;   /* busy 守卫（同步双调曾 2 次 POST） */
@@ -31470,9 +31507,13 @@ class _Handler(BaseHTTPRequestHandler):
                                 "base_url": str(
                                     (cfg.get("web") or {}).get(
                                         "base_url", "") or ""),
-                                "host": str(
-                                    (cfg.get("web") or {}).get(
-                                        "host", "127.0.0.1") or "127.0.0.1"),
+                                # 上报**实际生效**的监听地址（r675）：容器里
+                                # 文件没写 host、由镜像 ENV TM_WEB_HOST=0.0.0.0
+                                # 生效时，旧实现按文件缺省报 127.0.0.1——
+                                # 页面显示回环、服务却在全网卡；更糟的是保存
+                                # 任何配置都会把这个 127.0.0.1 写回 yaml，
+                                # 下次重启容器就只绑回环、-p 端口映射直接不可达。
+                                "host": _bind_host(cfg),
                                 "headless": bool((cfg.get("crawler") or {}).get(
                                     "headless", True)),
                                 "timeout_seconds": int(
@@ -32751,7 +32792,36 @@ class _Handler(BaseHTTPRequestHandler):
                 if _scope not in ("", "dom", "intl"):
                     self._json({"ok": False, "err": "scope 必须是 dom/intl/空"}, 400)
                     return
-                self._json(cb(plat, scope=_scope))
+                _out = cb(plat, scope=_scope)
+                # r676：把**本次真实查询**的结果并入登录态证据（与探针任务
+                # 写的是同一本账）。此前 /api/channel/probe 出数只写路径账/
+                # 干预账，登录卡看不到——用户点完「核验」状态不变，读作
+                # 「核验没效果」。只认明确证据：出数=可用；有 login/blocked
+                # 通路=被拦；0 条且无拦截证据**不**下任何登录结论（empty 可能
+                # 就是无票，不能反推会话失效）。
+                try:
+                    if isinstance(_out, dict) and _out.get("ok"):
+                        _q = _out.get("query") or []
+                        _sc = str(_out.get("scope") or "")
+                        _rows = int(_out.get("rows") or 0)
+                        if _rows > 0 and len(_q) >= 3:
+                            _record_probe_auth(plat, _sc or "dom", _rows,
+                                               _q[0], _q[1], _q[2])
+                        elif not _rows:
+                            _bad = [x for x in (_out.get("paths") or [])
+                                    if str(x.get("status")) in
+                                    ("login", "blocked")]
+                            if _bad and len(_q) >= 3:
+                                _b0 = _bad[0]
+                                _record_probe_auth_reject(
+                                    plat, _sc or "dom",
+                                    "登录墙" if str(_b0.get("status")) == "login"
+                                    else "人机验证",
+                                    _q[0], _q[1], _q[2],
+                                    path=str(_b0.get("path") or ""))
+                except Exception:
+                    _State.logger.warning("[自检] 登录态证据写入失败（不影响结果）")
+                self._json(_out)
             except Exception as e:
                 self._json({"ok": False, "err": str(e)}, 500)
         elif self.path == "/api/channel/verify":

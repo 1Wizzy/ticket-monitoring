@@ -226,7 +226,10 @@ class TuniuCrawler(BaseCrawler):
         self._saved_token_at: float = 0.0
 
     def login_url(self) -> str:
-        return "https://www.tuniu.com/"
+        # 与登录卡单源：`www.tuniu.com` 在移动指纹下是 WAF 拦截页（r678
+        # 实测 0 个输入控件），用户点「弹窗登录」永远登不进去。
+        from core.login_slots import TUNIU_LOGIN_URL
+        return TUNIU_LOGIN_URL
 
     @property
     def user_data_dir(self) -> str:

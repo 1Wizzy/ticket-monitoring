@@ -139,14 +139,27 @@ def test_frontend_says_why_login_cannot_open():
     assert "user_data" in seg, "没有给出可执行的替代方案"
 
 
-def test_compose_does_not_advertise_a_nonexistent_image():
-    """#8：compose 注释不能再暗示存在预构建镜像。"""
+def test_compose_image_is_actually_published_by_a_workflow():
+    """#8：compose 里写了 ghcr 镜像，工作流就必须真的能把它推上去。
+
+    旧判据只防「注释里暗示存在镜像」；r674 起发行轮真推镜像，判据改成
+    正向对账：镜像仓库路径、推送步骤、public 可见性提醒缺一不可——
+    否则用户照 compose 拉取又会得到 denied（GitHub 对「不存在/无权限」
+    返回同一回执，看不出差别）。
+    """
     y = _read("docker-compose.yml")
-    assert "build: ." in y, "默认路径不再是本地构建"
-    # 注释里若出现 ghcr 镜像行，必须同时写明「本项目不发布预构建镜像」
-    if "ghcr.io" in y:
-        assert "不发布预构建镜像" in y, \
-            "仍在引导用户拉不存在的镜像（issue #8）"
+    assert "build: ." in y, "没有本地构建兜底（无镜像/CI 失败时起不来）"
+    assert "image: ghcr.io/dengmeiluan/ticket-monitoring:latest" in y, \
+        "compose 没有指向工作流实际推送的镜像路径"
+    w = _read(".github/workflows/release-build.yml")
+    assert "push_image" in w, "工作流没有推送开关（issue #8 的诉求）"
+    assert "packages: write" in w, "没有 packages 权限，推 ghcr 会 403"
+    assert "docker push" in w, "没有真正的推送步骤"
+    assert "ghcr.io/${{ github.repository }}" in w, \
+        "推送路径与 compose 不是同源（仓库改名后会各写各的）"
+    assert w.index("docker push") > w.index("if: ${{ inputs.push_image }}"), \
+        "推送没有挂在开关上——日常跑 CI 会往包仓库写东西"
+    assert "public" in w.lower(), "没有提醒把 package 设为 public"
 
 
 def test_startup_failure_is_readable_when_launched_by_double_click():

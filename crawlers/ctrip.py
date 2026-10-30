@@ -121,7 +121,10 @@ class CtripCrawler(BaseCrawler):
     RISK_COOKIES = ("cticket", "_bfa", "MKT_CKID")
 
     def login_url(self) -> str:
-        return "https://www.ctrip.com/"
+        # 与登录卡单源（r678 实测）：www.ctrip.com 在移动指纹下是 App 式
+        # 首页（0 个输入控件，登录藏在「我的」）；passport 页直接出表单。
+        from core.login_slots import CTRIP_LOGIN_URL
+        return CTRIP_LOGIN_URL
 
     def fetch(self, from_city: str, to_city: str, dates: List[str],
               ret_date: str = "") -> List[FlightPrice]:

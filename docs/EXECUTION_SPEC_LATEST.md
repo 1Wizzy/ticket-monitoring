@@ -32,7 +32,7 @@
 
 - 单文件 Python SPA：`webui.py`（`PAGE` 为整页 HTML/CSS/JS 字符串），`http.server` 提供服务。
 - **运行时下限 Python 3.10**：代码存在运行时求值的 PEP 604 注解（`core/radar_alerts.py:25`、
-  `crawlers/ctrip.py:1007`、`crawlers/tongcheng.py:1051`），3.9 导入即 `TypeError`。CI/打包用 3.11。
+  `crawlers/ctrip.py:1010`、`crawlers/tongcheng.py:1051`），3.9 导入即 `TypeError`。CI/打包用 3.11。
   这条由 `test_python_floor_matches_pep604_usage` 守着——要么代码去掉这些注解，要么别把徽章写回 3.9。
 - SQLite `data/prices.db`；关注清单 `data/flight_watch.json`；雷达快照 `radar_snapshots`。
 - Playwright Chromium profiles 在 `user_data/`，承载各渠道登录态。

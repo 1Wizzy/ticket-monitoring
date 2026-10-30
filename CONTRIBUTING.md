@@ -15,7 +15,7 @@ python webui.py --demo   # 零配置跑通控制台
 要求：Python **3.10+**，Windows（打包发行面向 Windows；Linux 跑测试/控制台亦可）。
 
 > 为什么不是 3.9：代码里有 `x: float | None` 这类 PEP 604 注解（`core/radar_alerts.py:25`、
-> `crawlers/ctrip.py:1007`、`crawlers/tongcheng.py:1051`），而 dataclass 字段注解在**运行时**求值，
+> `crawlers/ctrip.py:1010`、`crawlers/tongcheng.py:1051`），而 dataclass 字段注解在**运行时**求值，
 > 3.9 会直接抛 `TypeError`。CI 与打包统一用 3.11。
 
 ## 提交前必须全绿

@@ -11,6 +11,11 @@ name: release-build
 
 on:
   workflow_dispatch:
+    inputs:
+      push_image:
+        description: "构建并推送容器镜像到 ghcr（发布轮才开；日常只验构建）"
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -74,9 +79,14 @@ jobs:
           if-no-files-found: ignore
 
   docker:
-    # 容器镜像岗：构建+起容器冒烟（/api/state 200）——发行随镜像走
-    # ghcr（发布时推），日常手动跑只验构建不推
+    # 容器镜像岗：构建+起容器冒烟（/api/state 200）。push_image=true 时
+    # 追加「推送 ghcr」（GitHub issue #8：用户按文档 docker pull
+    # ghcr.io/… 被 denied——仓库此前根本没有推镜像的流水线）。
+    # 默认 false：日常手动跑只验构建，不往包仓库写东西。
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t ticket-monitoring:ci .
@@ -104,3 +114,25 @@ jobs:
           docker rm -f tm-smoke
       - name: 镜像体积
         run: docker images ticket-monitoring:ci --format "{{.Size}}"
+      - name: 登录 ghcr（仅 push_image）
+        if: ${{ inputs.push_image }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: 推送镜像（仅 push_image）
+        # 直接复用上面已构建并冒烟过的镜像，不再二次构建。
+        # ghcr 要求仓库名全小写；标签留 latest + sha-<短哈希> 两枚：
+        # latest 给 compose 拉取，sha 给「这个镜像到底是哪次提交」的溯源。
+        if: ${{ inputs.push_image }}
+        run: |
+          IMG=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          SHA=$(git rev-parse --short HEAD)
+          docker tag ticket-monitoring:ci "$IMG:latest"
+          docker tag ticket-monitoring:ci "$IMG:sha-$SHA"
+          docker push "$IMG:latest"
+          docker push "$IMG:sha-$SHA"
+          echo "已推送 $IMG:latest / $IMG:sha-$SHA"
+          echo "首次推送后请到 GitHub 包设置把该 package 设为 public，"
+          echo "否则匿名 docker pull 仍会 denied（issue #8 的原始现象）。"

@@ -30,7 +30,19 @@ def test_login_guide_urls_map():
     assert QunarCrawler({}, lg).login_url() == (
         "https://user.qunar.com/passport/login.jsp"), (
         "qunar 引导页须落统一登录页（PC /site/ 已停服只剩 App 下载提示）")
-    assert CtripCrawler({}, lg).login_url() == "https://www.ctrip.com/"
-    assert TuniuCrawler({}, lg).login_url() == "https://www.tuniu.com/"
+    assert CtripCrawler({}, lg).login_url() == (
+        "https://passport.ctrip.com/user/login"), (
+        "r678 实测：www.ctrip.com 在移动指纹下是 App 式首页，0 个登录控件")
+    from core.login_slots import LOGIN_SLOTS
+    assert (CtripCrawler({}, lg).login_url()
+            == LOGIN_SLOTS["ctrip"]["login_url"]), "爬虫与登录卡不同源"
+    # r678 实测：www.tuniu.com 在采集同款移动指纹下是腾讯云 WAF 拦截页
+    # （登录控件 0 个）——用户点「弹窗登录」看到的是拦截页，读作「登不了」。
+    # 改到 passport 登录页，且必须与登录卡同源（两处各写一份会再漂移）。
+    from core.login_slots import LOGIN_SLOTS
+    assert TuniuCrawler({}, lg).login_url() == "https://passport.tuniu.com/login"
+    assert (TuniuCrawler({}, lg).login_url()
+            == LOGIN_SLOTS["tuniu"]["login_url"]), \
+        "爬虫登录入口与登录卡不是同源，修一处漏一处"
     assert TongchengCrawler({}, lg).login_url() == "https://www.ly.com/"
     assert FliggyCrawler({}, lg).login_url() == "https://www.fliggy.com/"

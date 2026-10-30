@@ -20,12 +20,26 @@ FLIGGY_H5_LOGIN_URL = (
     "https://market.m.taobao.com/app/trip/rx-traffic-search/pages/index"
     "?biz=flight&defaultBiz=flight")
 
+# 途牛登录入口（r678 实测）：`https://www.tuniu.com/` 在采集同款移动指纹
+# 下直接落到腾讯云「WAF 拦截页面」（正文只有「安全检测/无法继续」，登录
+# 控件 0 个）——用户点「弹窗登录」看到的就是这一页，读作「途牛弹窗登不
+# 了」。实测 passport 登录页可正常渲染手机号/密码/滑块，且同属 .tuniu.com
+# 域、与采集会话共享 cookie；登录后由登录卡「立即核验」真查询确认。
+TUNIU_LOGIN_URL = "https://passport.tuniu.com/login"
+
+# 携程登录入口（r678 实测）：`https://www.ctrip.com/` 在移动指纹下会跳
+# 到 m.ctrip.com 的 App 式首页（登录藏在「我的」里，页面上 0 个输入
+# 控件）——用户点「弹窗登录」看不到登录框，只能自己翻。passport 登录页
+# 实测直接渲染账号/密码/验证码/扫码（2 密码框 + 2 手机号框），同属
+# .ctrip.com 域，登录后与采集会话共享 cookie。
+CTRIP_LOGIN_URL = "https://passport.ctrip.com/user/login"
+
 LOGIN_SLOTS = {
     "ctrip": {
         "slot": "ctrip", "plat": "ctrip", "surface": "", "surface_label": "全端",
         "name": PLAT_NAME["ctrip"], "account": "携程账号",
         "requirement": "必须登录", "profile": "ctrip",
-        "login_url": "https://www.ctrip.com/",
+        "login_url": CTRIP_LOGIN_URL,
         "mobile": False, "login_mobile": False,
     },
     "qunar": {
@@ -71,7 +85,7 @@ LOGIN_SLOTS = {
         # 入口页可匿名（实测 flight.tuniu.com 无痕可开），但出价/明细需登录；
         # 统一收紧为「必须登录」，避免模糊。
         "requirement": "必须登录", "profile": "tuniu",
-        "login_url": "https://www.tuniu.com/",
+        "login_url": TUNIU_LOGIN_URL,
         "mobile": False, "login_mobile": False,
     },
 }
