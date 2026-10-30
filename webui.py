@@ -2065,7 +2065,8 @@ const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)')
    #cfgview .cfgsearchwrap{flex:1 1 100%;padding:0;margin:0}
    #cfgview .cfgsearch{height:30px;width:100%;font-size:12px}
    #cfgview .cfghit{display:none}
-   #cfgview .cfgnav .cnav{flex:1 1 0;min-width:0;justify-content:center;padding:7px 6px;font-size:12px}
+   #cfgview .cfgnav .cnav{flex:1 1 0;min-width:0;justify-content:center;padding:7px 6px;font-size:12px;
+     white-space:nowrap}
    #cfgview .cfgnav .cnav .cnavn{display:none}
    #cfgview #cfgNavFoot{display:none}
    #cfgview .cfglayout{gap:8px}

@@ -161,3 +161,81 @@ def test_nav_count_is_derived_not_hardcoded():
         "导航计数不是「N 项」：%r" % got["navN"])
     assert got["navN"].strip().startswith(str(n)), (
         "导航写着 %r，实际控件 %d 个——计数没派生" % (got["navN"], n))
+
+
+def test_four_nav_items_stay_single_line_at_every_width():
+    """四个分区名在任一宽度下都必须单行——增分区最容易踩的就是折行。
+
+    实测（加「渠道节流」后，390px）：「用户与航线」5 字放不进 85px 的
+    均分格，折成 2 行，同排四项高度不齐（50 vs 32）。导航整体也从 86px
+    涨到 104px。修法：`.cnav` 加 `white-space:nowrap`。
+
+    负控：去掉 nowrap → 该项 h=50 / lines=2，本测试红。
+    """
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    srv = subprocess.Popen(
+        [sys.executable, "webui.py", "--demo", "--port", str(port)],
+        cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, env=env)
+    op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    base = "http://127.0.0.1:%d" % port
+    rows = {}
+    try:
+        up = False
+        for _ in range(160):
+            try:
+                op.open(base + "/api/state", timeout=1)
+                up = True
+                break
+            except Exception:
+                time.sleep(0.25)
+        if not up:
+            pytest.skip("演示服务未在期限内起来")
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            if not os.path.exists(pw.chromium.executable_path):
+                pytest.skip("chromium 二进制缺失")
+            b = pw.chromium.launch()
+            try:
+                for w in (1440, 900, 700, 390):
+                    pg = b.new_page(viewport={"width": w, "height": 900})
+                    pg.goto(base)
+                    pg.wait_for_function(
+                        "typeof S!=='undefined'&&S&&S.users", timeout=30000)
+                    pg.evaluate("()=>{switchView('cfg')}")
+                    pg.wait_for_timeout(800)
+                    rows[w] = pg.evaluate("""()=>({
+                      items:[...document.querySelectorAll('#cfgnav .cnav')]
+                        .map(e=>{const r=e.getBoundingClientRect();
+                          let lines=1;const rg=document.createRange();
+                          for(const n of e.childNodes){
+                            if(n.nodeType!==3||!n.textContent.trim())continue;
+                            rg.selectNodeContents(n);
+                            lines=rg.getClientRects().length;}
+                          return {p:e.dataset.p||'',h:Math.round(r.height),
+                                  lines:lines};}),
+                      over:document.documentElement.scrollWidth
+                           >window.innerWidth+1})""")
+                    pg.close()
+            finally:
+                b.close()
+    finally:
+        srv.terminate()
+        try:
+            srv.wait(timeout=5)
+        except Exception:
+            srv.kill()
+
+    bad = []
+    for w, got in rows.items():
+        for it in got["items"]:
+            if it["lines"] > 1:
+                bad.append((w, it["p"], it["lines"], it["h"]))
+        if got["over"]:
+            bad.append((w, "doc", "横向溢出", ""))
+    assert not bad, (
+        "这些宽度下分区名折行/溢出（同一排高度会不齐）：%s；实测 %s"
+        % (bad, {w: r["items"] for w, r in rows.items()}))
