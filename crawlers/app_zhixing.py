@@ -139,7 +139,14 @@ class AppZhixingCrawler(AppCrawler):
         # 目标日在首页 8 天条之外时，_set_route 里选不上日期，必须在这里
         # 用长窗口把日期选上（_pick_date 已按 resource-id 定位），再点
         # 「机票查询」进列表页——实测 11-05 这样能拿到 6 条真实明细。
-        detail = self._enter_detail_and_parse(dev, from_city, to_city, dates)
+        detail, blocked = self._enter_detail_and_parse(
+            dev, from_city, to_city, dates)
+        if blocked:
+            # 已经按拦截入账：不回退日历价，否则用户看到「有价」而
+            # 实际是被人机验证挡住，问题被数据掩盖。
+            self._close_calendar(dev)
+            self.login_suspect = True
+            return []
         if detail:
             self._park_at_home(dev)
             return detail
@@ -310,7 +317,7 @@ class AppZhixingCrawler(AppCrawler):
             pass
 
     def _enter_detail_and_parse(self, dev, from_city: str, to_city: str,
-                                dates: List[str]) -> List[FlightPrice]:
+                                dates: List[str]):
         """逐日期：选上该日 → 点「机票查询」→ 解析列表页明细。
 
         日历价只是「每天一条最低价」，没有航班号与时刻，不能当明细用。
@@ -318,16 +325,28 @@ class AppZhixingCrawler(AppCrawler):
 
         逐日期循环与其它渠道一致（ctrip/qunar 也是 `for date in dates`）：
         只处理 dates[0] 会让配置的其余日期静默丢数据。
+
+        返回 (prices, blocked)。blocked 为真表示撞上广告/验证码/人脸：
+        调用方**不得**回退到日历价——那会把「被人挡住」伪装成「有数据」。
         """
         if self._skip_route:
-            return []
+            return [], False
         targets = [d for d in (dates or []) if d]
         if not targets:
-            return []
+            return [], False
         got: List[FlightPrice] = []
         for i, target in enumerate(targets):
-            rows = self._one_date_detail(dev, from_city, to_city, target,
-                                         first=(i == 0))
+            rows, block = self._one_date_detail(dev, from_city, to_city,
+                                                target, first=(i == 0))
+            if block is not None and block.blocking:
+                # 拦截要如实入账，且不强当「这天没票」继续跑完：
+                # 广告可以关，验证码/人脸只能等人，继续跑只会连环误报。
+                self.path_note("app-blocker", block.kind,
+                               date=target, detail=block.detail)
+                self.logger.warning("[%s] 明细页被拦截（%s）：%s（%s）",
+                                    self.name, target, block.kind,
+                                    block.detail)
+                return got, True
             out = self._to_prices(rows, from_city, to_city, target)
             if not out:
                 self.logger.info("[%s] 明细页没解析出带价航班：%s",
@@ -339,53 +358,70 @@ class AppZhixingCrawler(AppCrawler):
                            detail=f"{len(out)} 条真实航班/时刻/价格",
                            url=f"android://{_APP_PKG}?view=list")
             got.extend(out)
-        return got
+        return got, False
 
     def _one_date_detail(self, dev, from_city: str, to_city: str,
-                         target: str, first: bool) -> List[dict]:
+                         target: str, first: bool):
         """选日期 → 点查询 → 返回该日列表页的原始行。
 
         第一个日期时弹层可能还开着（主流程 keep_open=True）；之后的日期
         在列表页上，要先回首页才能再开日历。
+
+        返回 (rows, blocked)。blocked 非空表示撞上广告/验证码/人脸/登录墙：
+        调用方必须按拦截记账，绝不能当成「这天没票」——那会把「需要人操作」
+        伪装成「没有航班」，是最容易误导用户的一类。
         """
         try:
             from .app_zhixing_nav import _pick_date, find, nodes
         except Exception:
-            return []
+            return [], None
         try:
             if not first:
                 self._park_at_home(dev)
-                if not self._try_long_calendar(dev, keep_open=True):
-                    return []
+                xml0 = self._try_long_calendar(dev, keep_open=True)
+                if not xml0:
+                    return [], None
+                xml0, block0 = self._clear_blockers(dev, xml0)
+                if block0.blocking:
+                    return [], block0
             xml = dev.dump() or ""
+            xml, block = self._clear_blockers(dev, xml)
+            if block.blocking:
+                return [], block
             if "Search_Calendar_Dialog" not in xml:
-                return []
+                return [], None
             ok, detail = _pick_date(dev, nodes(xml), target,
                                     log=self.logger, xml=xml)
             if not ok:
                 self.logger.info("[%s] 明细前置选日期失败：%s",
                                  self.name, detail)
-                return []
+                return [], None
             # 只点查询，不重跑整段导航（重跑会重启 App，白花 30s+）
             xml = dev.dump() or ""
             btn = find(nodes(xml), "机票查询")
             if btn is None:
-                return []
+                return [], None
             if not dev.tap(btn.cx, btn.cy):
-                return []
+                return [], None
             deadline = time.time() + 30
             while time.time() < deadline:
                 xml = dev.dump() or ""
-                if xml and detect_state(xml) == "ok":
+                if not xml:
+                    time.sleep(2)
+                    continue
+                xml, block = self._clear_blockers(dev, xml)
+                if block.blocking:
+                    return [], block
+                if detect_state(xml) == "ok":
                     rows = parse_flight_rows(xml)
                     if any(r.get("price") for r in rows):
-                        return rows
+                        return rows, None
                 time.sleep(2)
-            return []
+            return [], None
         except Exception as e:
             self.logger.info("[%s] 明细路径异常：%s", self.name,
                              type(e).__name__)
-            return []
+            return [], None
 
     def _to_prices(self, rows: List[dict], from_city: str, to_city: str,
                    date: str) -> List[FlightPrice]:

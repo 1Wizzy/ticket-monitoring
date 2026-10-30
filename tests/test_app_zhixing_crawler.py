@@ -352,7 +352,7 @@ def test_detail_rows_win_over_calendar(monkeypatch):
 
     def fake_detail(dev_, fc, tc, ds):
         calls.append("detail")
-        return c._to_prices(detail, fc, tc, ds[0])
+        return c._to_prices(detail, fc, tc, ds[0]), False
 
     c._try_long_calendar = fake_cal
     c._enter_detail_and_parse = fake_detail
@@ -371,7 +371,7 @@ def test_calendar_is_fallback_when_detail_fails(monkeypatch):
     c, _, dev = _make()
     c._skip_route = False
     c._try_long_calendar = lambda dev_, keep_open=False: _cal_xml_str()
-    c._enter_detail_and_parse = lambda *a, **k: []
+    c._enter_detail_and_parse = lambda *a, **k: ([], False)
     c._route_unchanged = lambda dev, fc, tc: True
     c._close_calendar = lambda dev_: None
     out = c.safe_fetch("SHA", "CAN", ["2026-11-07"])
@@ -407,8 +407,8 @@ def test_all_dates_get_detail_rows(monkeypatch):
 
     def fake_one(dev_, fc, tc, target, first):
         seen.append(target)
-        return [{"flight_no": "CA100" + target[-1], "depart_time": "08:00",
-                 "price": 300 + len(seen)}]
+        return ([{"flight_no": "CA100" + target[-1], "depart_time": "08:00",
+                  "price": 300 + len(seen)}], None)
 
     c._one_date_detail = fake_one
     c._try_long_calendar = lambda dev_, keep_open=False: _cal_xml_str()
@@ -435,9 +435,9 @@ def test_one_date_failure_does_not_drop_others(monkeypatch):
 
     def fake_one(dev_, fc, tc, target, first):
         if target == "2026-11-08":
-            return []
-        return [{"flight_no": "CA1000", "depart_time": "08:00",
-                 "price": 300}]
+            return [], None
+        return ([{"flight_no": "CA1000", "depart_time": "08:00",
+                  "price": 300}], None)
 
     c._one_date_detail = fake_one
     c._try_long_calendar = lambda dev_, keep_open=False: _cal_xml_str()
@@ -450,3 +450,32 @@ def test_one_date_failure_does_not_drop_others(monkeypatch):
     empty_dates = [p["date"] for p in c.paths
                    if p["path"] == "航班明细" and p["status"] == "empty"]
     assert empty_dates == ["2026-11-08"], empty_dates
+
+
+def test_detail_blocker_is_not_recorded_as_empty(monkeypatch):
+    """明细页撞上验证码/人脸时必须记拦截，不能伪装成「这天没票」。
+
+    用户明确要求：App 的广告/验证码弹窗要和 PC/H5 同一套口径记录、
+    识别、区分。把「需要人操作」写成 empty，是最误导人的一种。
+    """
+    from crawlers.app_blockers import Block
+
+    c, _, dev = _make()
+    c._skip_route = False
+
+    def fake_one(dev_, fc, tc, target, first):
+        return [], Block(kind="captcha", detail="滑块验证", close_xy=None)
+
+    c._one_date_detail = fake_one
+    c._try_long_calendar = lambda dev_, keep_open=False: _cal_xml_str()
+    c._route_unchanged = lambda dev, fc, tc: True
+    c._close_calendar = lambda dev_: None
+    c._park_at_home = lambda dev_: True
+    out = c.safe_fetch("SHA", "CAN", ["2026-11-07", "2026-11-08"])
+    assert out == []
+    kinds = [(p["path"], p["status"]) for p in c.paths]
+    assert ("app-blocker", "captcha") in kinds, kinds
+    assert not [k for k in kinds if k == ("航班明细", "empty")], \
+        "拦截被误记成 empty：%s" % kinds
+    # 撞上验证码后不该继续跑下一个日期（只会连环误报）
+    assert len([k for k in kinds if k[1] == "empty"]) == 0
