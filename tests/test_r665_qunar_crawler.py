@@ -85,3 +85,89 @@ def test_login_page_detected_by_form_marks():
     assert c._is_login_page('<node text="请输入手机号" />')
     assert c._is_login_page('<node text="获取验证码" />')
     assert not c._is_login_page('<node text="20:30" />')
+
+
+# ---- r672：真机踩过的两个「静默 0 行」 ----
+def test_pick_date_matches_chinese_format():
+    """首页日期行是「10月31日」，不是「10.31」——按 `_ymd_to_md` 找不到。"""
+    c = _crawler()
+    tapped = []
+
+    class D:
+        def dump(self, retries=2):
+            return ('<hierarchy><node text="10月31日" '
+                    'bounds="[48,564][178,609]" /></hierarchy>')
+
+        def tap(self, x, y):
+            tapped.append((x, y))
+            return True
+
+    assert c._pick_date(D(), '<hierarchy><node text="10月31日" '
+                       'bounds="[48,564][178,609]" /></hierarchy>',
+                       "2026-10-31") is True
+    assert tapped, "没点中中文日期行"
+
+
+def test_pick_date_accepts_today_label():
+    """「今天」是特殊文案：目标日=今天时首页根本没有「10月30日」字样。"""
+    import time as _t
+    today = _t.strftime("%Y-%m-%d")
+    c = _crawler()
+    tapped = []
+
+    class D:
+        def dump(self, retries=2):
+            return '<hierarchy><node text="今天" bounds="[22,132][52,155]" /></hierarchy>'
+
+        def tap(self, x, y):
+            tapped.append((x, y))
+            return True
+
+    ok = c._pick_date(D(), '<hierarchy><node text="今天" '
+                      'bounds="[22,132][52,155]" /></hierarchy>', today)
+    assert ok is True
+    assert tapped, "没点中「今天」"
+
+
+def test_no_priced_rows_is_not_reported_as_ok(monkeypatch):
+    """解析出航班行但没一个可用价格 → 不能回 ok（否则账本「0 条却成功」）。
+
+    用假时钟让搜索轮询只跑两轮，避免测试真的等 60 秒。
+    """
+    import crawlers.app_qunar as M
+
+    ticks = {"t": 0.0}
+
+    class FakeTime:
+        @staticmethod
+        def time():
+            ticks["t"] += 1.0
+            return ticks["t"]
+
+        @staticmethod
+        def sleep(_s):
+            pass
+
+        def __getattr__(self, k):
+            return getattr(__import__("time"), k)
+
+    monkeypatch.setattr(M, "time", FakeTime)
+
+    page = ('<hierarchy>'
+            '<node text="搜索" bounds="[48,769][1552,826]" />'
+            '<node text="20:45" bounds="[36,354][120,404]" />'
+            '<node text="22:55" bounds="[270,354][354,404]" />'
+            '<node text="东航KN5977" bounds="[57,427][160,448]" />'
+            '</hierarchy>')
+
+    class D:
+        def dump(self, retries=2):
+            return page
+
+        def tap(self, x, y):
+            return True
+
+    c = _crawler()
+    prices, why = c._search_and_parse(D(), "2026-10-30", "BJS", "SHA")
+    assert prices == []
+    assert why == "no-priced-rows", why

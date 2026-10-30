@@ -116,3 +116,42 @@ def test_empty_only_on_explicit_copy():
            + _n("没有找到符合条件的航班", 100, 700, 800, 740)
            + "</hierarchy>")
     assert detect_state(xml) == "empty"
+
+
+# ---- r672：密集版结果页（价格右列 x≈772–863，不是 1490+） ----
+def test_dense_result_page_prices_are_found():
+    """结果页价格列实测 x=772–863；钉死「右列 x>=1200」会一个都取不到。
+
+    现场：解析出航班行但 price 全 None → 账本记 no-priced-rows，
+    用户看到「采到了 0 条」。判据必须是「屏宽右半屏」，不是固定像素。
+    """
+    def _price_row(top, dep, arr, code, price, discount=None):
+        parts = [
+            _n(dep, 36, top, 120, top + 50),
+            _n(arr, 270, top, 354, top + 50),
+            _n("北京大兴", 36, top + 34, 120, top + 57),
+            _n("虹桥T2", 267, top + 34, 351, top + 57),
+            _n("东航" + code, 57, top + 73, 160, top + 94),
+            _n("¥", 772, top + 60, 786, top + 100),
+            _n(str(price), 786, top + 57, 863, top + 100),
+        ]
+        if discount:
+            parts += [_n("¥", 826, top + 130, 836, top + 152),
+                      _n(str(discount), 836, top + 130, 856, top + 152)]
+        return "".join(parts)
+
+    xml = ('<?xml version="1.0"?><hierarchy rotation="0">'
+           + _price_row(354, "20:45", "22:55", "KN5977", 1130)
+           + _price_row(589, "21:20", "23:30", "HO1254", 1175)
+           + "</hierarchy>")
+    rows = parse_flight_rows(xml)
+    assert len(rows) == 2, rows
+    assert [r["price"] for r in rows] == [1130, 1175], rows
+    assert [r["flight_no"] for r in rows] == ["KN5977", "HO1254"]
+
+
+def test_wide_layout_still_works():
+    """宽版列表页（价格 x≈1490+）不能被新判据弄坏——两套版面都要能读。"""
+    xml = _xml(_card(363, "20:30", "22:50", "CZ8889", 280))
+    rows = parse_flight_rows(xml)
+    assert rows and rows[0]["price"] == 280, rows

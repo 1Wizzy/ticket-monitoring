@@ -78,6 +78,11 @@ def _ymd_to_md(ymd: str) -> str:
     return "%s.%s" % (ymd[5:7], ymd[8:10])
 
 
+def _today_iso() -> str:
+    """设备本地今天（YYYY-MM-DD）：校准「今天」这个特殊文案用。"""
+    return time.strftime("%Y-%m-%d")
+
+
 class AppQunarCrawler(AppCrawler):
     name = "app_qunar"
     package = _APP_PKG
@@ -152,8 +157,12 @@ class AppQunarCrawler(AppCrawler):
                 self.path_note("航班列表", "empty", date=target,
                                detail="列表已打开，该日无可售航班")
             else:
+                # 兜底：任何非 ok/empty 的原因都要如实写进 detail。
+                # 曾出现 reason 为空串 → 记成一句「未取到可用列表页：」，
+                # 读者看不出卡在哪一步（真机排查时白绕一圈）。
                 self.path_note("航班列表", "timeout", date=target,
-                               detail="未取到可用列表页：%s" % why)
+                               detail="未取到可用列表页：%s"
+                                      % (why or "unknown"))
         return out
 
     def _is_login_page(self, xml: str) -> bool:
@@ -199,22 +208,46 @@ class AppQunarCrawler(AppCrawler):
         if not self._set_city(dev, xml, from_name, side="dep"):
             self.logger.info("[%s] 设出发城市失败：%s", self.name, from_name)
             return [], "set-city-dep"
-        xml = self._ensure_home(dev)
-        if not xml:
-            return [], "no-home"
-        if not self._set_city(dev, xml, to_name, side="arr"):
+        # 选完城市会回到首页，这里直接读页面即可。**不要再调
+        # `_ensure_home`**：它为了「不在首页」会先按 3 次 BACK、再等
+        # 25s 深链，实测一次要 33s；三个步骤各调一次就把 60s 搜索窗口
+        # 吃光，整轮 0 行（真机踩过）。
+        if not self._set_city(dev, dev.dump() or "", to_name, side="arr"):
             self.logger.info("[%s] 设到达城市失败：%s", self.name, to_name)
             return [], "set-city-arr"
         if target:
-            xml = self._ensure_home(dev)
-            self._pick_date(dev, xml, target)
+            picked = self._pick_date(dev, dev.dump() or "", target)
+            if not picked:
+                # 选日失败常常是因为打开了日历弹层（或停在别的子页），
+                # 此时首页的「搜索」按钮不可见 → `_search_and_parse`
+                # 直接返回 no-search-button。先退回首页再搜：
+                # 宁可查错日（有日期诚实性问题）也不能整轮 0 行。
+                self.logger.info("[%s] 选日期失败（%s），退回首页继续搜索",
+                                 self.name, target)
+                if not self._ensure_home(dev):
+                    return [], "pick-date-failed"
         return self._search_and_parse(dev, target, from_city, to_city)
 
     def _ensure_home(self, dev):
-        """取首页 XML；不在首页就退回深链。"""
+        """取首页 XML；不在首页就退回深链。
+
+        实测坑：App 停在**日历页/列表页**时，`qunarphone://flight` 深链
+        常被 RN 导航栈当成重复入口吞掉，25s 也等不到首页搜索面板，
+        于是「设城市」找不到 `atom_flight_search_panel` 里的控件而失败，
+        整轮 0 行。所以先按 BACK 退栈（最多 3 次），再发深链兜底。
+        """
         xml = dev.dump() or ""
         if "atom_flight_search_panel" in xml:
             return xml
+        if self._is_login_page(xml):
+            return xml          # 交给调用方按 login 入账，别在这里兜圈
+        for _ in range(3):
+            if not dev.keyevent("KEYCODE_BACK"):
+                break
+            time.sleep(2)
+            xml = dev.dump() or ""
+            if "atom_flight_search_panel" in xml or self._is_login_page(xml):
+                return xml
         if not dev.deep_link(_FLIGHT_HOME_URI):
             return ""
         deadline = time.time() + 25
@@ -257,32 +290,50 @@ class AppQunarCrawler(AppCrawler):
         return False
 
     def _pick_date(self, dev, xml: str, target: str) -> bool:
-        """在首页日期行上选目标日（首页日历条只覆盖 6 天）。"""
-        want = _ymd_to_md(target)
-        hit = _find_text(xml, want)
-        if hit is None:
-            # 目标日在 6 天条之外：进日历长窗口
-            cal = _find_text(xml, "日历")
-            if cal is None:
+        """在首页日期行上选目标日。
+
+        实测：首页日期行是**中文**「10月31日」，不是「10.31」——
+        `_ymd_to_md` 产的 `10.30` 一个都匹配不上，选日必然失败（真机踩过）。
+        所以按中文格式找；找不到再点日期行打开日历弹层找。
+        """
+        want_cn = "%d月%d日" % (int(target[5:7]), int(target[8:10]))
+
+        def _hit(page):
+            h = _find_text(page, want_cn)
+            if h is None:
+                h = _find_text(page, target)     # 弹层里可能用 ISO
+            if h is None and target == _today_iso():
+                # 首页/日历把「今天」写成「今天」，没有「10月30日」文案
+                h = _find_text(page, "今天")
+            return h
+
+        hit = _hit(xml)
+        if hit is not None:
+            # 首页当前显示的日期行就是目标日 → 已是选中态，点它也是幂等的
+            if not dev.tap(*_center(hit)):
                 return False
-            if not dev.tap(*_center(cal)):
-                return False
-            time.sleep(3)
-            for _ in range(12):
-                page = dev.dump() or ""
-                hit = _find_text(page, want) \
-                    or _find_text(page, "%d月%d日" % (int(target[5:7]),
-                                                      int(target[8:10])))
-                if hit is not None:
-                    break
-                dev.swipe(800, 900, 800, 500, 400)   # 往后翻月
-                time.sleep(2)
-            if hit is None:
-                return False
-        if not dev.tap(*_center(hit)):
+            time.sleep(2)
+            return True
+        # 点日期行打开日历弹层
+        trigger = None
+        for n in _nodes(xml):
+            if re.fullmatch(r"\d{1,2}月\d{1,2}日", n["text"] or ""):
+                trigger = n
+                break
+        if trigger is None or not dev.tap(*_center(trigger)):
             return False
-        time.sleep(2)
-        return True
+        time.sleep(3)
+        for _ in range(10):
+            page = dev.dump() or ""
+            h = _hit(page)
+            if h is not None:
+                if not dev.tap(*_center(h)):
+                    return False
+                time.sleep(2)
+                return True
+            dev.swipe(800, 1100, 800, 700, 400)   # 往后翻月
+            time.sleep(2)
+        return False
 
     def _search_and_parse(self, dev, target: str, from_city: str = "",
                           to_city: str = ""):
@@ -313,12 +364,19 @@ class AppQunarCrawler(AppCrawler):
             # 列表页要等价格渲染完：有航班号但没价格时再等一轮
             rows = parse_flight_rows(xml)
             if rows and any(r.get("price") for r in rows):
-                return self._to_prices(rows, target, from_city, to_city), ""
+                prices = self._to_prices(rows, target, from_city, to_city)
+                if prices:      # _to_prices 可能因价格带不合格返回空
+                    return prices, "ok"
             last = xml
         if last:
             rows = parse_flight_rows(last)
             if rows:
-                return self._to_prices(rows, target, from_city, to_city), ""
+                prices = self._to_prices(rows, target, from_city, to_city)
+                if prices:
+                    return prices, "ok"
+                # 解析出了航班行但一行都没有可用价格：这是「解析不到价」，
+                # 不是「这天没票」——记 no-priced-rows 更诚实。
+                return [], "no-priced-rows"
         # 列表页打开过但确实没航班（或全部无价）→ 这才是 empty；
         # 连列表页都没出现 → 超时，不是「没票」。
         return [], ("empty" if saw_list_page else "no-list-page")

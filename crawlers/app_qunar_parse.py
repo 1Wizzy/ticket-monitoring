@@ -85,7 +85,12 @@ def parse_flight_rows(xml: str) -> List[dict]:
 
     # 卡片切分：以「左半屏(x1<200)的时刻」为锚，配同排右侧时刻为到达。
     # 实测纵坐标：时刻 y=363/589/746，卡片内航班号在其下 ~73px，
-    # 价格在右列 x≈1490–1563，可能比时刻行高 ~20px 也可能低 ~140px。
+    # 价格在右列，**x1 实测 1490–1563（列表页）/ 772–863（结果页密集版）**，
+    # 所以「右列」不能钉死 x>=1200——那样密集版一个价格都取不到
+    # （真机踩过：解析出航班行但 price 全 None → no-priced-rows）。
+    # 判据改为「在卡片右侧半屏」(x1 > 屏宽一半)。
+    _screen_w = max((n[3] for n in nodes), default=900)
+    _right = _screen_w // 2
     anchors = sorted((t for t in times if t[1] < 200), key=lambda n: n[2])
     rows = []
     used = set()
@@ -108,10 +113,10 @@ def parse_flight_rows(xml: str) -> List[dict]:
                  if card_top <= o[2] < card_bottom and _FLIGHT_RE.search(o[0])]
         if cands:
             code = _FLIGHT_RE.search(min(cands, key=lambda o: o[2])[0]).group(1)
-        # 价格：右列、落在卡片纵向范围内最靠上的那个（优惠标签已剔除）
+        # 价格：右侧半屏、落在卡片纵向范围内最靠上的那个（优惠标签已剔除）
         price, best = None, None
         for k, (val, x1, cy) in enumerate(prices):
-            if k in used or x1 < 1200:
+            if k in used or x1 < _right:
                 continue
             if not (card_top - 40 <= cy < card_bottom - 20):
                 continue
