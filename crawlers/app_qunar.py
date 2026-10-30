@@ -133,21 +133,27 @@ class AppQunarCrawler(AppCrawler):
         targets = [d for d in (dates or []) if d] or [""]
         for target in targets:
             try:
-                got = self._one_date(dev, from_name, to_name, target,
-                                     from_city, to_city)
+                got, why = self._one_date(dev, from_name, to_name, target,
+                                          from_city, to_city)
             except Exception as e:
                 self.logger.info("[%s] %s 采集异常：%s", self.name, target,
                                  type(e).__name__)
-                got = []
+                got, why = [], "exception:" + type(e).__name__
             if got:
                 out.extend(got)
                 self.path_note("航班列表", "ok", rows=len(got), date=target,
                                detail="%d 条真实航班/时刻/价格" % len(got),
                                ms=int((time.time() - started) * 1000),
                                url=f"android://{_APP_PKG}?view=list")
-            else:
+            elif why == "empty":
+                # 只有**确认列表页已打开且明确无航班**才记 empty。
+                # 「没拿到页面 / 等不到结果」不是「没票」——那是 timeout，
+                # 记成 empty 会让账本说谎（本项目最忌的一类）。
                 self.path_note("航班列表", "empty", date=target,
-                               detail="该日未解析到带价航班")
+                               detail="列表已打开，该日无可售航班")
+            else:
+                self.path_note("航班列表", "timeout", date=target,
+                               detail="未取到可用列表页：%s" % why)
         return out
 
     def _is_login_page(self, xml: str) -> bool:
@@ -181,17 +187,24 @@ class AppQunarCrawler(AppCrawler):
     def _one_date(self, dev, from_name: str, to_name: str,
                   target: str, from_city: str = "",
                   to_city: str = "") -> List[FlightPrice]:
-        """设城市 → 选日期 → 点搜索 → 解析列表。"""
+        """设城市 → 选日期 → 点搜索 → 解析列表。返回 (prices, reason)。
+
+        reason 只在没拿到价格时有意义：`empty` 表示**列表页确实打开了且
+        该日无航班**；其他值（home/set-city/pick-date/timeout/login）都是
+        「这次没采成」，调用方据此记 timeout 或 login，绝不能一律记 empty。
+        """
         xml = self._ensure_home(dev)
         if not xml:
-            return []
+            return [], "no-home"
         if not self._set_city(dev, xml, from_name, side="dep"):
             self.logger.info("[%s] 设出发城市失败：%s", self.name, from_name)
-            return []
+            return [], "set-city-dep"
         xml = self._ensure_home(dev)
+        if not xml:
+            return [], "no-home"
         if not self._set_city(dev, xml, to_name, side="arr"):
             self.logger.info("[%s] 设到达城市失败：%s", self.name, to_name)
-            return []
+            return [], "set-city-arr"
         if target:
             xml = self._ensure_home(dev)
             self._pick_date(dev, xml, target)
@@ -272,17 +285,19 @@ class AppQunarCrawler(AppCrawler):
         return True
 
     def _search_and_parse(self, dev, target: str, from_city: str = "",
-                          to_city: str = "") -> List[FlightPrice]:
+                          to_city: str = ""):
+        """点搜索并解析列表。返回 (prices, reason)，reason 见 `_one_date`。"""
         xml = dev.dump() or ""
         btn = _find_id(xml, _ID_SEARCH)
         if btn is None:
             btn = _find_text(xml, "搜索")
         if btn is None:
-            return []
+            return [], "no-search-button"
         if not dev.tap(*_center(btn)):
-            return []
+            return [], "tap-search-failed"
         deadline = time.time() + 60
         last = ""
+        saw_list_page = False     # 曾确认「列表页打开了」（有起降时刻对）
         while time.time() < deadline:
             time.sleep(4)
             xml = dev.dump() or ""
@@ -290,20 +305,23 @@ class AppQunarCrawler(AppCrawler):
                 self.login_suspect = True
                 self.path_note("app-login", "login",
                                detail="搜索后要求登录（登录态失效）")
-                return []
+                return [], "login"
             if detect_state(xml) != "ok":
                 last = xml
                 continue
+            saw_list_page = True
             # 列表页要等价格渲染完：有航班号但没价格时再等一轮
             rows = parse_flight_rows(xml)
             if rows and any(r.get("price") for r in rows):
-                return self._to_prices(rows, target, from_city, to_city)
+                return self._to_prices(rows, target, from_city, to_city), ""
             last = xml
         if last:
             rows = parse_flight_rows(last)
             if rows:
-                return self._to_prices(rows, target, from_city, to_city)
-        return []
+                return self._to_prices(rows, target, from_city, to_city), ""
+        # 列表页打开过但确实没航班（或全部无价）→ 这才是 empty；
+        # 连列表页都没出现 → 超时，不是「没票」。
+        return [], ("empty" if saw_list_page else "no-list-page")
 
     def _to_prices(self, rows: List[dict], date: str,
                    from_city: str, to_city: str) -> List[FlightPrice]:
