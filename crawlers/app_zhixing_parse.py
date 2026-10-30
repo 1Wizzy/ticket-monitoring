@@ -226,8 +226,12 @@ def parse_flight_rows(xml: str) -> List[dict]:
             continue
         if n.text in _CURRENCY_ONLY:
             # ① 拆开的正常价：￥ + 数字，同一行、紧邻右侧
+            # 窗口取 5：dump 文档序不保证相邻——实测「当日低价」卡片里
+            # ￥(x1=796, cy=321) 与 331(x1=809, cy=316) 之间还夹着
+            # 「虹桥T2」「01:05」两个节点，只看 i+1..i+2 会漏掉这格价，
+            # 整张卡片变成「有航班无价格」。
             merged = False
-            for nxt in nodes[i + 1:i + 3]:
+            for nxt in nodes[i + 1:i + 5]:
                 if not _DIGITS_RE.match(nxt.text) or not _same_row(n, nxt):
                     continue
                 if not (0 <= nxt.x1 - n.x1 <= 60):
@@ -238,7 +242,7 @@ def parse_flight_rows(xml: str) -> List[dict]:
             if merged:
                 continue
             # ② 后面紧跟 4?? 即遮罩价
-            for nxt in nodes[i + 1:i + 3]:
+            for nxt in nodes[i + 1:i + 5]:
                 if _PRICE_MASK_RE.match(nxt.text) and _same_row(n, nxt):
                     price_nodes.append((nxt, None, True))
                     break
@@ -249,7 +253,7 @@ def parse_flight_rows(xml: str) -> List[dict]:
         if not m:
             continue
         flight_no = m.group(1)
-        # 时刻：同一行左右各一个——左=起飞、右=到达。
+        # 时刻：同一张卡片里「左=起飞、右=到达」成对出现，且**同一视觉行**。
         # 行高实测约 150px（时刻 cy=308、航司/航班号 cy=535 是相邻两块），
         # 容差给 60 会把「起降时刻」漏掉，只剩航班号。
         # 到达时刻必须一起取：下游 `_real_offer` 要求 depTime 与 arrTime
@@ -268,18 +272,32 @@ def parse_flight_rows(xml: str) -> List[dict]:
                 continue
             if best_dy is None or dy < best_dy:
                 best_dy, dep = dy, cand.text
-        # 右侧最近的时刻 = 到达（同排、在航班号右边）
-        best_dx = None
-        for cand in nodes:
-            if not _TIME_RE.match(cand.text):
-                continue
-            if abs(cand.cy - n.cy) > 120:
-                continue
-            if cand.x1 <= n.x1:
-                continue
-            dx = cand.x1 - n.x1
-            if best_dx is None or dx < best_dx:
-                best_dx, arr = dx, cand.text
+        # 到达 = 与**起飞同一排**的右侧时刻。按水平距离取最近会张冠李戴：
+        # 相邻卡片的到达列 x 只差几像素（实测 459 vs 465），下一行的到达
+        # 反而比本行的更"近"，CZ3832 因此配上了下一班的 19:25（真值 01:15），
+        # 22:30→19:25 这种"到达早于起飞"的假数据会直接污染最优池。
+        if dep:
+            dep_cy = None
+            for cand in nodes:
+                if cand.text == dep and abs(cand.cy - n.cy) <= 120 \
+                        and cand.x1 <= n.x1:
+                    dep_cy = cand.cy
+                    break
+            best_dx = None
+            for cand in nodes:
+                if not _TIME_RE.match(cand.text):
+                    continue
+                if cand.x1 <= n.x1:
+                    continue
+                if dep_cy is not None:
+                    # 同排优先：起降同属一行，行内 cy 差只有几像素
+                    if abs(cand.cy - dep_cy) > 30:
+                        continue
+                elif abs(cand.cy - n.cy) > 120:
+                    continue
+                dx = cand.x1 - n.x1
+                if best_dx is None or dx < best_dx:
+                    best_dx, arr = dx, cand.text
         # 价格：同航班行、水平在右侧
         price, masked = None, False
         best_dy = None
