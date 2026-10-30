@@ -113,7 +113,8 @@ def test_login_panel_open_and_leave(page):
     page.wait_for_timeout(800)
     assert page.is_visible("#panel-login")
     assert page.evaluate(
-        "document.querySelectorAll('#loginRows .lgcard').length") == 5
+        "document.querySelectorAll('#loginRows .lgcard').length"
+        ) == len(__import__("crawlers").REGISTRY)
     assert "弹窗登录" in page.inner_text("#loginRows")
     page.locator("#navMon").click()
     page.wait_for_timeout(400)

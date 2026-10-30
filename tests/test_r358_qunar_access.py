@@ -68,7 +68,11 @@ def test_webui_source_access_board_and_login_note():
         "scQState",
         "srcAccessState",
         "qunar:'必须'",
-        "携程、去哪儿必须登录",
+        # r608：登录页头部统一为「都必须登录」；旧句
+        # 「携程、去哪儿必须登录 · 同程/途牛建议」与 r414 政策冲突，已删。
+        # r644 补了智行 App、r650 改写为「五个浏览器渠道 + 智行 App 都必须
+        # 登录」——这里只钉政策词，不钉数量。
+        "都必须登录（入口页可匿名浏览",
         "携程/去哪儿需本机已建立登录态",
         "channelAuthView(p)",
     ):

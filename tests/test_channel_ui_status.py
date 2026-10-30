@@ -234,7 +234,10 @@ def test_quote_service_failure_does_not_replace_independent_login_state(ui):
     page, _, _ = ui
     page.evaluate("loadLogin(null,true)")
     page.evaluate("() => { S=null; _markStale('报价服务异常'); }")
-    assert page.locator("#loginRows .lgcard").count() == 5
+    # 意图是「报价服务异常不该把登录卡抹掉」，数量跟真实渠道走
+    # （r644 起含智行 App，是 6 张）
+    from crawlers import REGISTRY
+    assert page.locator("#loginRows .lgcard").count() == len(REGISTRY)
     assert "已有登录态" in page.locator("#loginRows").text_content()
 
 
@@ -243,7 +246,8 @@ def test_explicit_refresh_restores_login_cards_with_unchanged_payload(ui):
     page.evaluate("loadLogin(null,true)")
     page.evaluate("document.querySelector('#loginRows').textContent='报价服务异常'")
     page.evaluate("loadLogin(null,true)")
-    assert page.locator("#loginRows .lgcard").count() == 5
+    from crawlers import REGISTRY
+    assert page.locator("#loginRows .lgcard").count() == len(REGISTRY)
 
 
 def test_unchanged_background_state_keeps_search_action_focus(ui):

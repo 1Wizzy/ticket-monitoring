@@ -281,7 +281,12 @@ def test_spec_and_handoff_called_functions_exist():
                 if fn in THIRD:
                     continue
                 examined += 1
-                if ("def %s(" % fn) in blob or ("function %s(" % fn) in blob:
+                # 箭头函数也是函数：源码里大量用 `const glab=(…) => …`
+                # 形式，只认 `def`/`function` 会把合法引用误报成
+                # 「不存在的函数」（r651 实测：glab() 被误报）。
+                if any(form % fn in blob for form in (
+                        "def %s(", "function %s(", "const %s=", "let %s=",
+                        "var %s=", "async function %s(")):
                     continue
                 offenders.append("%s:%d %s()" % (name, i, fn))
     # 下限：SPEC 有 2 处、HANDOFF 有 12 处 `fn()` 写法（实测）。0 命中＝写法变了。
