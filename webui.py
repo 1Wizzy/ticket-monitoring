@@ -19384,9 +19384,17 @@ function buildForm(){if(!CFG)return;let h='',gh='';
      「只对声明了入口的渠道生效」，用户填 ctrip 后按钮可点却什么也不做。
      现在直接列出可填的几家，并把已填但会被忽略的点名。 */
   +glcell('预热渠道','glbWarmP','GLB.warmup_platforms=(this.value||"").trim()',esc(GLB.warmup_platforms||''),
-    (GLB.warmup_ignored&&GLB.warmup_ignored.length
-      ?('⚠ '+GLB.warmup_ignored.join('、')+' 没有预热入口（打首页下不发可用会话），保存时会被忽略；可填：'+(GLB.warmable||[]).join('、'))
-      :('逗号分隔，可填：'+((GLB.warmable||[]).join('、')||'（无）')+'；留空=不预热')),
+    /* 提示要**带中文名**（r657）：这一格填的是渠道标识，原先提示直接列
+       「可填：fliggy、qunar、tuniu」——同一行左边是中文标签、右边是英文 id，
+       用户不知道 fliggy 就是飞猪。现在写成 `fliggy=飞猪`，填的时候仍填标识。 */
+    (()=>{
+      const _cn=p=>{const n=platCN(p);return n===p?p:(p+'='+n);};
+      const _list=(GLB.warmable||[]).map(_cn).join('、')||'（无）';
+      return (GLB.warmup_ignored&&GLB.warmup_ignored.length)
+        ?('⚠ '+GLB.warmup_ignored.map(_cn).join('、')
+          +' 没有预热入口（打首页下不发可用会话），保存时会被忽略；可填：'+_list)
+        :('逗号分隔（填渠道标识）；可填：'+_list+'；留空=不预热');
+    })(),
     'text',null,'qunar, fliggy, tuniu')
   +'</div>'
   +glsec('渠道节奏 · 保存即热生效')
@@ -21401,14 +21409,16 @@ function srxLogoURL(im){
  }catch(e){_LOGO_URLS[im]=im}
  return _LOGO_URLS[im];
 }
+/* 渠道标识 → 中文名：两处名字表合成一个入口，界面上凡是「渠道」二字
+   出现的地方都走它。SRX_PLATS 只列 5 家浏览器渠道，`app_zhixing` 会落到
+   英文 id 上（实测节流行渲染成「a 智行 App」「可填：fliggy」）。 */
+function platCN(p){
+ return (typeof APP_PLAT_NAME!=='undefined'&&APP_PLAT_NAME[p])
+   ||(SRX_PLATS[p]&&SRX_PLATS[p][0])||(p||'渠道');
+}
 function srxPlatIcon(p,cls,lazy){
  const im=SRX_BRAND_IMG[p]||'';
- /* 中文名要覆盖 App 渠道（r614 只并进了几处名字表）。SRX_PLATS 只列 5 家
-    浏览器渠道，`app_zhixing` 落到英文 id 上，字符牌就渲染成光秃秃的
-    「a」——读者读不出这是哪一家（实测节流行「a 智行 App」）。 */
- const _cn=(typeof APP_PLAT_NAME!=='undefined'&&APP_PLAT_NAME[p])
-   ||(SRX_PLATS[p]&&SRX_PLATS[p][0])||(p||'渠道');
- const nm=_cn;
+ const nm=platCN(p);
  const c='bic bic-ota '+(cls||'');
  /* 无官方图标时，字符牌只在「它不能从名字里猜出来」时才画：
     牌面取名字首字，若名字本身就以这个字开头（「智 智行 App」
