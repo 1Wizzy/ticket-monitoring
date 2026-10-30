@@ -51,8 +51,8 @@ def _server():
     return port, tmp
 
 
-def _post(base, path, headers):
-    req = urllib.request.Request(base + path, method="POST", data=b"{}",
+def _post(base, path, headers, body=b"{}"):
+    req = urllib.request.Request(base + path, method="POST", data=body,
                                  headers=headers)
     op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
@@ -109,11 +109,31 @@ def test_cli_without_origin_still_works(live):
     assert code != 403, "无 Origin 的脚本调用被误挡（%s）" % code
 
 
-def test_non_json_content_type_is_rejected(live):
+def test_non_json_body_is_rejected(live):
     base, host = live
     code = _post(base, "/api/app-login/state",
-                 {"Content-Type": "text/plain", "Host": host})
+                 {"Content-Type": "text/plain", "Host": host}, body=b"x=1")
     assert code == 415, "非 JSON 请求体没被挡（%s）" % code
+
+
+@pytest.mark.parametrize("path", ["/api/open-folder", "/api/test-toast"])
+def test_bodyless_post_is_not_over_blocked(live, path):
+    """无 body 的 POST 不能被 415 误伤（r671b 真实回归）。
+
+    `fetch(path, {method:'POST'})` 不带 body 时，浏览器会自动补
+    `Content-Type: text/plain`——按「非 JSON 一律 415」会把「打开文件夹 /
+    测试弹窗 / 立即扫描 / 重启」这些无参按钮全部打哑。实测同源调用直接 415。
+    无 body 本就没有可解析载荷，CSRF 拿它也只能触发幂等动作。
+    """
+    base, host = live
+    same = _post(base, path,
+                 {"Content-Type": "text/plain;charset=UTF-8",
+                  "Origin": "http://" + host, "Host": host}, body=b"")
+    assert same != 415, "%s 的无 body 同源请求被误判成非 JSON（%s）" % (path, same)
+    cross = _post(base, path,
+                  {"Content-Type": "text/plain;charset=UTF-8",
+                   "Origin": "http://evil.example", "Host": host}, body=b"")
+    assert cross == 403, "%s 的无 body 跨站请求没被挡（%s）" % (path, cross)
 
 
 def test_restart_is_guarded(live):

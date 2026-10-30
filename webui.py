@@ -31594,8 +31594,19 @@ class _Handler(BaseHTTPRequestHandler):
         # （只读页面与 /api/state 轮询照常），演示模式已在上面短路。
         # 判定只认「带 Origin 且与 Host 不同源」——命令行 curl / 脚本
         # 不带 Origin，仍可正常调用（本机运维需要）。
+        #
+        # Content-Type 只在**带 body** 时要求 JSON（r671b）：`fetch(path,
+        # {method:'POST'})` 不带 body 时浏览器会自动补
+        # `Content-Type: text/plain`，按「非 JSON 一律 415」会把
+        # 「打开文件夹 / 测试弹窗 / 立即扫描 / 重启」这些无参按钮全部
+        # 打哑（实测同源调用直接 415）。无 body 的请求本来也没有可解析
+        # 的载荷，CSRF 拿它也只能触发幂等动作。
+        try:
+            _len1 = int(self.headers.get("Content-Length", 0) or 0)
+        except (TypeError, ValueError):
+            _len1 = 0
         _ct1 = (self.headers.get("Content-Type") or "").lower()
-        if self.path.startswith("/api/") and _ct1 and \
+        if self.path.startswith("/api/") and _len1 > 0 and _ct1 and \
                 "application/json" not in _ct1:
             self._json({"ok": False,
                         "err": "Content-Type 必须为 application/json"}, 415)
