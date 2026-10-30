@@ -47,3 +47,20 @@ def test_cadence_ui_covers_app_channel():
     seg = w[i - 200:i + 1200]
     assert "APP_PLAT_NAME" in seg, "节流面板仍是写死 5 家，App 配不到节奏"
     assert "'glbCad_'+p" in seg, seg[:200]
+
+
+def test_cadence_save_accepts_app_channel():
+    """保存侧白名单必须含 App 渠道，否则界面上填了会被静默丢弃。
+
+    实测踩过：界面已经为「智行 App」生成了节奏控件，但保存循环只放行
+    5 家浏览器渠道——用户填 45 分钟、保存后仍是 0，且不报任何错。
+    """
+    from core.channels import APP_CHANNELS, BROWSER_CHANNELS
+    w = _w()
+    i = w.index("_cad_ok")
+    seg = w[i - 400:i + 400]
+    assert "APP_CHANNELS" in seg, "保存侧白名单没接 App 渠道"
+    assert "BROWSER_CHANNELS" in seg, seg[:200]
+    # 与清单同源（不是又抄一份字面量）
+    assert "from core.channels import" in seg or "core.channels" in seg
+    assert set(APP_CHANNELS) and set(BROWSER_CHANNELS)

@@ -31748,9 +31748,19 @@ class _Handler(BaseHTTPRequestHandler):
                             0, min(30, _nd2))
                     if isinstance(glb.get("cadence"), dict):
                         _cad0 = _crw2.setdefault("cadence", {})
+                        # 白名单必须含 App 渠道：界面已经能为「智行 App」
+                        # 生成节奏控件，若这里只放行 5 家浏览器渠道，
+                        # 用户填的值会被静默丢弃——能填、不生效、不报错。
+                        try:
+                            from core.channels import (
+                                APP_CHANNELS as _APPCH,
+                                BROWSER_CHANNELS as _BRCH)
+                            _cad_ok = set(_BRCH) | set(_APPCH)
+                        except Exception:
+                            _cad_ok = {"qunar", "fliggy", "ctrip",
+                                       "tongcheng", "tuniu"}
                         for _cp, _cv in glb["cadence"].items():
-                            if _cp not in ("qunar", "fliggy", "ctrip",
-                                           "tongcheng", "tuniu"):
+                            if _cp not in _cad_ok:
                                 continue
                             try:
                                 # 与 core/pacing.py 同口径：整数分钟、0..10080。
