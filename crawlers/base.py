@@ -1,5 +1,6 @@
 """爬虫基类：Playwright 持久化上下文 + 反爬基础处理 + XHR拦截"""
 import os
+import sys
 import re
 import json
 import random
@@ -18,7 +19,14 @@ from core.intl import tz_offset_min
 from core.pacing import parse_retry_after, should_watch_response
 
 
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 冻结态用 exe 所在目录：否则 user_data（登录态）会落进 _internal，
+# 用户找不到、升级即丢。与 main.py 同源（core.paths.app_root）。
+if getattr(sys, "frozen", False):
+    from core.paths import app_root as _app_root
+    _REPO_ROOT = _app_root()
+else:
+    _REPO_ROOT = os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))
 _PROFILE_LOCKS = {}
 _PROFILE_LOCKS_GUARD = threading.Lock()
 

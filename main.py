@@ -271,7 +271,12 @@ _DOMZERO_SEEN = {}
 # 连续天数计数恒 0（「连续 3 天降 INFO」从未触发）
 _SENT_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "data", "sentinel_state.json")
+# 冻结态（PyInstaller）下 __file__ 在 _internal 里，直接用会把数据
+# 写进程序内部目录（用户看不到、升级就丢）。统一走 core.paths。
 _REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, "frozen", False):
+    from core.paths import app_root as _app_root
+    _REPO_ROOT = _app_root()
 
 
 def _sent_state_path():

@@ -19,12 +19,20 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import time
 from typing import List
 
 from core.models import FlightPrice
 
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 冻结态用 exe 所在目录：否则 user_data（登录态）会落进 _internal，
+# 用户找不到、升级即丢。与 main.py 同源（core.paths.app_root）。
+if getattr(sys, "frozen", False):
+    from core.paths import app_root as _app_root
+    _REPO_ROOT = _app_root()
+else:
+    _REPO_ROOT = os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))
 
 
 class AppCrawler:
