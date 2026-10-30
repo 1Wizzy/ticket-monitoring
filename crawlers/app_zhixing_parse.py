@@ -54,8 +54,10 @@ _CURRENCY = "\u00a5\uffe5"
 _PRICE_FULL_RE = re.compile(r"^[" + _CURRENCY + r"]\s*(\d{2,5})$")
 # 遮罩价：4?? / 3??
 _PRICE_MASK_RE = re.compile(r"^\d[?？]{1,3}$")
-# 单独的货币符号（遮罩价的前半截）
+# 单独的货币符号（遮罩价的前半截 / 拆开价格的前半截）
 _CURRENCY_ONLY = tuple(_CURRENCY)
+# 拆开的价格后半截：纯数字
+_DIGITS_RE = re.compile(r"^\d{2,5}$")
 
 _EMPTY_MARKS = ("没有找到符合条件的航班", "查不到相关航班",
                 "暂无符合条件的航班", "没有符合条件")
@@ -210,6 +212,10 @@ def parse_flight_rows(xml: str) -> List[dict]:
 
     返回 [{flight_no, depart_time, price, masked}]；
     价格被遮罩时 price=None, masked=True（绝不给 0）。
+
+    列表页的价格是**两个独立节点**：`￥`（x1=793）紧跟 `270`（x1=806），
+    并不像首页条那样整串 `¥256`。只看整串会把整页判成「有航班无价格」，
+    进而被当成 `ok` 但有 0 行报价——明细整片作废（实测 11-05 踩过）。
     """
     nodes = _nodes(xml)
     price_nodes = []
@@ -219,7 +225,19 @@ def parse_flight_rows(xml: str) -> List[dict]:
             price_nodes.append((n, int(m.group(1)), False))
             continue
         if n.text in _CURRENCY_ONLY:
-            # 后面紧跟一个 4?? 即遮罩价
+            # ① 拆开的正常价：￥ + 数字，同一行、紧邻右侧
+            merged = False
+            for nxt in nodes[i + 1:i + 3]:
+                if not _DIGITS_RE.match(nxt.text) or not _same_row(n, nxt):
+                    continue
+                if not (0 <= nxt.x1 - n.x1 <= 60):
+                    continue
+                price_nodes.append((nxt, int(nxt.text), False))
+                merged = True
+                break
+            if merged:
+                continue
+            # ② 后面紧跟 4?? 即遮罩价
             for nxt in nodes[i + 1:i + 3]:
                 if _PRICE_MASK_RE.match(nxt.text) and _same_row(n, nxt):
                     price_nodes.append((nxt, None, True))
@@ -231,30 +249,32 @@ def parse_flight_rows(xml: str) -> List[dict]:
         if not m:
             continue
         flight_no = m.group(1)
-        # 时刻：同航班行附近、水平在左侧的时刻节点
+        # 时刻：同航班行附近、水平在左侧的时刻节点。
+        # 行高实测约 150px（时刻 cy=308、航司/航班号 cy=535 是相邻两块），
+        # 容差给 60 会把「起降时刻」漏掉，只剩航班号。
         dep = ""
-        best_dx = None
+        best_dy = None
         for cand in nodes:
             if not _TIME_RE.match(cand.text):
                 continue
-            if abs(cand.cy - n.cy) > 60:
+            dy = abs(cand.cy - n.cy)
+            if dy > 120:
                 continue
             if cand.x1 > n.x1:
                 continue
-            dx = n.x1 - cand.x1
-            if best_dx is None or dx < best_dx:
-                best_dx, dep = dx, cand.text
+            if best_dy is None or dy < best_dy:
+                best_dy, dep = dy, cand.text
         # 价格：同航班行、水平在右侧
         price, masked = None, False
-        best_dx = None
+        best_dy = None
         for pnode, value, is_mask in price_nodes:
-            if abs(pnode.cy - n.cy) > 70:
+            dy = abs(pnode.cy - n.cy)
+            if dy > 120:
                 continue
             if pnode.x1 < n.x2:
                 continue
-            dx = pnode.x1 - n.x2
-            if best_dx is None or dx < best_dx:
-                best_dx, price, masked = dx, value, is_mask
+            if best_dy is None or dy < best_dy:
+                best_dy, price, masked = dy, value, is_mask
         rows.append({"flight_no": flight_no, "depart_time": dep,
                      "price": price, "masked": masked})
     return rows

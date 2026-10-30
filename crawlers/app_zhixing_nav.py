@@ -273,13 +273,26 @@ def _pick_city(dev, ns, name: str, side: str, log=None) -> tuple:
     return True, "已选"
 
 
-def _pick_date(dev, ns, ymd: str, log=None) -> tuple:
-    """日期选择：首页有日期行（'10月30日'），点开日历后选目标日。"""
+def _pick_date(dev, ns, ymd: str, log=None, xml: str = "") -> tuple:
+    """日期选择：首页有日期行（'10月30日'），点开日历后选目标日。
+
+    首页日历条只覆盖约 8 天；更远的日期必须到「选择日期」长窗口里点。
+    那里按 **resource-id 里的 ISO 日期**定位，不按文案匹配——文案是
+    「11月5日」（不补零），跨月后还会重复，按文案找会点错或找不到
+    （实测 11-05 就这样被判成「日历里找不到」而放弃）。
+
+    弹层**已经开着**时（xml 里带 Search_Calendar_Dialog）必须直接点格子：
+    此时弹层盖住了首页日期行，再去找「日期入口」只会得到「找不到」。
+    """
     if not ymd or len(ymd) < 10:
         return False, "日期格式非法"
     mm = int(ymd[5:7])
     dd = int(ymd[8:10])
     want = f"{mm}月{dd}日"
+
+    if "Search_Calendar_Dialog" in (xml or ""):
+        return _tap_calendar_cell(dev, xml, ymd)
+
     # 首页直接显示目标日期则无需点开日历
     home_hit = find(ns, want)
     if home_hit:
@@ -295,10 +308,41 @@ def _pick_date(dev, ns, ymd: str, log=None) -> tuple:
     if not dev.tap(trigger.cx, trigger.cy):
         return False, "点击日期失败"
     time.sleep(3)
-    ns2 = nodes(dev.dump())
-    hit = find(ns2, want)
+
+    xml2 = dev.dump() or ""
+    if "Search_Calendar_Dialog" in xml2:
+        return _tap_calendar_cell(dev, xml2, ymd)
+
+    # 兜底：目标日就在当前可见的普通日历页里（文案匹配）
+    hit = find(nodes(xml2), want)
     if hit is None:
         return False, f"日历里找不到 {want}"
     dev.tap(hit.cx, hit.cy)
     time.sleep(2)
     return True, "已选日期"
+
+
+def _tap_calendar_cell(dev, xml: str, ymd: str) -> tuple:
+    """在已打开的长窗口日历里点目标日；成功后弹层会自己关掉。"""
+    cell = _calendar_cell(xml, ymd)
+    if cell is None:
+        return False, f"日历里没有 {ymd} 这一格"
+    if not dev.tap(*cell):
+        return False, f"点击日历格失败 {ymd}"
+    time.sleep(2)
+    left = dev.dump() or ""
+    if "Search_Calendar_Dialog" in left:
+        return False, "点了日期但弹层没关"
+    return True, "已在长窗口选中日期"
+
+
+def _calendar_cell(xml: str, ymd: str):
+    """长窗口日历里某天的可点坐标；找不到返回 None。"""
+    m = re.search(
+        r'resource-id="flight_calendar_date_cell-%s"[^>]*'
+        r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"' % re.escape(ymd), xml or "")
+    if not m:
+        return None
+    x = (int(m.group(1)) + int(m.group(3))) // 2
+    y = (int(m.group(2)) + int(m.group(4))) // 2
+    return x, y
