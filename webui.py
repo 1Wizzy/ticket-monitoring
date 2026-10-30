@@ -16338,7 +16338,7 @@ let LG_LASTFOCUS=null;
    不用 <canvas>：<img> 足够，且避免每帧重绘开销。 */
 let APP_LOGIN={plat:null,timer:null,smooth:false};
 /* App 渠道登录状态（r644）：登录分区要给智行 App 一张卡，状态必须真读，
-   不能凭「没调用过」就显示未登录。*/ 
+   不能凭「没调用过」就显示未登录。*/
 let APP_LOGIN_STATE={};
 function appPlatName(p){
  /* 延时回调可能在声明块之外执行（整页脚本已结束），此时裸引用会抛
