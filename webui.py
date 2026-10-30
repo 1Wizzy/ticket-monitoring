@@ -31583,6 +31583,29 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({"ok": False, "demo": True,
                         "err": "演示模式只读——下载源码或 zip 即可真跑"}, 403)
             return
+        # r671：写接口统一跨站闸门。原先只有 /api/app-login 做了
+        # Origin 同源校验，/api/config 与 /api/restart 谁都能调——而
+        # README 教用户为了手机访问把 web.host 改成 0.0.0.0，那一刻同一
+        # 局域网（或经反向代理暴露后）的任何页面都能**改配置、重启进程**。
+        # 实测：带 `Origin: http://evil.example` 的 POST /api/config 回 200
+        # 并真落盘，/api/restart 回 200 并真重启。
+        #
+        # 放在最前面：新增写接口自动继承，不必逐个记得加。GET 不受影响
+        # （只读页面与 /api/state 轮询照常），演示模式已在上面短路。
+        # 判定只认「带 Origin 且与 Host 不同源」——命令行 curl / 脚本
+        # 不带 Origin，仍可正常调用（本机运维需要）。
+        _ct1 = (self.headers.get("Content-Type") or "").lower()
+        if self.path.startswith("/api/") and _ct1 and \
+                "application/json" not in _ct1:
+            self._json({"ok": False,
+                        "err": "Content-Type 必须为 application/json"}, 415)
+            return
+        _org1 = self.headers.get("Origin") or ""
+        if _org1:
+            from urllib.parse import urlparse as _up1
+            if (_up1(_org1).netloc or "") != (self.headers.get("Host") or ""):
+                self._json({"ok": False, "err": "跨站请求已拒绝"}, 403)
+                return
         if self.path == "/api/config":
             # 读改写串行（r649）：并发保存会丢更新（实测两次都回 200，
             # 但 3 次里 2 次只有一项生效），热重载也可能读到半份文件。
